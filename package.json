@@ -1,0 +1,31 @@
+{
+  "name": "mindsync",
+  "version": "1.0.0",
+  "description": "MindSync AI - Smart Learning Assistant",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.mindsync.app",
+    "productName": "MindSync AI",
+    "win": {
+      "target": "nsis"
+    }
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^43.1.1",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "googleapis": "^176.0.0",
+    "pdf2json": "^4.0.3",
+    "pdfjs-dist": "^3.11.174"
+  }
+}

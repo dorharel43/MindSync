@@ -1,0 +1,280 @@
+/* ==========================================================================
+   MindSync themes
+   --------------------------------------------------------------------------
+   Load AFTER tokens.css - these override the colour tokens only.
+
+   Pick one by setting the attribute on <html>:
+       <html data-theme="ink">      (default recommendation)
+       <html data-theme="paper">
+       <html data-theme="slate">
+
+   Notes on why the original palette read as generic:
+   - Saturated purple/indigo (#6a0dad, #8b5cf6) is the default accent of
+     almost every quick-start template, so it carries no signal of choice.
+   - It was also used everywhere - headings, buttons, tags, borders - which
+     removes its ability to draw attention to anything.
+
+   The shared principle below: a near-neutral interface with ONE accent used
+   sparingly, for the primary action and the active state only. Restraint is
+   what reads as deliberate.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   INK - cool neutral greys, deep green accent.
+   Calm and quiet; the accent appears rarely enough to actually mean something.
+   -------------------------------------------------------------------------- */
+[data-theme="ink"] {
+    --bg-main: #eef1f4;          /* clearly cool, reads blue-grey */
+    --bg-sidebar: #f8fafb;
+    --bg-card: #ffffff;
+    --bg-subtle: #e3e8ed;
+    --bg-overlay: rgba(20, 22, 26, 0.40);
+
+    --text-primary: #16181d;
+    --text-secondary: #5f6672;
+    --text-tertiary: #9096a1;
+    --text-inverse: #ffffff;
+
+    --accent-purple: #0f766e;          /* deep teal - kept under the old token
+                                          name so existing CSS keeps working */
+    --accent-hover: #115e59;
+    --accent-subtle: rgba(15, 118, 110, 0.09);
+
+    --border-color: #dbe1e7;
+    --border-strong: #c2cbd4;
+
+    --stat-bg: #e3e8ed;
+    --hover-bg: #e3e8ed;
+    --timeline-dot: #cfd3da;
+    --active-task-bg: rgba(15, 118, 110, 0.06);
+    --yellow-badge: #92710c;
+    --badge-bg: rgba(146, 113, 12, 0.10);
+}
+
+body.dark-mode[data-theme="ink"],
+[data-theme="ink"] body.dark-mode,
+body.dark-mode [data-theme="ink"] {
+    --bg-main: #15171b;
+    --bg-sidebar: #101216;
+    --bg-card: #1c1f24;
+    --bg-subtle: #24272e;
+    --bg-overlay: rgba(0, 0, 0, 0.62);
+
+    --text-primary: #eceef1;
+    --text-secondary: #949aa6;
+    --text-tertiary: #666d7a;
+    --text-inverse: #15171b;
+
+    --accent-purple: #2dd4bf;
+    --accent-hover: #5eead4;
+    --accent-subtle: rgba(45, 212, 191, 0.12);
+
+    --border-color: #282c34;
+    --border-strong: #3a3f4a;
+
+    --stat-bg: rgba(255, 255, 255, 0.04);
+    --hover-bg: rgba(255, 255, 255, 0.05);
+    --timeline-dot: #3a3f4a;
+    --active-task-bg: rgba(45, 212, 191, 0.08);
+    --yellow-badge: #d4b24c;
+    --badge-bg: rgba(212, 178, 76, 0.16);
+}
+
+/* --------------------------------------------------------------------------
+   PAPER - warm off-white, ink-brown text, muted amber accent.
+   Reads like study material rather than a dashboard; suits a learning tool
+   and is noticeably easier on the eyes over long sessions.
+   -------------------------------------------------------------------------- */
+[data-theme="paper"] {
+    --bg-main: #f2e9d8;          /* proper cream - unmistakably warm */
+    --bg-sidebar: #f9f2e5;
+    --bg-card: #fdf8ee;
+    --bg-subtle: #e8dcc4;
+    --bg-overlay: rgba(41, 37, 31, 0.38);
+
+    --text-primary: #1f1c17;
+    --text-secondary: #6b6355;
+    --text-tertiary: #9c9383;
+    --text-inverse: #fffdf9;
+
+    --accent-purple: #a05a2c;          /* burnt amber */
+    --accent-hover: #85471f;
+    --accent-subtle: rgba(160, 90, 44, 0.09);
+
+    --border-color: #ddd0b5;
+    --border-strong: #c9b894;
+
+    --stat-bg: #e8dcc4;
+    --hover-bg: #e8dcc4;
+    --timeline-dot: #d5cdbd;
+    --active-task-bg: rgba(160, 90, 44, 0.06);
+    --yellow-badge: #8a6d1f;
+    --badge-bg: rgba(138, 109, 31, 0.10);
+}
+
+body.dark-mode[data-theme="paper"],
+[data-theme="paper"] body.dark-mode,
+body.dark-mode [data-theme="paper"] {
+    --bg-main: #191713;
+    --bg-sidebar: #131210;
+    --bg-card: #221f1a;
+    --bg-subtle: #2b2721;
+    --bg-overlay: rgba(0, 0, 0, 0.62);
+
+    --text-primary: #f0ece4;
+    --text-secondary: #a49a89;
+    --text-tertiary: #736b5e;
+    --text-inverse: #191713;
+
+    --accent-purple: #e0a061;
+    --accent-hover: #efb884;
+    --accent-subtle: rgba(224, 160, 97, 0.12);
+
+    --border-color: #2e2a23;
+    --border-strong: #423c32;
+
+    --stat-bg: rgba(255, 255, 255, 0.04);
+    --hover-bg: rgba(255, 255, 255, 0.05);
+    --timeline-dot: #423c32;
+    --active-task-bg: rgba(224, 160, 97, 0.08);
+    --yellow-badge: #d4b24c;
+    --badge-bg: rgba(212, 178, 76, 0.16);
+}
+
+/* --------------------------------------------------------------------------
+   SLATE - near-monochrome, blue-grey accent.
+   The most conservative of the three. Looks like a professional tool; least
+   personality, lowest risk.
+   -------------------------------------------------------------------------- */
+[data-theme="slate"] {
+    --bg-main: #e7ecf2;          /* cool blue cast, clearly not plain white */
+    --bg-sidebar: #1e293b;       /* dark sidebar against a light canvas - the
+                                    strongest structural difference of the three */
+    --bg-card: #ffffff;
+    --bg-subtle: #dae1ea;
+    --bg-overlay: rgba(15, 23, 42, 0.40);
+
+    --text-primary: #0f172a;
+    --text-secondary: #64748b;
+    --text-tertiary: #94a3b8;
+    --text-inverse: #ffffff;
+
+    --accent-purple: #334155;
+    --accent-hover: #1e293b;
+    --accent-subtle: rgba(51, 65, 85, 0.08);
+
+    --border-color: #d3dbe5;
+    --border-strong: #b9c4d2;
+
+    --stat-bg: #dae1ea;
+    --hover-bg: #dae1ea;
+    --timeline-dot: #cbd5e1;
+    --active-task-bg: rgba(51, 65, 85, 0.05);
+    --yellow-badge: #a16207;
+    --badge-bg: rgba(161, 98, 7, 0.10);
+}
+
+body.dark-mode[data-theme="slate"],
+[data-theme="slate"] body.dark-mode,
+body.dark-mode [data-theme="slate"] {
+    --bg-main: #0f1218;
+    --bg-sidebar: #0a0d12;
+    --bg-card: #171b22;
+    --bg-subtle: #1f242c;
+    --bg-overlay: rgba(0, 0, 0, 0.65);
+
+    --text-primary: #e8ecf1;
+    --text-secondary: #8e99a8;
+    --text-tertiary: #5f6875;
+    --text-inverse: #0f1218;
+
+    --accent-purple: #94a3b8;
+    --accent-hover: #cbd5e1;
+    --accent-subtle: rgba(148, 163, 184, 0.12);
+
+    --border-color: #232831;
+    --border-strong: #343b46;
+
+    --stat-bg: rgba(255, 255, 255, 0.04);
+    --hover-bg: rgba(255, 255, 255, 0.05);
+    --timeline-dot: #343b46;
+    --active-task-bg: rgba(148, 163, 184, 0.08);
+    --yellow-badge: #d4b24c;
+    --badge-bg: rgba(212, 178, 76, 0.16);
+}
+
+/* --------------------------------------------------------------------------
+   Typography
+   --------------------------------------------------------------------------
+   The default Segoe UI stack was never chosen, it was simply what Windows
+   provided - and it shows. This stack prefers fonts with proper Hebrew
+   coverage, so mixed Hebrew/English text stays visually consistent instead
+   of silently falling back to a different face mid-sentence.
+
+   To go further, bundle a real font locally (do NOT load from a CDN - the
+   app should work offline):
+     1. Download Assistant or Heebo from fonts.google.com (both have full
+        Hebrew and Latin coverage; Assistant was designed for Hebrew).
+     2. Put the .woff2 files in a fonts/ folder next to index.html.
+     3. Declare them with @font-face and put the family first in the stack.
+   -------------------------------------------------------------------------- */
+:root {
+    --font-sans: "Assistant", "Heebo", "Segoe UI Variable", "Segoe UI",
+                 system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { font-family: var(--font-sans); }
+
+/* Tighter heading rhythm - default browser line-height is too loose for
+   short UI headings and makes layouts feel unconsidered. */
+h1, h2, h3, h4 {
+    line-height: var(--leading-tight);
+    letter-spacing: -0.011em;   /* subtle optical correction at larger sizes */
+    font-weight: var(--font-semibold);
+}
+
+/* Tabular figures keep numbers from shifting as they update (XP, counters,
+   progress percentages) - a small detail that reads as careful engineering. */
+.ms-tabular, .progress-label, .stat-value {
+    font-variant-numeric: tabular-nums;
+}
+
+/* Slate uses a dark sidebar against a light canvas, so sidebar text and icons
+   need the inverse treatment. Scoped to light mode only - in dark mode the
+   whole app is already dark and the normal tokens apply. */
+[data-theme="slate"] body:not(.dark-mode) .sidebar { border-right-color: #2b3a4f; }
+[data-theme="slate"] body:not(.dark-mode) .logo { color: #f1f5f9; }
+[data-theme="slate"] body:not(.dark-mode) .logo svg { color: #94a3b8; }
+[data-theme="slate"] body:not(.dark-mode) .menu-item { color: #94a3b8; }
+[data-theme="slate"] body:not(.dark-mode) .menu-item:hover {
+    background: rgba(255,255,255,0.06);
+    color: #f1f5f9;
+}
+[data-theme="slate"] body:not(.dark-mode) .menu-item.active {
+    background: rgba(255,255,255,0.10);
+    color: #ffffff;
+}
+[data-theme="slate"] body:not(.dark-mode) .user-profile { border-top-color: #2b3a4f; }
+[data-theme="slate"] body:not(.dark-mode) .user-profile:hover { background: rgba(255,255,255,0.06); }
+[data-theme="slate"] body:not(.dark-mode) .profile-name { color: #f1f5f9; }
+[data-theme="slate"] body:not(.dark-mode) .profile-degree { color: #8595a8; }
+[data-theme="slate"] body:not(.dark-mode) .profile-pic { background: rgba(255,255,255,0.10); color: #e2e8f0; }
+[data-theme="slate"] body:not(.dark-mode) .sidebar-stat { color: #8595a8; }
+[data-theme="slate"] body:not(.dark-mode) .sidebar-stat__label { color: #6b7c92; }
+[data-theme="slate"] body:not(.dark-mode) .sidebar-theme-btn { color: #94a3b8; }
+[data-theme="slate"] body:not(.dark-mode) .sidebar-theme-btn:hover {
+    background: rgba(255,255,255,0.08);
+    color: #f1f5f9;
+}
+
+
+/* Exam purple is the one event colour that isn't drawn from the status
+   palette, so it needs its own dark-mode lift to stay legible. */
+/* Muted event colours need lifting on dark surfaces to stay distinguishable. */
+body.dark-mode {
+    --event-lesson: #7aa8cc;
+    --event-exam: #a795c9;
+    --event-study: #84b491;
+    --event-personal: #d3a071;
+}

@@ -1,0 +1,192 @@
+/* ==========================================================================
+   MindSync UI kit - toasts, modals, empty states, skeletons
+   --------------------------------------------------------------------------
+   Load AFTER tokens.css.
+   ========================================================================== */
+
+/* ---- Toasts ---------------------------------------------------------- */
+.ms-toast-container {
+    position: fixed;
+    bottom: var(--space-5);
+    right: var(--space-5);
+    z-index: var(--z-toast);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    pointer-events: none;
+    max-width: 380px;
+}
+
+[dir="rtl"] .ms-toast-container { right: auto; left: var(--space-5); }
+
+.ms-toast {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-left: 3px solid var(--text-secondary);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    pointer-events: auto;
+    animation: ms-toast-in var(--duration-slow) var(--ease-out);
+}
+
+.ms-toast--leaving { animation: ms-toast-out var(--duration-base) var(--ease-in-out) forwards; }
+
+.ms-toast--success { border-left-color: var(--status-success); }
+.ms-toast--error   { border-left-color: var(--status-danger); }
+.ms-toast--warning { border-left-color: var(--status-warning); }
+.ms-toast--info    { border-left-color: var(--status-info); }
+
+.ms-toast__icon { font-size: var(--text-lg); line-height: 1.2; flex-shrink: 0; }
+.ms-toast__body { flex: 1; min-width: 0; }
+.ms-toast__title {
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    color: var(--text-primary);
+    margin-bottom: 2px;
+}
+.ms-toast__message {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--leading-normal);
+    overflow-wrap: break-word;
+}
+.ms-toast__close {
+    background: none;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    font-size: var(--text-base);
+    padding: 0 var(--space-1);
+    flex-shrink: 0;
+}
+.ms-toast__close:hover { color: var(--text-primary); }
+
+@keyframes ms-toast-in {
+    from { opacity: 0; transform: translateY(12px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes ms-toast-out {
+    from { opacity: 1; transform: translateX(0); }
+    to   { opacity: 0; transform: translateX(20px); }
+}
+
+/* ---- Modals ---------------------------------------------------------- */
+.ms-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: var(--bg-overlay);
+    backdrop-filter: blur(3px);
+    z-index: var(--z-modal-backdrop);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-5);
+    animation: ms-fade-in var(--duration-base) var(--ease-out);
+}
+
+.ms-modal {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    width: 100%;
+    max-width: 440px;
+    z-index: var(--z-modal);
+    animation: ms-modal-in var(--duration-slow) var(--ease-out);
+    overflow: hidden;
+}
+
+.ms-modal__header {
+    padding: var(--space-5) var(--space-5) var(--space-3);
+}
+.ms-modal__title {
+    font-size: var(--text-lg);
+    font-weight: var(--font-semibold);
+    color: var(--text-primary);
+    line-height: var(--leading-tight);
+}
+.ms-modal__body {
+    padding: 0 var(--space-5) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--leading-normal);
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+}
+.ms-modal__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-5);
+    background: var(--bg-subtle);
+    border-top: 1px solid var(--border-color);
+}
+
+@keyframes ms-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ms-modal-in {
+    from { opacity: 0; transform: translateY(16px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ---- Empty states ---------------------------------------------------- */
+.ms-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: var(--space-7) var(--space-5);
+    gap: var(--space-2);
+}
+.ms-empty__icon { font-size: 2.5rem; opacity: 0.55; margin-bottom: var(--space-1); }
+.ms-empty__title {
+    font-size: var(--text-base);
+    font-weight: var(--font-semibold);
+    color: var(--text-primary);
+}
+.ms-empty__message {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    max-width: 380px;
+    line-height: var(--leading-normal);
+}
+.ms-empty__action { margin-top: var(--space-3); }
+
+/* ---- Skeleton loaders -------------------------------------------------
+   Shown while data loads, instead of a blank area that reads as "empty".
+   This is one of the cheapest changes that makes an app feel considered. */
+.ms-skeleton {
+    background: linear-gradient(
+        90deg,
+        var(--bg-subtle) 25%,
+        var(--hover-bg) 50%,
+        var(--bg-subtle) 75%
+    );
+    background-size: 200% 100%;
+    animation: ms-shimmer 1.4s ease-in-out infinite;
+    border-radius: var(--radius-sm);
+}
+.ms-skeleton--text  { height: 12px; margin-bottom: var(--space-2); }
+.ms-skeleton--title { height: 18px; width: 45%; margin-bottom: var(--space-3); }
+.ms-skeleton--card  { height: 84px; margin-bottom: var(--space-3); border-radius: var(--radius-lg); }
+
+@keyframes ms-shimmer {
+    from { background-position: 200% 0; }
+    to   { background-position: -200% 0; }
+}
+
+/* ---- RTL support ------------------------------------------------------
+   The UI chrome stays LTR, but user content (Hebrew task titles, notes)
+   is marked dir="auto" in the markup so each string picks its own
+   direction. These rules fix the container-level mirroring. */
+[dir="rtl"] .sidebar { border-right: none; border-left: 1px solid var(--border-color); }
+[dir="rtl"] .menu-item.active { border-left: none; border-right: 3px solid var(--accent-purple); }
+[dir="rtl"] .ms-modal__footer { justify-content: flex-start; }
+[dir="rtl"] .ms-toast { border-left: 1px solid var(--border-color); border-right: 3px solid var(--text-secondary); }
+[dir="rtl"] .ms-toast--success { border-right-color: var(--status-success); }
+[dir="rtl"] .ms-toast--error   { border-right-color: var(--status-danger); }
+[dir="rtl"] .ms-toast--warning { border-right-color: var(--status-warning); }
+[dir="rtl"] .ms-toast--info    { border-right-color: var(--status-info); }

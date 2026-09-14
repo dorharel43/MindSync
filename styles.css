@@ -1,0 +1,2425 @@
+/* Colour tokens now live in tokens.css + themes.css.
+   They used to be redeclared here, which silently overrode every theme
+   because this file loads last - that's why switching themes only changed
+   accent-coloured elements and never the page background. */
+
+
+* {
+    margin:0;
+    padding:0;
+    box-sizing: border-box;
+    font-family: var(--font-sans);
+}
+
+body {
+    background-color: var(--bg-main);
+    color: var(--text-primary);
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Sidebar Styles */
+.sidebar {
+    width: 250px;
+    background-color: var(--bg-sidebar);
+    display: flex;
+    flex-direction: column;
+    padding:var(--space-5) 0;
+    border-right: 1px solid var(--border-color);
+    transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+.logo {
+    padding:0 var(--space-5) var(--space-6);
+    font-size: 1.2rem;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    gap:var(--space-2);
+}
+
+.menu {
+    display: flex;
+    flex-direction: column;
+    gap:var(--space-1);
+}
+
+.menu-item {
+    padding:var(--space-3) var(--space-5);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap:var(--space-3);
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+}
+
+.menu-item:hover {
+    background-color: var(--hover-bg);
+    color: var(--text-primary);
+}
+
+.menu-item.active {
+    background-color: var(--active-task-bg);
+    color: var(--accent-purple);
+    border-left: 3px solid var(--accent-purple);
+}
+
+.user-profile {
+    margin-top:auto;
+    padding:var(--space-5);
+    display: flex;
+    align-items: center;
+    gap:var(--space-4);
+    border-top: 1px solid var(--border-color);
+}
+
+.profile-pic {
+    background: var(--stat-bg);
+    color: var(--text-primary);
+    width: 35px;
+    height: 35px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+}
+
+.profile-name {
+    font-size: 0.9rem;
+    font-weight: bold;
+}
+
+.profile-degree {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+/* Main Content Styles */
+.main-content {
+    flex: 1;
+    padding:40px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+}
+
+.header {
+    text-align: center;
+    margin-bottom:50px;
+}
+
+.greeting-sub {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin-bottom:var(--space-1);
+}
+
+.greeting-main {
+    font-size: 2rem;
+    font-weight: bold;
+}
+
+/* Focus Area */
+.focus-section {
+    display: flex;
+    gap:var(--space-6);
+    width: 100%;
+    max-width: 900px;
+}
+
+.next-up-card {
+    background-color: transparent;
+    text-align: center;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.next-up-title {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin-bottom:var(--space-2);
+}
+
+.next-up-exam {
+    font-size: 1.8rem;
+    font-weight: bold;
+    margin-bottom:var(--space-4);
+}
+
+.badge {
+    background-color: var(--badge-bg);
+    color: var(--yellow-badge);
+    padding:var(--space-1) var(--space-4);
+    border-radius: var(--radius-xl);
+    font-size: 0.85rem;
+    margin-bottom:var(--space-5);
+    display: inline-block;
+    font-weight: 500;
+}
+
+.btn-primary {
+    background-color: transparent;
+    color: var(--accent-purple);
+    border: 1px solid var(--accent-purple);
+    padding:var(--space-2) var(--space-5);
+    border-radius: 25px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: all 0.3s ease;
+}
+
+.btn-primary:hover {
+    background-color: var(--accent-purple);
+    color: white;
+}
+
+/* Stats & Schedule */
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap:var(--space-5);
+    width: 100%;
+    max-width: 900px;
+    margin-top:40px;
+}
+
+.card {
+    background-color: var(--bg-card);
+    border-radius: var(--radius-lg);
+    padding:var(--space-5);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+    transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+.card-header {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin-bottom:var(--space-5);
+    text-align: left;
+}
+
+/* Stats Grid inside Card */
+.stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap:var(--space-4);
+}
+
+.stat-item {
+    text-align: center;
+    background-color: var(--stat-bg);
+    padding:var(--space-4);
+    border-radius: var(--radius-md);
+    transition: background-color 0.3s ease;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: bold;
+    margin:var(--space-1) 0;
+}
+
+.stat-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+/* Schedule Timeline */
+.timeline {
+    display: flex;
+    flex-direction: column;
+    gap:var(--space-4);
+}
+
+.timeline-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding:var(--space-2);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.timeline-item:last-child {
+    border-bottom: none;
+}
+
+.timeline-item.active-task {
+    background-color: var(--active-task-bg);
+    border-radius: var(--radius-md);
+    border-bottom: none;
+}
+
+.timeline-time {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    width: 60px;
+}
+
+.timeline-item.active-task .timeline-time {
+    color: var(--text-primary);
+}
+
+.timeline-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap:var(--space-2);
+}
+
+.dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--timeline-dot);
+}
+
+.dot.active {
+    background-color: var(--accent-purple);
+}
+
+.tag-active {
+    background-color: var(--accent-purple);
+    color: white;
+    font-size: 0.7rem;
+    padding:2px 6px;
+    border-radius: var(--radius-md);
+}
+
+.link-text {
+    color: var(--accent-purple);
+    text-decoration: none;
+    font-size: 0.85rem;
+    display: block;
+    margin-top:var(--space-5);
+    text-align: center;
+    font-weight: 500;
+}
+
+/* --- Internal Pages --- */
+.page-header {
+    margin-bottom:40px;
+    text-align: left;
+    width: 100%;
+}
+
+.page-title {
+    font-size: 2rem;
+    font-weight: bold;
+    margin-bottom:var(--space-2);
+}
+
+.page-subtitle {
+    color: var(--text-secondary);
+    font-size: 1rem;
+}
+
+.daily-schedule-list {
+    display: flex;
+    flex-direction: column;
+    gap:var(--space-3);
+    width: 100%;
+}
+
+.schedule-bar {
+    border-radius: var(--radius-md);
+    padding:var(--space-4) var(--space-5);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap:var(--space-4);
+    transition: transform 0.2s ease, opacity 0.2s ease;
+    cursor: pointer;
+}
+
+.schedule-bar:hover {
+    transform: scale(1.01);
+    opacity: 0.9;
+}
+
+.schedule-info {
+    display: flex;
+    align-items: center;
+    gap:var(--space-4);
+    min-width: 0;   /* let this flex item shrink instead of forcing siblings off / clipping text */
+    flex: 1;        /* take the remaining space so long titles have room to wrap */
+}
+
+.schedule-circle {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid;
+    background-color: transparent;
+    flex-shrink: 0;
+}
+
+.schedule-time {
+    font-weight: bold;
+    width: 50px;
+    text-align: left;
+    flex-shrink: 0;
+}
+
+.schedule-title {
+    font-size: 1rem;
+    min-width: 0;           /* the actual fix: allow this text to wrap instead of overflowing */
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+.delete-event-btn {
+    flex-shrink: 0; /* keep the trash icon from being squeezed/pushed out by a long title */
+}
+
+.schedule-actions {
+    display: flex;
+    gap:var(--space-4);
+    width: 100%;
+    margin-top:var(--space-6);
+    justify-content: flex-start;
+}
+
+/* --- Weekly Plan --- */
+.weekly-legend {
+    display: flex;
+    gap:var(--space-2);
+}
+
+.legend-item {
+    padding:var(--space-1) var(--space-3);
+    border-radius: var(--radius-lg);
+    font-size: 0.8rem;
+    font-weight: bold;
+}
+
+.weekly-board {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap:var(--space-4);
+    width: 100%;
+    margin-top:var(--space-5);
+}
+
+.day-column {
+    display: flex;
+    flex-direction: column;
+    gap:var(--space-2);
+    background-color: rgba(0,0,0,0.03);
+    border-radius: var(--radius-lg);
+    padding:var(--space-2);
+    min-height: 450px;
+    min-width: 0;
+}
+
+body.dark-mode .day-column {
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+.day-header {
+    text-align: center;
+    font-weight: bold;
+    padding-bottom:var(--space-2);
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom:var(--space-1);
+    font-size: 0.95rem;
+}
+
+.task-card {
+    padding:var(--space-2);
+    border-radius: var(--radius-md);
+    font-size: 0.85rem;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap:var(--space-1);
+    font-weight: 500;
+    transition: transform 0.2s ease;
+    cursor: pointer;
+    min-width: 0;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+.task-card:hover {
+    transform: scale(1.02);
+}
+
+.task-time {
+    font-size: 0.75rem;
+    opacity: 0.8;
+}
+
+/* Event type chips. These previously carried a third, hardcoded set of
+   colours - separate from both the legend and renderer.js - which is why a
+   softened palette still showed the old red and purple. They now read from
+   the same --event-* tokens as everything else.
+   .task-assignment and .task-free are kept only so any stale markup still
+   renders sensibly; they map onto real types rather than inventing colours. */
+.task-lesson {
+    background-color: color-mix(in srgb, var(--event-lesson) 14%, transparent);
+    color: var(--event-lesson);
+    border: 1px solid color-mix(in srgb, var(--event-lesson) 32%, transparent);
+}
+
+.task-exam {
+    background-color: color-mix(in srgb, var(--event-exam) 16%, transparent);
+    color: var(--event-exam);
+    border: 1px solid color-mix(in srgb, var(--event-exam) 34%, transparent);
+}
+
+.task-study,
+.task-assignment,
+.task-free {
+    background-color: color-mix(in srgb, var(--event-study) 14%, transparent);
+    color: var(--event-study);
+    border: 1px solid color-mix(in srgb, var(--event-study) 32%, transparent);
+}
+
+.task-personal {
+    background-color: color-mix(in srgb, var(--event-personal) 14%, transparent);
+    color: var(--event-personal);
+    border: 1px solid color-mix(in srgb, var(--event-personal) 32%, transparent);
+}
+
+/* --- Materials Manager --- */
+.flex-header { display: flex; justify-content: space-between; align-items: center; margin-bottom:var(--space-6); flex-wrap: wrap; gap:var(--space-4); }
+.btn-upload { background: var(--accent-purple); color: white; padding:var(--space-2) var(--space-5); border: none; border-radius: var(--radius-md); cursor: pointer; }
+.section-title { margin-bottom:var(--space-4); font-size: 1.1rem; }
+
+.materials-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:var(--space-4); margin-bottom:var(--space-6); }
+.folder-card { padding:var(--space-5); text-align: center; cursor: pointer; transition: transform 0.2s; }
+.folder-card:hover { transform: translateY(-3px); }
+.folder-icon { font-size: 2.5rem; margin-bottom:var(--space-2); }
+.folder-name { font-weight: bold; margin-bottom:var(--space-1); }
+.folder-count { font-size: 0.8rem; color: var(--text-secondary); }
+.add-folder { background: transparent; border: 2px dashed var(--border-color); box-shadow: none; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+.add-icon { font-size: 2rem; color: var(--text-secondary); margin-bottom:var(--space-2); }
+
+.files-list { display: flex; flex-direction: column; gap:var(--space-2); }
+.file-item { padding:var(--space-4) var(--space-5); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap:var(--space-4); }
+.file-info { display: flex; align-items: center; gap:var(--space-4); }
+.file-icon { font-size: 1.5rem; }
+.file-name { font-weight: bold; font-size: 0.95rem; }
+.file-meta { color: var(--text-secondary); font-size: 0.8rem; margin-top:3px; }
+.file-actions { display: flex; gap:var(--space-2); }
+.btn-ai { background: transparent; border: 1px solid var(--accent-purple); color: var(--accent-purple); padding:var(--space-1) var(--space-3); font-size: 0.8rem; border-radius: var(--radius-lg); }
+.btn-secondary { background: transparent; border: 1px solid var(--border-color); color: var(--text-primary); padding:var(--space-1) var(--space-3); font-size: 0.8rem; border-radius: var(--radius-lg); cursor: pointer; }
+
+/* --- Progress, Health & Settings --- */
+.stats-cards-row { display: flex; gap:var(--space-5); margin-bottom:var(--space-6); flex-wrap: wrap; }
+.stat-card { flex: 1; min-width: 200px; padding:var(--space-5); text-align: center; }
+.stat-big-value { font-size: 2.5rem; font-weight: bold; margin-bottom:var(--space-1); }
+.stat-desc { color: var(--text-secondary); font-size: 0.9rem; }
+.chart-placeholder { padding:var(--space-6); display: flex; align-items: center; justify-content: center; height: 250px; color: var(--text-secondary); border: 1px dashed var(--border-color); }
+
+.health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:var(--space-5); }
+.health-card { padding:var(--space-5); }
+.health-card h3 { margin-bottom:var(--space-5); }
+.water-tracker { display: flex; gap:var(--space-2); font-size: 1.8rem; justify-content: center; margin-bottom:var(--space-5); }
+.water-tracker .empty { opacity: 0.2; filter: grayscale(100%); }
+.workout-info { margin-bottom:var(--space-5); color: var(--text-secondary); text-align: center; }
+.btn-full { width: 100%; border-radius: var(--radius-md); padding:var(--space-3); border: 1px solid var(--accent-purple); color: var(--accent-purple); background: transparent; cursor: pointer; font-weight: bold;}
+.btn-purple { background: var(--accent-purple); color: white; border: none; }
+
+.settings-card { padding:var(--space-5); margin-bottom:var(--space-5); }
+.settings-title { margin-bottom:var(--space-4); border-bottom: 1px solid var(--border-color); padding-bottom:var(--space-2); }
+.settings-row { display: flex; justify-content: space-between; align-items: center; padding:var(--space-2) 0; }
+.profile-row { justify-content: flex-start; gap:var(--space-5); }
+.profile-pic-large { width: 60px; height: 60px; background: var(--stat-bg); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: bold; }
+.profile-name-large { font-weight: bold; font-size: 1.2rem; }
+.profile-meta { color: var(--text-secondary); font-size: 0.9rem; }
+.edit-btn { margin-left:auto; margin-right:0; }
+.btn-status.active { padding:var(--space-1) var(--space-4); border-radius: var(--radius-xl); background: var(--status-success); color: white; border: none; cursor: pointer; }
+
+/* --- Modals --- */
+.modal-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.6);
+    z-index: 1000;
+    display: flex; justify-content: center; align-items: center;
+}
+.modal-content {
+    width: 100%; max-width: 400px; padding:var(--space-5);
+}
+.input-field {
+    width: 100%; padding:var(--space-3); border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: var(--bg-main); color: var(--text-primary);
+    font-family: inherit; font-size: 0.95rem; box-sizing: border-box;
+}
+.input-field:focus {
+    outline: none;
+    border-color: var(--accent-purple);
+}
+
+#ai-output-text {
+    white-space: pre-wrap;
+}
+
+/* ==========================================
+   14. Notifications (Toasts)
+   ========================================== */
+.toast-container {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    gap:var(--space-2);
+    z-index: 9999;
+}
+
+.toast {
+    background-color: var(--bg-card);
+    border-left: 4px solid var(--accent-purple);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    padding:var(--space-4) var(--space-5);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    min-width: 250px;
+    transform: translateX(120%);
+    transition: transform 0.3s ease-out;
+}
+
+.toast.show {
+    transform: translateX(0);
+}
+
+.toast-title {
+    font-weight: bold;
+    font-size: 1rem;
+    margin-bottom:var(--space-1);
+    color: var(--text-primary);
+}
+
+.toast-message {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+/* ==========================================
+   15. Task checklist, progress & categories
+   ========================================== */
+.task-card-full {
+    padding:var(--space-4) var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap:var(--space-3);
+}
+
+.task-main-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap:var(--space-4);
+}
+
+.task-info-col {
+    display: flex;
+    flex-direction: column;
+    gap:6px;
+    min-width: 0;   /* same flexbox wrapping fix as the schedule bar */
+    flex: 1;
+}
+
+.task-title-text {
+    font-weight: bold;
+    font-size: 1.1rem;
+    transition: 0.2s;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+.task-meta-line {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    overflow-wrap: break-word;
+}
+
+.task-category-tag {
+    background: var(--accent-subtle);
+    color: var(--accent-purple);
+    padding:2px var(--space-2);
+    border-radius: var(--radius-md);
+    font-size: 0.78rem;
+    font-weight: bold;
+}
+
+.task-actions-col {
+    display: flex;
+    gap:var(--space-2);
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.task-actions-col .complete-task-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    background: var(--status-success);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-md);
+    padding: var(--space-2) var(--space-4);
+    font-family: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out);
+}
+.task-actions-col .complete-task-btn:hover:not(:disabled) { filter: brightness(0.93); }
+
+/* These previously set no `color` at all and relied on opacity:0.55, so the
+   icons inherited whatever text colour the surrounding card happened to use
+   and could end up near-invisible on a warm or dark surface. Using an
+   explicit token means every theme gets a readable icon, and hover moves to
+   a real colour instead of an opacity trick. */
+.task-actions-col .delete-task-btn,
+.task-actions-col .toggle-checklist-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: var(--space-2);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out);
+}
+.task-actions-col .toggle-checklist-btn:hover {
+    background: var(--hover-bg);
+    color: var(--text-primary);
+}
+.task-actions-col .delete-task-btn:hover {
+    background: var(--status-danger-bg);
+    color: var(--status-danger);
+}
+
+/* Progress bar */
+.progress-row {
+    display: flex;
+    align-items: center;
+    gap:var(--space-2);
+    margin-top:var(--space-1);
+}
+
+.progress-track {
+    flex: 1;
+    height: 8px;
+    background: rgba(128, 128, 128, 0.2);
+    border-radius: 4px;
+    overflow: hidden;
+    min-width: 0;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--accent-purple);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.progress-label {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+/* Checklist panel */
+.checklist-panel {
+    border-top: 1px solid var(--border-color);
+    padding-top:var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap:var(--space-2);
+}
+
+.checklist-items {
+    display: flex;
+    flex-direction: column;
+    gap:6px;
+}
+
+.checklist-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap:var(--space-2);
+    padding:6px var(--space-2);
+    border-radius: var(--radius-sm);
+    transition: background 0.15s ease;
+}
+.checklist-item:hover {
+    background: var(--hover-bg, rgba(128,128,128,0.08));
+}
+
+.checklist-item label {
+    display: flex;
+    align-items: center;
+    gap:var(--space-2);
+    cursor: pointer;
+    min-width: 0;
+    flex: 1;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+.checklist-item input[type="checkbox"] {
+    width: 17px;
+    height: 17px;
+    cursor: pointer;
+    accent-color: var(--accent-purple);
+    flex-shrink: 0;
+}
+
+.subtask-done {
+    text-decoration: line-through;
+    opacity: 0.55;
+}
+
+.delete-subtask-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: var(--space-1);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    font-size: var(--text-sm);
+    flex-shrink: 0;
+    transition: background-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out);
+}
+.delete-subtask-btn:hover { background: var(--status-danger-bg); color: var(--status-danger); }
+
+.checklist-empty {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    padding:6px var(--space-2);
+}
+
+.add-subtask-row {
+    display: flex;
+    gap:var(--space-2);
+}
+.add-subtask-row .new-subtask-input {
+    flex: 1;
+    min-width: 0;
+    padding:var(--space-2) var(--space-2);
+    font-size: 0.88rem;
+}
+.add-subtask-row .add-subtask-btn {
+    flex-shrink: 0;
+    padding:var(--space-2) var(--space-4);
+    cursor: pointer;
+}
+
+/* Category filter chips */
+.category-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap:var(--space-2);
+    margin-bottom:var(--space-4);
+}
+
+.category-chip {
+    padding:6px 14px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.83rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.18s;
+}
+.category-chip:hover {
+    border-color: var(--accent-purple);
+    color: var(--accent-purple);
+}
+.category-chip.active {
+    background: var(--accent-purple);
+    border-color: var(--accent-purple);
+    color: #fff;
+}
+
+/* Inline urgency picker on the task card */
+.urgency-select {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding:1px var(--space-1);
+    font-weight: bold;
+    font-size: 0.82rem;
+    cursor: pointer;
+    font-family: inherit;
+}
+.urgency-select:focus { outline: none; border-color: var(--accent-purple); }
+.urgency-select option { color: var(--text-primary); background: var(--bg-main); }
+
+/* ==========================================================================
+   16. Layout restored after inline-style removal
+   --------------------------------------------------------------------------
+   The markup previously carried ~100 inline styles that did all the real
+   layout work. Those are gone, so the rules they were doing live here now -
+   in one place, on the token scale, where they can be changed once instead
+   of a hundred times.
+   ========================================================================== */
+
+.page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-5);
+    flex-wrap: wrap;
+}
+
+.page-title {
+    font-size: var(--text-2xl);
+    font-weight: var(--font-semibold);
+    color: var(--text-primary);
+}
+
+.page-subtitle {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    margin-top: var(--space-1);
+    line-height: var(--leading-normal);
+}
+
+.section-title {
+    font-size: var(--text-lg);
+    font-weight: var(--font-semibold);
+    margin-bottom: var(--space-3);
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+}
+
+/* Buttons - map the legacy class names onto the new primitives so the
+   existing markup picks up the design system without being rewritten. */
+.btn-primary, .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    font-family: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out);
+}
+.btn-primary {
+    background: var(--accent-purple);
+    color: var(--text-inverse);
+}
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-secondary {
+    background: transparent;
+    color: var(--text-primary);
+    border-color: var(--border-strong);
+}
+.btn-secondary:hover:not(:disabled) { background: var(--hover-bg); }
+.btn-primary:disabled, .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary:focus-visible, .btn-secondary:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+}
+
+.input-field {
+    width: 100%;
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: var(--bg-main);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: var(--text-sm);
+    box-sizing: border-box;
+    transition: border-color var(--duration-fast) var(--ease-out),
+                box-shadow var(--duration-fast) var(--ease-out);
+}
+.input-field::placeholder { color: var(--text-tertiary); }
+.input-field:focus {
+    outline: none;
+    border-color: var(--accent-purple);
+    box-shadow: var(--shadow-focus);
+}
+textarea.input-field { min-height: 96px; resize: vertical; line-height: var(--leading-normal); }
+
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: var(--space-5);
+    box-shadow: var(--shadow-sm);
+}
+
+/* Modals */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg-overlay);
+    backdrop-filter: blur(3px);
+    z-index: var(--z-modal-backdrop);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-5);
+}
+.modal-content {
+    width: 100%;
+    max-width: 480px;
+    max-height: 85vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-lg);
+}
+.modal-content > h3 {
+    font-size: var(--text-lg);
+    margin-bottom: var(--space-2);
+}
+
+/* Stats */
+.stat-item { display: flex; flex-direction: column; gap: var(--space-1); }
+.stat-value, .stat-big-value {
+    font-weight: var(--font-semibold);
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+.stat-value { font-size: var(--text-lg); }
+.stat-big-value { font-size: var(--text-3xl); letter-spacing: -0.02em; }
+.stat-label, .stat-desc { font-size: var(--text-xs); color: var(--text-secondary); }
+
+.settings-card { margin-bottom: var(--space-4); }
+.settings-title { font-size: var(--text-base); font-weight: var(--font-semibold); margin-bottom: var(--space-3); }
+.settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-color);
+}
+.settings-row:last-child { border-bottom: none; }
+
+.greeting-main { font-size: var(--text-2xl); font-weight: var(--font-semibold); }
+.greeting-sub { font-size: var(--text-sm); color: var(--text-secondary); }
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-6);
+    flex-wrap: wrap;
+}
+
+.main-content {
+    flex: 1;
+    padding: var(--space-6);
+    overflow-y: auto;
+    min-width: 0;
+}
+.view-section { max-width: var(--content-max-width); }
+
+.link-text {
+    color: var(--accent-purple);
+    cursor: pointer;
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+}
+.link-text:hover { text-decoration: underline; }
+
+.schedule-actions { display: flex; gap: var(--space-3); margin-top: var(--space-5); }
+
+/* Inline SVG icons sit slightly above the baseline by default */
+svg { vertical-align: -0.125em; flex-shrink: 0; }
+
+/* Icon-only buttons */
+.btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-2);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out);
+}
+.btn-icon:hover { background: var(--hover-bg); color: var(--text-primary); }
+.btn-icon--danger:hover { background: var(--status-danger-bg); color: var(--status-danger); }
+
+/* ==========================================================================
+   17. Sidebar structure
+   --------------------------------------------------------------------------
+   The empty gap in the sidebar came from the theme button sitting in the
+   normal flow while .user-profile used margin-top:auto - so the leftover
+   space landed between the menu and the button instead of below everything.
+   An explicit spacer makes the intent obvious and puts the gap at the end.
+   ========================================================================== */
+.sidebar {
+    width: var(--sidebar-width);
+    background-color: var(--bg-sidebar);
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-5) 0 var(--space-3);
+    border-right: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--space-5) var(--space-6);
+    font-size: var(--text-base);
+    font-weight: var(--font-semibold);
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+}
+.logo svg { color: var(--accent-purple); }
+
+.menu { display: flex; flex-direction: column; gap: 2px; padding: 0 var(--space-3); }
+
+.menu-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    cursor: pointer;
+    border-left: none;
+    transition: background-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out);
+}
+.menu-item:hover { background-color: var(--hover-bg); color: var(--text-primary); }
+.menu-item.active {
+    background-color: var(--accent-subtle);
+    color: var(--accent-purple);
+    font-weight: var(--font-semibold);
+    border-left: none;
+}
+
+.sidebar-spacer { flex: 1; min-height: var(--space-5); }
+
+.sidebar-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: 0 var(--space-4) var(--space-3);
+}
+
+.sidebar-stat {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+.sidebar-stat svg { color: var(--status-warning); }
+.sidebar-stat__label { color: var(--text-tertiary); }
+
+.user-profile {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-top: 0;
+    padding: var(--space-3) var(--space-4);
+    border-top: 1px solid var(--border-color);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out);
+}
+.user-profile:hover { background: var(--hover-bg); }
+.user-profile__text { min-width: 0; }
+
+.profile-pic {
+    width: 32px; height: 32px;
+    border-radius: var(--radius-full);
+    background: var(--accent-subtle);
+    color: var(--accent-purple);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: var(--font-semibold);
+    font-size: var(--text-sm);
+    flex-shrink: 0;
+}
+.profile-name {
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--text-primary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.profile-degree {
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ==========================================================================
+   18. Progress view
+   ========================================================================== */
+.level-card { margin-bottom: var(--space-4); }
+.level-card__head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+    flex-wrap: wrap;
+}
+.level-card__label {
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: var(--font-semibold);
+    margin-bottom: var(--space-1);
+}
+.level-card__title { font-size: var(--text-xl); }
+.level-card__xp { font-size: var(--text-base); font-weight: var(--font-semibold); font-variant-numeric: tabular-nums; }
+.level-card__foot { margin-top: var(--space-3); }
+
+.xp-track {
+    height: 10px;
+    background: var(--bg-subtle);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+}
+.xp-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent-purple);
+    border-radius: var(--radius-full);
+    transition: width var(--duration-slow) var(--ease-out);
+}
+
+.metric-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+}
+@media (max-width: 900px) {
+    .metric-grid { grid-template-columns: repeat(2, 1fr); }
+}
+.metric { padding: var(--space-4); }
+.metric__label {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-2);
+}
+.metric__value {
+    font-size: var(--text-2xl);
+    font-weight: var(--font-semibold);
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+}
+.metric__suffix { font-size: var(--text-sm); color: var(--text-tertiary); font-weight: var(--font-medium); }
+
+/* Two real columns side by side. auto-fit was collapsing to a single
+   stacked column because the view had a max-width that never left room for
+   two 300px tracks - so the page read as one long vertical strip. */
+.progress-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-4);
+    align-items: start;
+}
+
+/* Only stack once there genuinely isn't room for two columns. */
+@media (max-width: 900px) {
+    .progress-columns { grid-template-columns: 1fr; }
+}
+
+/* Category workload rows */
+.cat-row { margin-bottom: var(--space-4); }
+.cat-row:last-child { margin-bottom: 0; }
+.cat-row__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-3);
+    margin-bottom: var(--space-2);
+    font-size: var(--text-sm);
+}
+.cat-row__name { font-weight: var(--font-medium); min-width: 0; overflow-wrap: break-word; }
+.cat-row__count { color: var(--text-secondary); font-size: var(--text-xs); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.cat-row__track { height: 6px; background: var(--bg-subtle); border-radius: var(--radius-full); overflow: hidden; }
+.cat-row__fill { height: 100%; background: var(--accent-purple); border-radius: var(--radius-full); transition: width var(--duration-base) var(--ease-out); }
+
+/* Needs-attention list */
+.attention-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-color);
+}
+.attention-item:last-child { border-bottom: none; }
+.attention-item__dot { width: 8px; height: 8px; border-radius: var(--radius-full); flex-shrink: 0; }
+.attention-item__body { flex: 1; min-width: 0; }
+.attention-item__title { font-size: var(--text-sm); font-weight: var(--font-medium); overflow-wrap: break-word; }
+.attention-item__meta { font-size: var(--text-xs); color: var(--text-secondary); margin-top: 2px; }
+
+/* ==========================================================================
+   19. Theme picker (Settings > Appearance)
+   ========================================================================== */
+.settings-hint { font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-normal); margin-bottom: var(--space-4); }
+.settings-row__title { font-size: var(--text-sm); font-weight: var(--font-medium); }
+
+.theme-picker {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+}
+.theme-option {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+    padding: var(--space-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-main);
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    transition: border-color var(--duration-fast) var(--ease-out),
+                background-color var(--duration-fast) var(--ease-out);
+}
+.theme-option:hover { border-color: var(--border-strong); }
+.theme-option.active { border-color: var(--accent-purple); background: var(--accent-subtle); }
+.theme-option__name { font-size: var(--text-sm); font-weight: var(--font-semibold); color: var(--text-primary); }
+.theme-option__desc { font-size: var(--text-xs); color: var(--text-secondary); }
+
+.theme-swatch {
+    width: 100%;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    margin-bottom: var(--space-2);
+    border: 1px solid var(--border-color);
+}
+.theme-swatch--ink   { background: linear-gradient(120deg, #f6f7f8 0 55%, #0f766e 55% 100%); }
+.theme-swatch--paper { background: linear-gradient(120deg, #faf8f4 0 55%, #a05a2c 55% 100%); }
+.theme-swatch--slate { background: linear-gradient(120deg, #f8f9fa 0 55%, #334155 55% 100%); }
+
+.sidebar-theme-btn { flex-shrink: 0; }
+
+
+/* The Progress view benefits from width - it's a dashboard, not an article.
+   The generic .view-section max-width was squeezing it into a column. */
+#view-progress { max-width: 1240px; }
+
+/* Put the level card and the metric strip side by side on wide screens, so
+   the top of the page is one horizontal band instead of two stacked rows. */
+.progress-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+    align-items: stretch;
+}
+@media (max-width: 1100px) {
+    .progress-top { grid-template-columns: 1fr; }
+}
+.progress-top .level-card { margin-bottom: 0; }
+.progress-top .metric-grid {
+    grid-template-columns: repeat(2, 1fr);
+    margin-bottom: 0;
+}
+
+
+/* ==========================================================================
+   20. Tasks toolbar - filter chips + search
+   ========================================================================== */
+.tasks-filters { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+
+.tasks-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+
+/* Segmented filter group - visually one control, so it's obvious these are
+   mutually exclusive views rather than three separate actions. */
+.filter-group {
+    display: inline-flex;
+    background: var(--bg-subtle);
+    border-radius: var(--radius-md);
+    padding: 3px;
+    gap: 2px;
+}
+
+.filter-chip {
+    padding: var(--space-1) var(--space-4);
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out);
+}
+.filter-chip:hover { color: var(--text-primary); }
+.filter-chip.active {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-weight: var(--font-semibold);
+    box-shadow: var(--shadow-sm);
+}
+
+/* Search box - this had no CSS at all, which is why it rendered as a bare
+   browser input. The icon sits inside the field rather than beside it. */
+.search-box {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-width: 220px;
+}
+.search-box__icon {
+    position: absolute;
+    left: var(--space-3);
+    display: flex;
+    align-items: center;
+    color: var(--text-tertiary);
+    pointer-events: none;
+}
+.search-box__input {
+    padding-left: 38px;
+    padding-right: 32px;
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
+}
+.search-box__clear {
+    position: absolute;
+    right: var(--space-2);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
+}
+.search-box__clear:hover { color: var(--text-primary); background: var(--hover-bg); }
+.search-box.has-value .search-box__clear { display: flex; }
+
+[dir="rtl"] .search-box__icon { left: auto; right: var(--space-3); }
+[dir="rtl"] .search-box__input { padding-left: 32px; padding-right: 38px; }
+[dir="rtl"] .search-box__clear { right: auto; left: var(--space-2); }
+
+#view-tasks .page-header { align-items: center; }
+
+
+/* ==========================================================================
+   21. Contrast safety net
+   --------------------------------------------------------------------------
+   Any transparent/icon button that doesn't declare its own colour falls back
+   to a readable token instead of inheriting whatever the surrounding text
+   colour happens to be. This is what kept certain buttons nearly invisible
+   on the warm Paper theme.
+   ========================================================================== */
+button { font-family: inherit; }
+
+.delete-event-btn,
+.delete-weekly-btn,
+.delete-folder-btn,
+.delete-file-btn,
+.btn-icon,
+.toast__close {
+    color: var(--text-secondary);
+}
+
+.delete-event-btn:hover,
+.delete-weekly-btn:hover,
+.delete-folder-btn:hover {
+    color: var(--status-danger);
+    background: var(--status-danger-bg);
+}
+
+/* Buttons that sit on a coloured/accent surface always use an explicit
+   foreground rather than inheriting. */
+.btn-primary, .ms-btn--primary { color: var(--text-inverse); }
+.btn-primary svg, .ms-btn--primary svg { color: currentColor; }
+
+/* Focus visibility applies in every theme, not just dark mode. */
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--accent-purple);
+    outline-offset: 2px;
+}
+
+/* ==========================================================================
+   22. Bulk selection
+   ========================================================================== */
+.select-all-row {
+    display: flex;
+    align-items: center;
+    padding: var(--space-2) var(--space-3);
+    margin-bottom: var(--space-3);
+}
+.select-all-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.select-all-label input { width: 16px; height: 16px; accent-color: var(--accent-purple); cursor: pointer; }
+
+.task-select {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    cursor: pointer;
+    padding-right: var(--space-1);
+}
+.task-select__box {
+    width: 17px;
+    height: 17px;
+    accent-color: var(--accent-purple);
+    cursor: pointer;
+}
+
+.task-card-full.is-selected {
+    border-color: var(--accent-purple);
+    background: var(--accent-subtle);
+}
+
+/* Floating bar, only present while something is selected */
+.bulk-bar {
+    position: fixed;
+    bottom: var(--space-5);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: var(--z-sticky);
+    display: flex;
+    align-items: center;
+    gap: var(--space-5);
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-card);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    animation: ms-bulk-in var(--duration-base) var(--ease-out);
+    max-width: calc(100vw - var(--space-6));
+    flex-wrap: wrap;
+}
+@keyframes ms-bulk-in {
+    from { opacity: 0; transform: translate(-50%, 12px); }
+    to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.bulk-bar__count { font-size: var(--text-sm); color: var(--text-secondary); white-space: nowrap; }
+.bulk-bar__count strong { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.bulk-bar__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.bulk-bar .btn-secondary { padding: var(--space-1) var(--space-3); font-size: var(--text-xs); }
+.bulk-bar .bulk-danger { color: var(--status-danger); border-color: var(--status-danger); }
+.bulk-bar .bulk-danger:hover { background: var(--status-danger-bg); }
+
+/* Single-choice list used by the bulk urgency picker */
+.option-list { display: flex; flex-direction: column; gap: var(--space-1); }
+.option-row {
+    text-align: left;
+    padding: var(--space-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-main);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: var(--text-sm);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out);
+}
+.option-row:hover { border-color: var(--accent-purple); background: var(--accent-subtle); }
+
+/* ==========================================================================
+   23. QOL: edit dialog, completion state, undo toast
+   ========================================================================== */
+.form-field { margin-bottom: var(--space-4); }
+.form-field:last-child { margin-bottom: 0; }
+.form-label {
+    display: block;
+    font-size: var(--text-xs);
+    font-weight: var(--font-semibold);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-2);
+}
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+}
+@media (max-width: 480px) { .form-row { grid-template-columns: 1fr; } }
+
+/* Brief visual acknowledgement while a completion is saving */
+.task-card-full.is-completing {
+    opacity: 0.6;
+    transition: opacity var(--duration-base) var(--ease-out);
+}
+
+/* Completed tasks shown via the Done filter */
+.task-card-full.is-done .task-title-text {
+    text-decoration: line-through;
+    color: var(--text-secondary);
+}
+
+/* Undo button inside a toast */
+.ms-toast .undo-btn {
+    padding: var(--space-1) var(--space-3);
+    font-size: var(--text-xs);
+    flex-shrink: 0;
+    align-self: center;
+}
+
+.task-actions-col .edit-task-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: var(--space-2);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out);
+}
+.task-actions-col .edit-task-btn:hover {
+    background: var(--hover-bg);
+    color: var(--text-primary);
+}
+
+/* Keyboard hint shown in the search placeholder area */
+.kbd {
+    display: inline-block;
+    padding: 1px var(--space-2);
+    border: 1px solid var(--border-strong);
+    border-bottom-width: 2px;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    background: var(--bg-subtle);
+}
+
+/* ==========================================================================
+   24. Settings polish + shortcuts reference
+   ========================================================================== */
+.settings-card {
+    margin-bottom: var(--space-4);
+    padding: var(--space-5);
+}
+.settings-card:last-child { margin-bottom: 0; }
+
+.settings-title {
+    font-size: var(--text-base);
+    font-weight: var(--font-semibold);
+    margin-bottom: var(--space-2);
+}
+
+/* The hint paragraph sets the breathing room between a card's explanation
+   and its action, which is what the cramped buttons were missing. */
+.settings-hint {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--leading-normal);
+    margin-bottom: var(--space-4);
+    max-width: 62ch;
+}
+.settings-hint--inline { margin-bottom: 0; margin-top: 2px; font-size: var(--text-xs); }
+.settings-hint--footnote { margin-bottom: 0; margin-top: var(--space-4); font-size: var(--text-xs); }
+
+.settings-actions {
+    display: flex;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+
+/* Destructive card reads as destructive before you click anything. */
+.settings-card--danger { border-color: var(--status-danger-bg); }
+.btn-danger {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--status-danger);
+    background: transparent;
+    color: var(--status-danger);
+    font-family: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out);
+}
+.btn-danger:hover { background: var(--status-danger-bg); }
+
+/* Input + button pairs (app blocker) */
+.input-with-action {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+}
+.input-with-action .input-field { flex: 1; min-width: 0; }
+.input-with-action .btn-primary { flex-shrink: 0; }
+
+.blocked-apps-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-color);
+}
+.settings-row:last-child { border-bottom: none; padding-bottom: 0; }
+.settings-row:first-of-type { padding-top: 0; }
+
+/* Keyboard shortcuts reference */
+.shortcut-list { display: flex; flex-direction: column; }
+.shortcut-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-color);
+}
+.shortcut-row:last-child { border-bottom: none; }
+.shortcut-desc { font-size: var(--text-sm); color: var(--text-primary); }
+.shortcut-keys { display: flex; gap: var(--space-1); flex-shrink: 0; }
+
+kbd.kbd {
+    display: inline-block;
+    min-width: 22px;
+    text-align: center;
+    padding: 2px var(--space-2);
+    border: 1px solid var(--border-strong);
+    border-bottom-width: 2px;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    background: var(--bg-subtle);
+    line-height: 1.5;
+}
+
+/* Page subtitles carry the per-screen explanation, so give them room to
+   read as a sentence rather than a cramped label. */
+.page-subtitle {
+    max-width: 74ch;
+    line-height: var(--leading-normal);
+}
+
+/* ==========================================================================
+   25. Weekly plan legend
+   --------------------------------------------------------------------------
+   A coloured dot plus a label, rather than coloured text. Colour-as-text
+   fails for anyone with a colour vision deficiency and is harder to read at
+   small sizes; the dot carries the colour and the label stays legible.
+   ========================================================================== */
+.weekly-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    align-items: center;
+}
+
+.legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    font-weight: var(--font-medium);
+    white-space: nowrap;
+}
+
+.legend-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: var(--radius-full);
+    flex-shrink: 0;
+    background: currentColor;
+}
+
+.legend-item--lesson   .legend-dot { background: var(--event-lesson); }
+.legend-item--exam     .legend-dot { background: var(--event-exam); }
+.legend-item--study    .legend-dot { background: var(--event-study); }
+.legend-item--personal .legend-dot { background: var(--event-personal); }
+
+/* ==========================================================================
+   26. Checkbox fields
+   --------------------------------------------------------------------------
+   A bare <input> next to a <label> has no spacing and no alignment, so the
+   box collides with its text and reads as two unrelated elements. Wrapping
+   the whole thing in a label also makes the text itself clickable.
+   ========================================================================== */
+.checkbox-field {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-subtle);
+    cursor: pointer;
+    transition: border-color var(--duration-fast) var(--ease-out);
+}
+.checkbox-field:hover { border-color: var(--border-strong); }
+
+.checkbox-field input[type="checkbox"] {
+    width: 17px;
+    height: 17px;
+    margin: 1px 0 0;
+    accent-color: var(--accent-purple);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.checkbox-field__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.checkbox-field__label {
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--text-primary);
+}
+.checkbox-field__hint {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    line-height: var(--leading-normal);
+}
+
+/* Modal bodies need consistent vertical rhythm between their fields */
+.modal-content > * + * { margin-top: var(--space-4); }
+
+/* ==========================================================================
+   27. Focus Mode, notifications, and destructive-hover tuning
+   ========================================================================== */
+
+/* Blocked apps as chips. Each entry is a short string, so full-width rows
+   stranded the Remove button far from the name it belonged to. */
+.blocked-apps-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.blocked-app {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-full);
+}
+
+.blocked-app__name {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-primary);
+}
+
+.blocked-app__remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-full);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out);
+}
+.blocked-app__remove:hover {
+    background: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.blocked-empty {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    padding: var(--space-2) 0;
+}
+
+.blocked-apps-label {
+    font-size: var(--text-xs);
+    font-weight: var(--font-semibold);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: var(--space-5) 0 var(--space-3);
+}
+
+.blocker-actions {
+    display: flex;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-4);
+}
+
+/* Manual entry is now a secondary path, tucked behind a disclosure */
+.blocker-manual { margin-bottom: var(--space-2); }
+.blocker-manual summary {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: var(--space-2) 0;
+    user-select: none;
+}
+.blocker-manual summary:hover { color: var(--text-primary); }
+.blocker-manual .input-with-action { margin-top: var(--space-3); margin-bottom: 0; }
+
+.checkbox-field--compact { padding: var(--space-2) var(--space-3); }
+
+/* Notification toggle - both states styled, not just the active one */
+.btn-status {
+    padding: var(--space-1) var(--space-4);
+    border-radius: var(--radius-full);
+    font-family: inherit;
+    font-size: var(--text-xs);
+    font-weight: var(--font-semibold);
+    cursor: pointer;
+    border: 1px solid var(--border-strong);
+    background: transparent;
+    color: var(--text-secondary);
+    transition: background-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out);
+}
+.btn-status:hover { border-color: var(--text-secondary); color: var(--text-primary); }
+.btn-status.active {
+    background: var(--status-success);
+    border-color: var(--status-success);
+    color: #fff;
+}
+.btn-status.active:hover { filter: brightness(0.94); color: #fff; }
+
+/* Delete-on-hover: keep the destructive signal, but use the softened event
+   red rather than the alert-grade --status-danger, which was overpowering
+   next to the muted calendar colours. */
+.delete-weekly-btn:hover,
+.delete-event-btn:hover {
+    color: var(--event-personal);
+    background: color-mix(in srgb, var(--event-personal) 14%, transparent);
+}
+
+/* ==========================================================================
+   28. Study - spaced repetition
+   ========================================================================== */
+#view-study { max-width: 1240px; }
+
+.nav-badge {
+    margin-left: auto;
+    min-width: 20px;
+    padding: 1px var(--space-2);
+    border-radius: var(--radius-full);
+    background: var(--accent-purple);
+    color: var(--text-inverse);
+    font-size: 11px;
+    font-weight: var(--font-bold);
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+[dir="rtl"] .nav-badge { margin-left: 0; margin-right: auto; }
+
+.study-start-row {
+    display: flex;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-5);
+}
+.btn-lg { padding: var(--space-3) var(--space-6); font-size: var(--text-base); }
+
+/* ---- Session ---- */
+.study-progress-bar {
+    height: 4px;
+    background: var(--bg-subtle);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    margin-bottom: var(--space-3);
+}
+.study-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent-purple);
+    transition: width var(--duration-slow) var(--ease-out);
+}
+
+.study-session-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+.btn-sm { padding: var(--space-1) var(--space-3); font-size: var(--text-xs); }
+
+.study-card {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: var(--space-6);
+}
+.study-card__mode { display: flex; gap: var(--space-2); margin-bottom: var(--space-5); }
+
+/* The question is the focus of the screen - everything else is chrome. */
+.study-question {
+    font-size: var(--text-xl);
+    line-height: var(--leading-normal);
+    color: var(--text-primary);
+    margin-bottom: var(--space-6);
+    overflow-wrap: break-word;
+}
+
+.study-prompt {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-3);
+}
+
+/* ---- Confidence buttons ---- */
+.confidence-row, .outcome-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-3);
+}
+@media (max-width: 560px) {
+    .confidence-row, .outcome-row { grid-template-columns: 1fr; }
+}
+
+.confidence-btn, .outcome-btn {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--space-4);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-main);
+    cursor: pointer;
+    font-family: inherit;
+    text-align: center;
+    transition: border-color var(--duration-fast) var(--ease-out),
+                background-color var(--duration-fast) var(--ease-out),
+                transform var(--duration-fast) var(--ease-out);
+}
+.confidence-btn:hover, .outcome-btn:hover { transform: translateY(-1px); }
+.confidence-btn strong, .outcome-btn strong {
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    color: var(--text-primary);
+}
+.confidence-btn span, .outcome-btn span {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+}
+
+.confidence-btn--sure:hover  { border-color: var(--status-success); background: var(--status-success-bg); }
+.confidence-btn--think:hover { border-color: var(--status-info);    background: var(--status-info-bg); }
+.confidence-btn--guess:hover { border-color: var(--status-warning); background: var(--status-warning-bg); }
+.outcome-btn:hover { border-color: var(--accent-purple); background: var(--accent-subtle); }
+
+/* ---- Answer reveal ---- */
+.study-answer-label {
+    font-size: var(--text-xs);
+    font-weight: var(--font-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    margin-bottom: var(--space-2);
+}
+.study-answer {
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+    color: var(--text-primary);
+    padding: var(--space-4);
+    background: var(--bg-subtle);
+    border-radius: var(--radius-md);
+    border-left: 3px solid var(--accent-purple);
+    margin-bottom: var(--space-5);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+[dir="rtl"] .study-answer { border-left: none; border-right: 3px solid var(--accent-purple); }
+
+/* ---- Calibration panel ---- */
+.cal-row { margin-bottom: var(--space-4); }
+.cal-row:last-of-type { margin-bottom: var(--space-2); }
+.cal-row__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-2);
+}
+.cal-row__value { font-weight: var(--font-semibold); font-variant-numeric: tabular-nums; }
+.cal-row__note { margin-top: var(--space-1); }
+
+.cal-track {
+    position: relative;
+    height: 8px;
+    background: var(--bg-subtle);
+    border-radius: var(--radius-full);
+    overflow: visible;
+}
+.cal-fill {
+    height: 100%;
+    border-radius: var(--radius-full);
+    transition: width var(--duration-slow) var(--ease-out);
+}
+/* Marker showing where a well-calibrated student would land. */
+.cal-ideal {
+    position: absolute;
+    top: -3px;
+    width: 2px;
+    height: 14px;
+    background: var(--text-tertiary);
+    border-radius: 1px;
+}
+
+.cal-good  { color: var(--status-success); }
+.cal-ok    { color: var(--status-warning); }
+.cal-bad   { color: var(--status-danger); }
+.cal-fill.cal-good { background: var(--status-success); }
+.cal-fill.cal-ok   { background: var(--status-warning); }
+.cal-fill.cal-bad  { background: var(--status-danger); }
+
+.cal-verdict {
+    margin-top: var(--space-4);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    line-height: var(--leading-normal);
+}
+.cal-verdict--warn { background: var(--status-warning-bg); color: var(--status-warning); }
+.cal-verdict--good { background: var(--status-success-bg); color: var(--status-success); }
+
+/* ---- Summary ---- */
+.study-summary-card { max-width: 640px; margin: 0 auto; text-align: center; }
+.study-summary__title { font-size: var(--text-xl); margin-bottom: var(--space-5); }
+.study-summary-card .metric-grid { grid-template-columns: repeat(3, 1fr); margin-bottom: var(--space-4); }
+.study-summary-card .metric__value { justify-content: center; }
+
+/* Study: manage panel */
+.study-manage-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+    flex-wrap: wrap;
+}
+
+.manage-item {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-color);
+}
+.manage-item:last-child { border-bottom: none; }
+.manage-item__body { flex: 1; min-width: 0; }
+.manage-item__q {
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    line-height: var(--leading-normal);
+    overflow-wrap: break-word;
+}
+.manage-item__meta {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+.manage-item__delete { flex-shrink: 0; }
+
+/* Answer block when there's no stored passage - visually secondary, so it
+   doesn't read as if the app is asserting something. */
+.study-answer--none {
+    font-style: italic;
+    color: var(--text-secondary);
+    border-left-color: var(--border-strong);
+}
+[dir="rtl"] .study-answer--none { border-right-color: var(--border-strong); }
+
+/* Study: saving your own solution to a practice item */
+.study-solution-input {
+    min-height: 110px;
+    resize: vertical;
+    line-height: var(--leading-normal);
+    margin-bottom: var(--space-3);
+    font-family: inherit;
+}
+.study-solution-actions {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-5);
+    flex-wrap: wrap;
+}
+
+.manage-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+/* ==========================================================================
+   29. The [hidden] attribute must actually hide
+   --------------------------------------------------------------------------
+   HTML's `hidden` works through `display: none` in the browser's default
+   stylesheet, which any author rule setting `display` outranks. Every styled
+   button here declares a display value, so `hidden` silently did nothing -
+   which is why "Delete this whole set" stayed on screen after being hidden
+   in code, still carrying its old click handler.
+   ========================================================================== */
+[hidden] { display: none !important; }
+
+/* ==========================================================================
+   30. Review screen - approving generated questions
+   ========================================================================== */
+.review-head { margin-bottom: var(--space-4); }
+.review-head .settings-hint { max-width: 70ch; margin-bottom: 0; }
+
+.review-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-subtle);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-3);
+    flex-wrap: wrap;
+}
+.review-count { font-size: var(--text-sm); color: var(--text-secondary); }
+.review-count strong { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.review-toolbar__actions { display: flex; gap: var(--space-2); }
+
+.review-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+    max-height: 58vh;
+    overflow-y: auto;
+    padding-right: var(--space-1);
+}
+
+.review-item {
+    display: flex;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    transition: opacity var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out);
+}
+
+/* Excluded items stay visible but clearly out - reversing a mistaken untick
+   should be as easy as making it. */
+.review-item.is-excluded {
+    opacity: 0.45;
+    border-style: dashed;
+}
+
+.review-item__check { flex-shrink: 0; padding-top: 2px; }
+.review-item__check input {
+    width: 17px; height: 17px;
+    accent-color: var(--accent-purple);
+    cursor: pointer;
+}
+
+.review-item__body { flex: 1; min-width: 0; }
+
+.review-item__q {
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--text-primary);
+    line-height: var(--leading-normal);
+    margin-bottom: var(--space-2);
+    overflow-wrap: break-word;
+    border-radius: var(--radius-sm);
+    padding: 2px 4px;
+    margin-left: -4px;
+}
+.review-item__a {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--leading-normal);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-subtle);
+    border-radius: var(--radius-sm);
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+}
+.review-item__a--empty { font-style: italic; color: var(--text-tertiary); }
+
+/* Editable fields only look editable on hover/focus, so the list stays calm */
+[contenteditable]:hover { background: var(--hover-bg); }
+[contenteditable]:focus {
+    outline: none;
+    background: var(--bg-main);
+    box-shadow: var(--shadow-focus);
+}
+
+.review-item__meta {
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
+    margin-top: var(--space-2);
+}
+
+.review-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border-color);
+}
+[dir="rtl"] .review-footer { justify-content: flex-start; }
+
+/* Answers collapsed on the review screen.
+   Reading an answer here spends the first recall attempt - the single most
+   valuable one - on admin rather than study. Judging by the question alone is
+   enough for most items, so the answer is one click away instead of on show. */
+.review-item__reveal { margin-top: var(--space-1); }
+.review-item__reveal summary {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: var(--space-1) 0;
+    user-select: none;
+    list-style: none;
+}
+.review-item__reveal summary::-webkit-details-marker { display: none; }
+.review-item__reveal summary::before {
+    content: '▸ ';
+    display: inline-block;
+    transition: transform var(--duration-fast) var(--ease-out);
+}
+.review-item__reveal[open] summary::before { content: '▾ '; }
+.review-item__reveal summary:hover { color: var(--text-primary); }
+.review-item__reveal .review-item__a { margin-top: var(--space-2); }
+
+/* Settings: AI engine */
+.settings-row--stacked { align-items: flex-start; flex-direction: column; gap: var(--space-2); }
+.ai-provider-select { width: auto; min-width: 220px; flex-shrink: 0; cursor: pointer; }
+.ai-key-row { margin-top: var(--space-3); margin-bottom: var(--space-2); }
+.ai-key-row .input-field { font-family: var(--font-mono); font-size: var(--text-xs); }
+.ai-status-ok { color: var(--status-success); font-weight: var(--font-semibold); }
+.ai-status-bad { color: var(--status-danger); font-weight: var(--font-semibold); }
+
+/* Manage questions: multi-select */
+.manage-item__check { flex-shrink: 0; padding-top: 2px; }
+.manage-select-box { width: 16px; height: 16px; accent-color: var(--accent-purple); cursor: pointer; }
+.manage-item.is-selected {
+    background: var(--accent-subtle);
+    border-radius: var(--radius-sm);
+    padding-left: var(--space-2);
+    padding-right: var(--space-2);
+}
+
+/* An AI-written solution is marked, not presented as fact.
+   The visual difference has to be obvious at a glance: a passage from the
+   lecturer's slides and a solution a model worked out are not the same kind
+   of thing, and treating them alike would quietly teach mistakes. */
+.study-answer--ai {
+    border-left-color: var(--status-warning);
+    background: var(--status-warning-bg);
+}
+[dir="rtl"] .study-answer--ai { border-right-color: var(--status-warning); }
+
+.ai-answer-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--status-warning);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: var(--font-semibold);
+}
+
+.review-item__source {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--text-xs);
+    padding: 1px var(--space-2);
+    border-radius: var(--radius-full);
+    margin-left: var(--space-2);
+}
+.review-item__source--ai { background: var(--status-warning-bg); color: var(--status-warning); }
+.review-item__source--doc { background: var(--status-success-bg); color: var(--status-success); }
+
+/* Resume-session banner */
+.resume-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    background: var(--accent-subtle);
+    border: 1px solid var(--accent-purple);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-4);
+    flex-wrap: wrap;
+}
+.resume-banner__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.resume-banner__text strong { font-size: var(--text-sm); color: var(--text-primary); }
+.resume-banner__text span { font-size: var(--text-xs); color: var(--text-secondary); }
+.resume-banner__actions { display: flex; gap: var(--space-2); flex-shrink: 0; }

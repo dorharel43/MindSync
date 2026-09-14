@@ -1,0 +1,315 @@
+/* ==========================================================================
+   MindSync Design Tokens
+   --------------------------------------------------------------------------
+   Every spacing, size, radius and duration in the app should reference a
+   token from this file rather than a hardcoded number. That consistency is
+   what separates a designed interface from an assembled one - the previous
+   version had 143 ad-hoc inline styles with values like 15px, 12px and 8px
+   used interchangeably, and the eye reads that unevenness as "unfinished"
+   even when it can't name why.
+
+   Load this BEFORE styles.css.
+   ========================================================================== */
+
+:root {
+    /* ---- Spacing scale (4px base) ----
+       Restricting spacing to a fixed scale is the single highest-impact
+       change: it makes unrelated parts of the UI feel like one product. */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --space-7: 48px;
+    --space-8: 64px;
+
+    /* ---- Type scale ----
+       A ratio-based scale rather than arbitrary rem values. */
+    --text-xs: 0.75rem;    /* 12px - meta, captions */
+    --text-sm: 0.875rem;   /* 14px - secondary text */
+    --text-base: 1rem;     /* 16px - body */
+    --text-lg: 1.125rem;   /* 18px - card titles */
+    --text-xl: 1.375rem;   /* 22px - section headings */
+    --text-2xl: 1.75rem;   /* 28px - page titles */
+    --text-3xl: 2.25rem;   /* 36px - hero numbers */
+
+    --font-normal: 400;
+    --font-medium: 500;
+    --font-semibold: 600;
+    --font-bold: 700;
+
+    --leading-tight: 1.25;
+    --leading-normal: 1.55;
+
+    /* ---- Radii ---- */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 20px;
+    --radius-full: 9999px;
+
+    /* ---- Elevation ----
+       Soft, low-contrast shadows. Heavy drop shadows are a common tell of
+       an amateur interface; real depth comes from subtle layering. */
+    --shadow-sm: 0 1px 2px rgba(16, 18, 27, 0.04), 0 1px 3px rgba(16, 18, 27, 0.06);
+    --shadow-md: 0 2px 4px rgba(16, 18, 27, 0.04), 0 4px 12px rgba(16, 18, 27, 0.08);
+    --shadow-lg: 0 8px 16px rgba(16, 18, 27, 0.08), 0 16px 32px rgba(16, 18, 27, 0.10);
+    --shadow-focus: 0 0 0 3px rgba(124, 58, 237, 0.25);
+
+    /* ---- Motion ----
+       Short and consistent. Anything above ~250ms starts to feel sluggish. */
+    --duration-fast: 120ms;
+    --duration-base: 180ms;
+    --duration-slow: 280ms;
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+    /* ---- Layout ---- */
+    --sidebar-width: 248px;
+    --content-max-width: 1200px;
+
+    /* ---- Z-index scale ----
+       Named layers prevent the "z-index: 99999" arms race. */
+    --z-base: 1;
+    --z-dropdown: 100;
+    --z-sticky: 200;
+    --z-banner: 300;
+    --z-modal-backdrop: 400;
+    --z-modal: 410;
+    --z-toast: 500;
+
+    /* ---- Semantic colors (light) ----
+       Split into surface / content / accent roles so dark mode only has to
+       redefine the roles, not every component. */
+    --bg-main: #f7f8fa;
+    --bg-sidebar: #ffffff;
+    --bg-card: #ffffff;
+    --bg-subtle: #f1f2f6;
+    --bg-overlay: rgba(16, 18, 27, 0.45);
+
+    --text-primary: #14161f;
+    --text-secondary: #656b7d;
+    --text-tertiary: #9aa0b0;
+    --text-inverse: #ffffff;
+
+    --accent-purple: #7c3aed;
+    --accent-hover: #6d28d9;
+    --accent-subtle: rgba(124, 58, 237, 0.08);
+
+    --border-color: #e6e8ee;
+    --border-strong: #d2d6e0;
+
+    /* Status colors - one hue per meaning, used consistently everywhere */
+    --status-success: #16a34a;
+    --status-success-bg: rgba(22, 163, 74, 0.10);
+    --status-warning: #d97706;
+    --status-warning-bg: rgba(217, 119, 6, 0.10);
+    --status-danger: #dc2626;
+    --status-danger-bg: rgba(220, 38, 38, 0.10);
+    --status-info: #2563eb;
+    --status-info-bg: rgba(37, 99, 235, 0.10);
+
+    /* Urgency maps onto the status palette rather than inventing new colors */
+    --urgency-normal: var(--text-secondary);
+    --urgency-medium: var(--status-info);
+    --urgency-high: var(--status-warning);
+    --urgency-urgent: var(--status-danger);
+
+    /* Event type colours - defined once here so the weekly board, the
+       schedule dots and the legend can never drift apart again. They
+       previously lived as literals in renderer.js while the legend used
+       its own hardcoded set, which is how the legend ended up listing
+       two types that don't exist. */
+    /* Muted, desaturated versions rather than the full status colours. The
+       status palette is tuned for alerts - it needs to shout. A calendar is
+       read for minutes at a time, so the same saturation becomes tiring and
+       fights the neutral chrome. Red in particular reads as "error" on a
+       calendar when it only means "personal". */
+    --event-lesson: #5b8db8;
+    --event-exam: #8f7bb5;
+    --event-study: #6a9c78;
+    --event-personal: #c08552;
+
+    --yellow-badge: #b8860b;
+    --badge-bg: rgba(184, 134, 11, 0.1);
+    --stat-bg: #f1f2f6;
+    --hover-bg: #f1f2f6;
+    --timeline-dot: #d2d6e0;
+    --active-task-bg: rgba(124, 58, 237, 0.06);
+}
+
+body.dark-mode {
+    --bg-main: #131419;
+    --bg-sidebar: #0e0f13;
+    --bg-card: #1c1e25;
+    --bg-subtle: #24262f;
+    --bg-overlay: rgba(0, 0, 0, 0.65);
+
+    --text-primary: #f2f3f5;
+    --text-secondary: #9aa0b0;
+    --text-tertiary: #6b7182;
+    --text-inverse: #14161f;
+
+    --accent-purple: #a78bfa;
+    --accent-hover: #c4b5fd;
+    --accent-subtle: rgba(167, 139, 250, 0.12);
+
+    --border-color: #2a2d36;
+    --border-strong: #3a3e4a;
+
+    --status-success: #4ade80;
+    --status-success-bg: rgba(74, 222, 128, 0.12);
+    --status-warning: #fbbf24;
+    --status-warning-bg: rgba(251, 191, 36, 0.12);
+    --status-danger: #f87171;
+    --status-danger-bg: rgba(248, 113, 113, 0.12);
+    --status-info: #60a5fa;
+    --status-info-bg: rgba(96, 165, 250, 0.12);
+
+    --yellow-badge: #d4af37;
+    --badge-bg: rgba(212, 175, 55, 0.18);
+    --stat-bg: rgba(255, 255, 255, 0.04);
+    --hover-bg: rgba(255, 255, 255, 0.05);
+    --timeline-dot: #3a3e4a;
+    --active-task-bg: rgba(167, 139, 250, 0.08);
+
+    /* Shadows need to be much heavier on dark surfaces to read at all */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.36);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.44);
+}
+
+/* ==========================================================================
+   Reusable primitives
+   ========================================================================== */
+
+/* Buttons - one class, variants via modifier. Replaces the dozens of
+   per-element inline button styles scattered through the HTML. */
+.ms-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    font-family: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out),
+                transform var(--duration-fast) var(--ease-out);
+    white-space: nowrap;
+}
+
+.ms-btn:active:not(:disabled) { transform: translateY(1px); }
+.ms-btn:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.ms-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ms-btn--primary {
+    background: var(--accent-purple);
+    color: var(--text-inverse);
+}
+.ms-btn--primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+.ms-btn--secondary {
+    background: transparent;
+    color: var(--text-primary);
+    border-color: var(--border-strong);
+}
+.ms-btn--secondary:hover:not(:disabled) { background: var(--hover-bg); }
+
+.ms-btn--ghost {
+    background: transparent;
+    color: var(--text-secondary);
+    padding: var(--space-2);
+}
+.ms-btn--ghost:hover:not(:disabled) { background: var(--hover-bg); color: var(--text-primary); }
+
+.ms-btn--success { background: var(--status-success); color: #fff; }
+.ms-btn--danger  { background: var(--status-danger);  color: #fff; }
+
+.ms-btn--sm { padding: var(--space-1) var(--space-3); font-size: var(--text-xs); }
+.ms-btn--icon { padding: var(--space-2); border-radius: var(--radius-sm); }
+
+/* Inputs */
+.ms-input {
+    width: 100%;
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: var(--bg-main);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: var(--text-sm);
+    transition: border-color var(--duration-fast) var(--ease-out),
+                box-shadow var(--duration-fast) var(--ease-out);
+}
+.ms-input::placeholder { color: var(--text-tertiary); }
+.ms-input:focus {
+    outline: none;
+    border-color: var(--accent-purple);
+    box-shadow: var(--shadow-focus);
+}
+
+/* Cards */
+.ms-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: var(--space-5);
+    box-shadow: var(--shadow-sm);
+}
+
+/* Badges / pills */
+.ms-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-full);
+    font-size: var(--text-xs);
+    font-weight: var(--font-semibold);
+    line-height: 1.4;
+}
+.ms-badge--accent  { background: var(--accent-subtle);      color: var(--accent-purple); }
+.ms-badge--success { background: var(--status-success-bg);  color: var(--status-success); }
+.ms-badge--warning { background: var(--status-warning-bg);  color: var(--status-warning); }
+.ms-badge--danger  { background: var(--status-danger-bg);   color: var(--status-danger); }
+.ms-badge--info    { background: var(--status-info-bg);     color: var(--status-info); }
+
+/* Utility helpers - a small set, not a full framework */
+.ms-stack   { display: flex; flex-direction: column; }
+.ms-row     { display: flex; align-items: center; }
+.ms-gap-1 { gap: var(--space-1); } .ms-gap-2 { gap: var(--space-2); }
+.ms-gap-3 { gap: var(--space-3); } .ms-gap-4 { gap: var(--space-4); }
+.ms-gap-5 { gap: var(--space-5); }
+.ms-grow    { flex: 1; min-width: 0; }
+.ms-shrink-0 { flex-shrink: 0; }
+.ms-muted   { color: var(--text-secondary); }
+.ms-text-sm { font-size: var(--text-sm); }
+.ms-text-xs { font-size: var(--text-xs); }
+
+/* Screen-reader-only text, for icon-only buttons */
+.ms-sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Respect the OS "reduce motion" setting - an accessibility basic that
+   also signals a polished product. */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+}

@@ -1,0 +1,17 @@
+/node_modules
+.env
+credentials.json
+token.json
+
+# קובצי מערכת נסתרים (של מאק ווינדוס) שאין להם קשר לקוד
+.DS_Store
+Thumbs.db
+
+# קובצי לוג של שגיאות שיכולים להיווצר פתאום
+*.log
+npm-debug.log*
+
+# תיקיות שייווצרו בעתיד כשנרצה לארוז את התוכנה לקובץ התקנה (exe)
+/dist
+/out
+/build
