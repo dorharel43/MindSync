@@ -1144,17 +1144,6 @@ svg { vertical-align: -0.125em; flex-shrink: 0; }
     padding: 0 var(--space-4) var(--space-3);
 }
 
-.sidebar-stat {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    font-size: var(--text-xs);
-    color: var(--text-secondary);
-    font-variant-numeric: tabular-nums;
-}
-.sidebar-stat svg { color: var(--status-warning); }
-.sidebar-stat__label { color: var(--text-tertiary); }
-
 .user-profile {
     display: flex;
     align-items: center;
@@ -1193,40 +1182,7 @@ svg { vertical-align: -0.125em; flex-shrink: 0; }
 /* ==========================================================================
    18. Progress view
    ========================================================================== */
-.level-card { margin-bottom: var(--space-4); }
-.level-card__head {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: var(--space-4);
-    margin-bottom: var(--space-4);
-    flex-wrap: wrap;
-}
-.level-card__label {
-    font-size: var(--text-xs);
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-weight: var(--font-semibold);
-    margin-bottom: var(--space-1);
-}
-.level-card__title { font-size: var(--text-xl); }
-.level-card__xp { font-size: var(--text-base); font-weight: var(--font-semibold); font-variant-numeric: tabular-nums; }
-.level-card__foot { margin-top: var(--space-3); }
-
-.xp-track {
-    height: 10px;
-    background: var(--bg-subtle);
-    border-radius: var(--radius-full);
-    overflow: hidden;
-}
-.xp-fill {
-    height: 100%;
-    width: 0%;
-    background: var(--accent-purple);
-    border-radius: var(--radius-full);
-    transition: width var(--duration-slow) var(--ease-out);
-}
+/* The level card, XP bar and streak chip were deleted with the feature. */
 
 .metric-grid {
     display: grid;
@@ -1351,21 +1307,9 @@ svg { vertical-align: -0.125em; flex-shrink: 0; }
 
 /* Put the level card and the metric strip side by side on wide screens, so
    the top of the page is one horizontal band instead of two stacked rows. */
-.progress-top {
-    display: grid;
-    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
-    gap: var(--space-4);
-    margin-bottom: var(--space-4);
-    align-items: stretch;
-}
-@media (max-width: 1100px) {
-    .progress-top { grid-template-columns: 1fr; }
-}
-.progress-top .level-card { margin-bottom: 0; }
-.progress-top .metric-grid {
-    grid-template-columns: repeat(2, 1fr);
-    margin-bottom: 0;
-}
+/* .progress-top held the level card beside the metric strip. With the level
+   card gone there is nothing to sit beside, so the wrapper went too and the
+   metrics span the row on their own. */
 
 
 /* ==========================================================================
@@ -1979,6 +1923,7 @@ kbd.kbd {
 }
 [dir="rtl"] .nav-badge { margin-left: 0; margin-right: auto; }
 
+/* Breathing room between the subject row and the actions under it. */
 .study-start-row {
     display: flex;
     gap: var(--space-3);
@@ -2021,6 +1966,547 @@ kbd.kbd {
 .study-card__mode { display: flex; gap: var(--space-2); margin-bottom: var(--space-5); }
 
 /* The question is the focus of the screen - everything else is chrome. */
+/* The two panels change height when the subject changes: one subject has
+   nine confidently-wrong questions and the next has one. Without a floor the
+   whole page jumps as you click between subjects, which makes a redraw feel
+   like a navigation. A reserved minimum keeps the layout still.
+
+   Roughly four rows' worth - enough that the common cases don't move, while
+   an unusually long list still grows rather than scrolling inside a box. */
+.progress-columns > .card {
+    min-height: 300px;
+}
+
+@media (max-width: 900px) {
+    /* Stacked, the reserved space becomes dead scroll rather than stability. */
+    .progress-columns > .card { min-height: 0; }
+}
+
+/* "Start fresh" throws away a saved place in a session.
+   The other buttons in this row all do the same kind of thing - work with
+   questions - so looking alike is right for them. This one doesn't, and the
+   primary button beside it already earns its colour the same way. Carrying a
+   colour of its own is what stops it being read as a fifth ordinary action
+   and clicked out of habit. */
+.btn-ghost-danger {
+    padding: var(--space-2) var(--space-5);
+    border: none;
+    border-radius: var(--radius-md);
+    background: var(--status-danger);
+    color: #fff;
+    font-family: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    cursor: pointer;
+    box-shadow: var(--shadow-sm);
+    transition: filter var(--duration-fast) var(--ease-out),
+                transform var(--duration-fast) var(--ease-out);
+}
+.btn-ghost-danger:hover { filter: brightness(1.08); }
+.btn-ghost-danger:active { transform: translateY(1px); }
+.btn-ghost-danger:focus-visible {
+    outline: 2px solid var(--status-danger);
+    outline-offset: 2px;
+}
+
+/* Numbered setup for the API key. The steps are the feature here - each one
+   is a single action, and the first has a button so nobody has to type a URL
+   from a hint line. */
+.key-steps {
+    margin: var(--space-4) 0;
+    padding: var(--space-4) var(--space-5);
+    padding-inline-start: calc(var(--space-5) + 1.2em);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--leading-relaxed);
+}
+.key-steps li { margin-bottom: var(--space-3); }
+.key-steps li:last-child { margin-bottom: 0; }
+.key-steps li > span { margin-inline-end: var(--space-3); }
+.key-steps strong { color: var(--text-primary); }
+.key-steps code {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    padding: 1px 5px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    unicode-bidi: isolate;
+}
+
+/* A quiet way across to Progress: a link, not a fifth button competing with
+   the row above it. */
+.panel-link {
+    display: inline-block;
+    margin-top: var(--space-4);
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent-purple);
+    font-family: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    cursor: pointer;
+}
+.panel-link:hover { text-decoration: underline; }
+.panel-link:focus-visible { outline: 2px solid var(--accent-purple); outline-offset: 3px; }
+
+/* Three analytics panels side by side on Progress, where there is room for
+   them - stacked on Study they became a column nobody read to the end of. */
+.analytics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: var(--space-5);
+    align-items: start;
+}
+/* Each cell owns its own top rule, so the first one doesn't sit flush under
+   the heading while the others are separated. */
+.analytics-cell .trend,
+.analytics-cell .mix-head { margin-top: 0; }
+.analytics-cell .trend { border-top: none; padding-top: 0; }
+
+/* A Hebrew course name inside an English sentence gets reordered by the bidi
+   algorithm: the name's direction leaks outward and drags the surrounding
+   punctuation and percentages out of place, which is why the verdict line
+   came out scrambled. Isolation stops the two from negotiating - the name is
+   laid out as one opaque unit and the sentence around it is left alone. */
+.bidi-name {
+    unicode-bidi: isolate;
+    font-weight: var(--font-semibold);
+}
+
+/* That verdict carries two long course names. Inline, they wrap mid-name and
+   the sentence stops being readable, so each gets its own row. */
+.cal-verdict__row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-3);
+    margin-bottom: var(--space-2);
+}
+.cal-verdict__label { flex-shrink: 0; opacity: 0.85; }
+.cal-verdict__name { min-width: 0; overflow-wrap: anywhere; text-align: start; flex: 1; }
+.cal-verdict__pct { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.cal-verdict__tail { margin-top: var(--space-3); }
+
+/* ==========================================================================
+   Confidence mix, trend and pace (left column of the study screen)
+   ========================================================================== */
+.mix-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin: var(--space-5) 0 var(--space-2);
+}
+.mix-bar {
+    display: flex;
+    height: 8px;
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    background: var(--bg-subtle);
+}
+.mix-seg { height: 100%; }
+.mix-seg.cal-good { background: var(--status-success); }
+.mix-seg.cal-ok   { background: var(--status-warning); }
+.mix-seg.cal-bad  { background: var(--status-danger); }
+
+.mix-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin-top: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+}
+.mix-legend__item { display: inline-flex; align-items: center; gap: 6px; }
+.mix-dot { width: 8px; height: 8px; border-radius: var(--radius-full); display: inline-block; }
+.mix-dot.cal-good { background: var(--status-success); }
+.mix-dot.cal-ok   { background: var(--status-warning); }
+.mix-dot.cal-bad  { background: var(--status-danger); }
+
+.trend {
+    margin-top: var(--space-5);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border-color);
+}
+.trend__title { margin-bottom: var(--space-3); color: var(--text-secondary); }
+.trend__pair {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-5);
+}
+.trend__side { text-align: center; }
+.trend__value { font-size: var(--text-2xl); font-weight: var(--font-semibold); }
+.trend__arrow { font-size: var(--text-xl); }
+.trend__note { margin-top: var(--space-3); line-height: var(--leading-normal); }
+.pace-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: var(--space-1) 0;
+    font-size: var(--text-sm);
+}
+
+/* A question carrying a whole Java class would otherwise make one list row
+   taller than the panel. The code keeps its formatting but is boxed to a few
+   lines, with the rest reachable by scrolling inside the block. */
+/* An inner scrollbar inside a list row is the worst of both worlds: it eats
+   the panel's height AND hides most of the code. The block is clamped to
+   roughly eight lines and faded out at the cut instead - the shape of the
+   code is still legible at a glance, and the full text is one click away in
+   the session itself. No nested scrolling. */
+.attention-item .code-block {
+    position: relative;
+    max-height: 11em;
+    overflow: hidden;
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    margin: var(--space-2) 0;
+    white-space: pre;
+    mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+}
+
+/* Expanding is done with an inline style on the block itself (see
+   renderConfidentlyWrong) rather than a class here: several rules in this
+   file touch .code-block and the winner is not obvious, so the toggle must
+   not depend on getting the cascade right. */
+
+/* Same lesson as "Show the answer": a line of small coloured text is not a
+   target. It gets a border, a surface and real padding so there is something
+   to aim at, while staying quiet enough to sit inside a list row. */
+.code-expand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    cursor: pointer;
+    transition: border-color var(--duration-fast) var(--ease-out),
+                background-color var(--duration-fast) var(--ease-out);
+}
+.code-expand::before {
+    content: '▸';
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+.code-expand:hover {
+    border-color: var(--accent-purple);
+    background: var(--accent-subtle);
+}
+.code-expand:focus-visible { outline: 2px solid var(--accent-purple); outline-offset: 2px; }
+.attention-item__title .rich-prose { font-size: var(--text-sm); }
+.attention-item { padding: var(--space-3) 0; }
+
+/* The manual deadline and size fields were removed: both are read from the
+   sentence now, which is the whole point of typing one. */
+
+/* ==========================================================================
+   Planned blocks and the link back to their task
+   --------------------------------------------------------------------------
+   A study block the user placed and one the planner placed behave
+   differently: re-planning sweeps the second and leaves the first. That has
+   to be visible, or the next re-plan looks like the app deleted things at
+   random. A dashed edge reads as "provisional" without adding another colour
+   to a board that already has four.
+   ========================================================================== */
+.task-card--planned {
+    border-style: dashed;
+}
+.task-card--linked { cursor: pointer; }
+.task-card--linked:hover { filter: brightness(0.97); }
+
+/* Arriving from a calendar block. Deliberately brief - it marks the moment
+   you land, not a state the task stays in. */
+.task-card--highlight {
+    outline: 2px solid var(--accent-purple);
+    outline-offset: 3px;
+    transition: outline-color var(--duration-slow) var(--ease-out);
+}
+
+/* ==========================================================================
+   Import screen
+   ========================================================================== */
+.import-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+    margin: var(--space-4) 0;
+}
+.import-box {
+    width: 100%;
+    min-height: 220px;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: 1.6;
+    resize: vertical;
+    /* Pasted decks are frequently Hebrew on one side and English on the
+       other, so the box follows whatever is typed into it rather than being
+       pinned to one direction. */
+    direction: ltr;
+    text-align: start;
+    unicode-bidi: plaintext;
+    white-space: pre;
+    overflow-x: auto;
+}
+.import-footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--space-4);
+}
+
+/* ==========================================================================
+   Review screen - looking back at answered questions
+   ========================================================================== */
+.browse-item__q { margin-bottom: var(--space-1); }
+.browse-item__reveal { margin-top: var(--space-3); }
+
+/* A bare <summary> is a 12px line of grey text with no hit area worth the
+   name. This is the only control on the row, so it looks and behaves like a
+   button: a real target to aim at, not a word to hunt for. */
+.browse-item__reveal > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-subtle);
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    cursor: pointer;
+    user-select: none;
+    list-style: none;                 /* drop the default triangle... */
+    transition: background-color var(--duration-fast) var(--ease-out),
+                border-color var(--duration-fast) var(--ease-out);
+}
+.browse-item__reveal > summary::-webkit-details-marker { display: none; }
+
+/* ...and draw our own, so open/closed is still obvious. */
+.browse-item__reveal > summary::before {
+    content: '▸';
+    font-size: 11px;
+    color: var(--text-secondary);
+    transition: transform var(--duration-fast) var(--ease-out);
+}
+.browse-item__reveal[open] > summary::before { transform: rotate(90deg); }
+
+.browse-item__reveal > summary:hover {
+    background: var(--bg-card);
+    border-color: var(--border-strong);
+}
+.browse-item__reveal > summary:focus-visible {
+    outline: 2px solid var(--accent-purple);
+    outline-offset: 2px;
+}
+
+.browse-item__a {
+    margin-top: var(--space-3);
+    padding-inline-start: var(--space-3);
+    border-inline-start: 2px solid var(--border-color);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   AI progress overlay
+   --------------------------------------------------------------------------
+   Reading a PDF can take a minute, and longer when a model is overloaded and
+   the request walks down the fallback chain. A still screen during that is
+   indistinguishable from a crash, so this shows motion, a live message about
+   what is happening, and a running clock.
+   ========================================================================== */
+.ai-progress {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-overlay, rgba(15, 17, 22, 0.55));
+    backdrop-filter: blur(2px);
+}
+.ai-progress__box {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    padding: var(--space-6);
+    text-align: center;
+    max-width: 380px;
+    width: calc(100% - var(--space-8));
+}
+.ai-progress__spinner {
+    width: 32px;
+    height: 32px;
+    margin: 0 auto var(--space-4);
+    border: 3px solid var(--bg-subtle);
+    border-top-color: var(--accent-purple);
+    border-radius: var(--radius-full);
+    animation: ai-progress-spin 0.8s linear infinite;
+}
+@keyframes ai-progress-spin { to { transform: rotate(360deg); } }
+.ai-progress__title {
+    font-size: var(--text-base);
+    font-weight: var(--font-semibold);
+    color: var(--text-primary);
+    margin-bottom: var(--space-2);
+}
+.ai-progress__detail {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    min-height: 2.4em;
+}
+.ai-progress__elapsed {
+    margin-top: var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Respect a reduced-motion preference: the message and clock still convey
+   that work is happening. */
+@media (prefers-reduced-motion: reduce) {
+    .ai-progress__spinner { animation-duration: 3s; }
+}
+
+/* ==========================================================================
+   Subject picker on the study screen
+   ========================================================================== */
+/* The label used to sit inline to the left of the chips, which squeezed them
+   against it - and with long Hebrew course names the whole row ran out of
+   width and packed tight. It gets its own line, and the block gets real air
+   above and below so the screen isn't one dense stack. */
+.subject-picker {
+    margin: var(--space-6) 0;
+}
+.subject-picker__label {
+    display: block;
+    margin-bottom: var(--space-2);
+    font-size: var(--text-xs);
+    font-weight: var(--font-medium);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+/* Wrap rather than overflow: a student with six courses still sees all six. */
+.subject-picker .filter-group {
+    display: flex;
+    flex-wrap: wrap;
+    padding: 4px;
+    gap: 4px;
+}
+/* These were grey text on a grey strip, and the selected one was barely
+   distinguishable from the rest. They pick what you study tonight, so they
+   need to read as controls: a real edge, a surface of their own, and a
+   selected state you can spot without hunting. */
+.subject-picker .filter-chip {
+    padding: var(--space-2) var(--space-4);
+    line-height: var(--leading-normal);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-weight: var(--font-medium);
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    box-shadow: var(--shadow-sm);
+    transition: border-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out),
+                background-color var(--duration-fast) var(--ease-out);
+}
+.subject-picker .filter-chip:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+.subject-picker .filter-chip.active {
+    border-color: var(--accent-purple);
+    background: var(--accent-subtle);
+    color: var(--accent-purple);
+    font-weight: var(--font-semibold);
+}
+.subject-picker .filter-group {
+    background: transparent;
+    padding: 0;
+    gap: var(--space-2);
+}
+/* The count is the point of the chip - it says what this course costs you
+   tonight - so it stays legible rather than shrinking into decoration. */
+.filter-chip__count {
+    display: inline-block;
+    margin-inline-start: var(--space-1);
+    padding: 0 6px;
+    border-radius: var(--radius-full);
+    background: var(--bg-subtle);
+    font-size: var(--text-xs);
+    font-variant-numeric: tabular-nums;
+}
+.filter-chip.active .filter-chip__count {
+    background: var(--accent-subtle);
+    color: var(--accent-purple);
+}
+
+/* ==========================================================================
+   Code inside a question or answer
+   --------------------------------------------------------------------------
+   Two things a code snippet needs that prose does not: its line breaks kept
+   (HTML collapses them, which turned a thirty-line Java class into one
+   paragraph), and an explicit left-to-right direction. Inside a Hebrew
+   question the bidi algorithm reorders braces, semicolons and dots, so the
+   snippet stops matching what the student would see in an editor.
+   `unicode-bidi: isolate` stops the block from taking part in the direction
+   of the sentence around it.
+   ========================================================================== */
+.code-block {
+    direction: ltr;
+    text-align: left;
+    unicode-bidi: isolate;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: 1.6;
+    color: var(--text-primary);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    margin: var(--space-3) 0;
+    /* Nothing may be hidden off to the side. Horizontal scrolling inside a
+       block you are trying to read is worse than a wrapped line: you lose
+       your place every time you scroll back. The renderer re-indents long
+       code first, so wrapping is now the exception rather than the rule. */
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    tab-size: 4;
+}
+
+.rich-prose {
+    /* Blank lines the model put between paragraphs are meaningful. */
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
+/* The approval screen shows the same generated text, so it has the same
+   problem - but those fields are contenteditable and must stay plain. */
+.review-item__q,
+.review-item__a {
+    white-space: pre-wrap;
+}
+
 .study-question {
     font-size: var(--text-xl);
     line-height: var(--leading-normal);
@@ -2407,19 +2893,5 @@ kbd.kbd {
 .review-item__source--doc { background: var(--status-success-bg); color: var(--status-success); }
 
 /* Resume-session banner */
-.resume-banner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
-    padding: var(--space-3) var(--space-4);
-    background: var(--accent-subtle);
-    border: 1px solid var(--accent-purple);
-    border-radius: var(--radius-md);
-    margin-bottom: var(--space-4);
-    flex-wrap: wrap;
-}
-.resume-banner__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.resume-banner__text strong { font-size: var(--text-sm); color: var(--text-primary); }
-.resume-banner__text span { font-size: var(--text-xs); color: var(--text-secondary); }
-.resume-banner__actions { display: flex; gap: var(--space-2); flex-shrink: 0; }
+/* The resume banner was removed: a paused session now shows on the start
+   button itself, so appearing and disappearing can't shift the page. */

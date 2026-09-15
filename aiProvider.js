@@ -41,7 +41,9 @@ function readConfig() {
     try {
         cachedConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     } catch {
-        cachedConfig = { provider: 'auto', geminiKey: '', geminiModel: 'gemini-3.6-flash' };
+        // No geminiModel here on purpose: resolveGeminiModel() decides, so a
+        // fresh install can never be born pinned to a model that will age out.
+        cachedConfig = { provider: 'auto', geminiKey: '' };
     }
     return cachedConfig;
 }
@@ -141,7 +143,11 @@ async function callOllama(prompt, { model, maxTokens = 800, forceJson = false, s
 // ---- Gemini (cloud, multimodal) ---------------------------------------------
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-async function callGemini({ apiKey, model, parts, maxTokens = 2048, forceJson = false, system = null, thinkingLevel = 'low' }) {
+async function callGemini({ apiKey, model, parts, maxTokens = 2048, forceJson = false, system = null, thinkingLevel = 'low', onProgress = null }) {
+    // Progress is reported outward, never printed only to a terminal the user
+    // will not see. A silent 90-second retry sequence is indistinguishable
+    // from a frozen app.
+    const report = (msg) => { try { if (onProgress) onProgress(msg); } catch { /* never break a generation over a UI message */ } };
     // Media resolution only applies when something visual is attached.
     const hasMedia = parts.some(p => p.inlineData);
     // Note: Gemini 3.x ignores temperature / topK / topP, and rejects the
@@ -177,24 +183,76 @@ async function callGemini({ apiKey, model, parts, maxTokens = 2048, forceJson = 
     if (system) body.systemInstruction = { parts: [{ text: system }] };
 
     const started = Date.now();
-    // Authenticate with the header rather than a query parameter. It's the
-    // documented form, and it keeps the key out of URLs - which end up in
-    // proxy logs, crash reports and error messages.
-    const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey
-        },
-        body: JSON.stringify(body)
-    });
 
-    const raw = await res.text();
-    let data;
-    try {
-        data = JSON.parse(raw);
-    } catch {
-        data = null;
+    // Transient failures get retried rather than thrown at the user.
+    //
+    // A 503 UNAVAILABLE means Google is busy this second, not that anything
+    // is wrong with the request - the identical call usually succeeds moments
+    // later. That matters most on PDF generation, where a failure throws away
+    // an upload, a minute of reading and the whole batch of questions, and
+    // the only recovery is to start the entire flow again.
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+    // 2s, 4s, 8s - about fifteen seconds per model.
+    //
+    // Deliberately short. A saturated serving pool takes 30-120 minutes to
+    // recover, so waiting longer here buys nothing: the win is reaching the
+    // NEXT model in the chain, which sits on its own capacity. Time spent
+    // backing off on a model that is full is time not spent asking one that
+    // isn't.
+    const MAX_ATTEMPTS = 4;
+
+    let res = null;
+    let raw = '';
+    let data = null;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+            // Authenticate with the header rather than a query parameter. It's
+            // the documented form, and it keeps the key out of URLs - which
+            // end up in proxy logs, crash reports and error messages.
+            res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-goog-api-key': apiKey
+                },
+                body: JSON.stringify(body)
+            });
+        } catch (netErr) {
+            // Dropped connection mid-upload: also worth another go.
+            if (attempt === MAX_ATTEMPTS) {
+                throw new Error(`Can't reach Gemini after ${MAX_ATTEMPTS} attempts: ${netErr.message}`);
+            }
+            const wait = 2000 * Math.pow(2, attempt - 1);
+            console.warn(`⏳ Network error reaching Gemini (${netErr.message}) — retrying in ${(wait / 1000).toFixed(0)}s [${attempt}/${MAX_ATTEMPTS}]`);
+            report(`Network problem — retrying in ${Math.round(wait / 1000)}s (${attempt}/${MAX_ATTEMPTS})`);
+            await sleep(wait);
+            continue;
+        }
+
+        raw = await res.text();
+        try { data = JSON.parse(raw); } catch { data = null; }
+
+        if (res.ok) break;
+
+        if (RETRYABLE.has(res.status) && attempt < MAX_ATTEMPTS) {
+            // Google's own Retry-After wins when it sends one; otherwise back
+            // off exponentially with a little jitter, so several requests
+            // that failed together don't all return at the same instant.
+            const retryAfter = Number(res.headers.get('retry-after'));
+            const wait = Number.isFinite(retryAfter) && retryAfter > 0
+                ? retryAfter * 1000
+                : 2000 * Math.pow(2, attempt - 1) + Math.round(Math.random() * 500);
+            console.warn(`⏳ Gemini ${res.status} ${res.statusText} — retrying in ${(wait / 1000).toFixed(1)}s [${attempt}/${MAX_ATTEMPTS}]`);
+            report(res.status === 429
+                ? `Rate limited — waiting ${Math.round(wait / 1000)}s (${attempt}/${MAX_ATTEMPTS})`
+                : `${model} is busy — retrying in ${Math.round(wait / 1000)}s (${attempt}/${MAX_ATTEMPTS})`);
+            await sleep(wait);
+            continue;
+        }
+
+        break; // not retryable, or attempts exhausted - handled below
     }
 
     if (!res.ok) {
@@ -226,6 +284,13 @@ async function callGemini({ apiKey, model, parts, maxTokens = 2048, forceJson = 
         }
         if (res.status === 429) {
             throw new Error('Gemini rate limit reached. Wait a minute, or switch to the local model in Settings.');
+        }
+        if (res.status === 503 || res.status === 502 || res.status === 504) {
+            const overloaded = new Error(`Gemini is overloaded right now. The app retried ${MAX_ATTEMPTS} times and it was still busy — this is on Google's side and usually passes within a few minutes. Try again shortly, or switch to the local model in Settings.`);
+            // Tagged so the caller can try a different model: capacity is
+            // per-model, so one being full says nothing about the others.
+            overloaded.geminiOverloaded = true;
+            throw overloaded;
         }
         throw new Error(msg);
     }
@@ -263,6 +328,103 @@ async function callGemini({ apiKey, model, parts, maxTokens = 2048, forceJson = 
     return text;
 }
 
+// Capacity on Google's side is allocated per model, so one being full says
+// nothing about the others: a 503 on one Flash model is routine while the
+// next one answers immediately. When the primary model stays overloaded
+// after every retry, the same request is sent to the next model in this list
+// rather than failing the whole generation.
+//
+// Verified against Google's model list in September 2026. Only the Gemini 3
+// line is here: the 2.x models are two generations back and are no longer
+// served, so listing them would just burn attempts on a guaranteed failure.
+//
+// Ordered newest first, with the Lite models last. That tail is not an
+// afterthought: a saturated pool on a heavy model takes 30-120 minutes to
+// recover, while the Lite pools recover in 5-15 and are far harder to
+// saturate in the first place. A Lite model writes weaker questions - but
+// every generated question passes through the approval screen anyway, and
+// weaker questions the student can filter beat no questions at all on the
+// night before an exam.
+//
+// This list WILL go stale - Google shipped three Flash models in this line
+// alone. A name that no longer exists is skipped, not fatal, so an
+// out-of-date entry costs one wasted call and nothing more.
+const GEMINI_FALLBACK_CHAIN = [
+    'gemini-3.8-flash',
+    'gemini-3.7-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite'
+];
+
+// Newest first, so the head of the chain is also the default. Adding a newer
+// model to the top of the list above is the only change needed to move every
+// call onto it.
+const DEFAULT_GEMINI_MODEL = GEMINI_FALLBACK_CHAIN[0];
+
+// Which model a request actually uses.
+//
+// The settings screen has no model picker - it only ever sends `provider` and
+// `geminiKey` - so a model name sitting in ai-config.json was never chosen by
+// the user. It is a leftover: whatever shipped as the default on the day that
+// file was first written. Treating it as a preference would pin everyone to
+// an old model forever and make upgrading the default a no-op.
+//
+// So a name we recognise as one of our own defaults is ignored in favour of
+// the current one. A name we don't recognise was typed into the file by hand
+// and is respected, as is anything marked `modelPinned` - the escape hatch
+// for staying on a specific model deliberately.
+function resolveGeminiModel(cfg = readConfig()) {
+    const stored = String(cfg.geminiModel || '').trim();
+    if (cfg.modelPinned && stored) return stored;
+    if (!stored || GEMINI_FALLBACK_CHAIN.includes(stored)) return DEFAULT_GEMINI_MODEL;
+    return stored;
+}
+
+function modelChain(configured) {
+    const primary = configured || GEMINI_FALLBACK_CHAIN[0];
+    return [primary, ...GEMINI_FALLBACK_CHAIN.filter(m => m !== primary)];
+}
+
+// callGemini, plus "if this model is full, try the next one".
+async function callGeminiResilient(options) {
+    const chain = modelChain(options.model);
+    let firstOverload = null;
+
+    for (let i = 0; i < chain.length; i++) {
+        try {
+            if (options.onProgress) {
+                options.onProgress(i === 0
+                    ? `Reading the document with ${chain[i]}...`
+                    : `Retrying with ${chain[i]}...`);
+            }
+            const text = await callGemini({ ...options, model: chain[i] });
+            if (i > 0) console.log(`✅ Answered by the fallback model ${chain[i]}.`);
+            return text;
+        } catch (err) {
+            // A fallback model failing for its own reasons - renamed,
+            // retired, or not enabled on this key - must not replace the real
+            // story, which is that the model the user chose was overloaded.
+            if (i > 0 && !err.geminiOverloaded) {
+                console.warn(`⚠️ Fallback model ${chain[i]} unusable, skipping it: ${err.message}`);
+                continue;
+            }
+            if (!err.geminiOverloaded) throw err;
+
+            firstOverload = firstOverload || err;
+            if (chain[i + 1]) {
+                console.warn(`⚠️ ${chain[i]} is overloaded — trying ${chain[i + 1]} instead.`);
+                if (options.onProgress) {
+                    options.onProgress(`${chain[i]} is overloaded — switching to ${chain[i + 1]}`);
+                }
+            }
+        }
+    }
+
+    throw firstOverload;
+}
+
 // ---- Public interface --------------------------------------------------------
 
 function resolveProvider() {
@@ -281,14 +443,15 @@ async function generateText(prompt, options = {}) {
 
     if (provider === 'gemini') {
         try {
-            return await callGemini({
+            return await callGeminiResilient({
                 apiKey: cfg.geminiKey,
-                model: cfg.geminiModel || 'gemini-3.6-flash',
+                model: resolveGeminiModel(cfg),
                 parts: [{ text: prompt }],
                 maxTokens: options.maxTokens || 2048,
                 forceJson: options.forceJson,
                 system: options.system,
-                thinkingLevel: options.thinkingLevel || 'low'
+                thinkingLevel: options.thinkingLevel || 'low',
+                onProgress: options.onProgress || null
             });
         } catch (err) {
             // Falling back keeps the app usable when the network or the quota
@@ -329,14 +492,15 @@ async function generateFromPdf(pdfBuffer, prompt, options = {}) {
         { inlineData: { mimeType: 'application/pdf', data: pdfBuffer.toString('base64') } }
     ];
 
-    return callGemini({
+    return callGeminiResilient({
         apiKey: cfg.geminiKey,
-        model: cfg.geminiModel || 'gemini-3.6-flash',
+        model: resolveGeminiModel(cfg),
         parts,
         maxTokens: options.maxTokens || 8192,
         forceJson: options.forceJson,
         system: options.system,
-        thinkingLevel: options.thinkingLevel || 'low'
+        thinkingLevel: options.thinkingLevel || 'low',
+        onProgress: options.onProgress || null
     });
 }
 
@@ -363,20 +527,21 @@ async function generateFromImages(images, prompt, options = {}) {
         ...images.map(img => ({ inlineData: { mimeType: img.mimeType, data: img.data } }))
     ];
 
-    return callGemini({
+    return callGeminiResilient({
         apiKey: cfg.geminiKey,
-        model: cfg.geminiModel || 'gemini-3.6-flash',
+        model: resolveGeminiModel(cfg),
         parts,
         maxTokens: options.maxTokens || 4096,
         forceJson: options.forceJson,
         system: options.system,
-        thinkingLevel: options.thinkingLevel || 'low'
+        thinkingLevel: options.thinkingLevel || 'low',
+        onProgress: options.onProgress || null
     });
 }
 
 // Cheap round-trip to confirm a pasted key actually works, so the user finds
 // out in Settings rather than when a generation silently fails.
-async function testGeminiKey(apiKey, model = 'gemini-3.6-flash') {
+async function testGeminiKey(apiKey, model = DEFAULT_GEMINI_MODEL) {
     const key = String(apiKey || '').trim();
     // Never log the key itself - only enough to confirm what was received.
     console.log(`🔑 Testing key: ${key.length} chars, prefix "${key.slice(0, 3)}", model ${model}`);
@@ -421,6 +586,7 @@ module.exports = {
     readConfig,
     writeConfig,
     resolveProvider,
+    resolveGeminiModel,
     generateText,
     generateFromPdf,
     generateFromImages,

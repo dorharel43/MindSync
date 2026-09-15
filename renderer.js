@@ -246,13 +246,39 @@ async function loadAndRenderWeeklyBoard() {
         
         dayEvents.forEach(evt => {
             const taskCard = document.createElement('div');
-            taskCard.className = `task-card ${weeklyClassMap[evt.type] || 'task-lesson'}`;
-            taskCard.style.position = 'relative'; 
-            
+            // Planned blocks are marked. A study block you placed yourself and
+            // one the planner placed behave differently - re-planning sweeps
+            // the second and leaves the first - and that difference has to be
+            // visible, or the next re-plan looks like it deleted things at
+            // random.
+            taskCard.className = `task-card ${weeklyClassMap[evt.type] || 'task-lesson'}${evt.autoScheduled ? ' task-card--planned' : ''}`;
+            taskCard.style.position = 'relative';
+
+            // A range, not a length. The board has no hour grid, so a block
+            // gives no clue when it ends - but "90m" made you do the sum
+            // yourself, and the question people actually have is "when am I
+            // free again", not "how long is this".
+            const timeLabel = evt.durationMinutes
+                ? `${evt.time}–${toTimeString(toMinutes(evt.time) + evt.durationMinutes)}`
+                : evt.time;
+
             taskCard.innerHTML = `
                 <button class="btn-icon btn-icon--danger delete-weekly-btn" title="Delete from calendar" aria-label="Delete from calendar">${icon('trash')}</button>
-                <div class="task-time">${evt.time}</div>${evt.title}
+                <div class="task-time">${timeLabel}</div>${escapeHtml(evt.title)}
             `;
+
+            // A planned block exists because of a task, so it leads back to
+            // it. Without this the calendar and the task list are two lists
+            // of the same work with no connection between them.
+            if (evt.autoScheduled && evt.task) {
+                taskCard.classList.add('task-card--linked');
+                taskCard.title = 'Open the task this block is for';
+                taskCard.onclick = () => {
+                    highlightTaskId = typeof evt.task === 'object' ? evt.task._id || evt.task.id : evt.task;
+                    const nav = document.getElementById('nav-tasks');
+                    if (nav) nav.click();
+                };
+            }
             
             const delBtn = taskCard.querySelector('.delete-weekly-btn');
             delBtn.onmouseenter = () => delBtn.style.opacity = '1';
@@ -386,8 +412,64 @@ if (saveSmartTaskBtn) {
         saveSmartTaskBtn.disabled = true;
 
         try {
-            const response = await ipcRenderer.invoke('add-smart-task', text, category);
-            const result = JSON.parse(response);
+            let response = await ipcRenderer.invoke('add-smart-task', text, category);
+            let result = JSON.parse(response);
+
+            // A sentence with a start and an end time describes something
+            // already fixed. Nothing has been saved yet, so the answer decides
+            // what gets created rather than correcting it afterwards.
+            if (result.looksFixed) {
+                const f = result.looksFixed;
+
+                // Two ways to be a commitment: it states a time, or it IS one
+                // by nature. The wording says which, because "this has a set
+                // time" would be nonsense for a sentence that has no time.
+                let why;
+                if (f.time) {
+                    const span = f.durationMinutes
+                        ? `${f.time} for ${Math.round((f.durationMinutes / 60) * 10) / 10}h`
+                        : f.time;
+                    why = `This has a set time (${span}), so there's nothing for the planner to decide`;
+                } else {
+                    why = f.kind === 'exam'
+                        ? "An exam happens when it happens — there's nothing for the planner to decide"
+                        : "A class happens when it happens — there's nothing for the planner to decide";
+                }
+
+                const asEvent = await confirmDialog(
+                    'Put this on your calendar?',
+                    `${why} — it sounds like a commitment rather than work to fit in.`,
+                    { confirmText: 'Add to calendar', cancelText: 'Keep as a task' }
+                );
+
+                if (asEvent) {
+                    const eventResponse = await ipcRenderer.invoke('parse-smart-event', text);
+                    const parsed = JSON.parse(eventResponse);
+                    const events = Array.isArray(parsed) ? parsed : [parsed];
+
+                    if (parsed.error) { toast.error('Oops: ' + parsed.error); return; }
+
+                    for (const ev of events) {
+                        // The end time came out of the sentence, so it isn't
+                        // thrown away on the way to the calendar.
+                        if (f.durationMinutes) ev.durationMinutes = f.durationMinutes;
+                        await ipcRenderer.invoke('save-event', ev);
+                    }
+
+                    smartTaskInput.value = '';
+                    if (categoryInput) categoryInput.value = '';
+                    addTaskModal.style.display = 'none';
+                    await loadAndRenderEvents();
+                    await loadAndRenderWeeklyBoard();
+                    await loadAndRenderHome();
+                    toast.success('Added to your week.', 'Fixed commitment');
+                    return;
+                }
+
+                // Kept as a task after all.
+                response = await ipcRenderer.invoke('add-smart-task', text, category, { forceTask: true });
+                result = JSON.parse(response);
+            }
 
             if (result.error) {
                 toast.error("Oops: " + result.error);
@@ -562,6 +644,9 @@ function matchesTaskFilters(task) {
     return true;
 }
 
+// Set when a planned calendar block is clicked, read once by the task list.
+let highlightTaskId = null;
+
 async function loadAndRenderTasks() {
     const tasksListContainer = document.querySelector('.tasks-list');
     if (!tasksListContainer) return;
@@ -676,6 +761,20 @@ async function loadAndRenderTasks() {
 
         const taskCard = document.createElement('div');
         taskCard.className = 'card task-card-full' + (task.status === 'completed' ? ' is-done' : '');
+
+        // Arrived here by clicking a planned block in the calendar. Marking
+        // and scrolling to it is the whole point of the link - landing on a
+        // list of thirty tasks and being left to find the right one is not
+        // an answer.
+        if (highlightTaskId && task.id === highlightTaskId) {
+            taskCard.classList.add('task-card--highlight');
+            requestAnimationFrame(() => {
+                taskCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // One-shot: it marks the arrival, not a state the task is in.
+                setTimeout(() => taskCard.classList.remove('task-card--highlight'), 2500);
+            });
+            highlightTaskId = null;
+        }
 
         taskCard.innerHTML = `
             <div class="task-main-row">
@@ -861,6 +960,7 @@ async function loadAndRenderTasks() {
                 subtasks: (task.subtasks || []).map(st => ({ title: st.title, completed: st.completed }))
             };
 
+            await ipcRenderer.invoke('clear-events-for-task', task.id);
             const res = await ipcRenderer.invoke('delete-task', task.id);
             if (res && res.error) { toast.error(res.error, 'Could not delete'); return; }
 
@@ -899,13 +999,15 @@ async function loadAndRenderTasks() {
             taskCard.classList.add('is-completing');
             completeBtn.disabled = true;
 
-            let earnedXP = 0;
-            try {
-                const result = await ipcRenderer.invoke('complete-task-xp', task.urgency);
-                earnedXP = (result && result.addedXP) || 0;
-            } catch (err) {
-                console.error("Error receiving data:", err);
-            }
+            // No points are awarded here any more. Finishing a task is worth
+            // something because the task is finished, and a product whose
+            // whole claim is an honest account of what you know shouldn't
+            // also be inflating a score for showing up.
+
+            // A finished task has no business still occupying three hours of
+            // Thursday. Its planned blocks go with it - only the planned
+            // ones, so a block the user placed by hand survives.
+            await ipcRenderer.invoke('clear-events-for-task', task.id);
 
             // Archive rather than delete. Completing a task used to remove it
             // permanently, which threw away all history - you could never see
@@ -921,7 +1023,7 @@ async function loadAndRenderTasks() {
             }
 
             showUndoToast(
-                earnedXP > 0 ? `Task done. +${earnedXP} XP` : 'Task marked as done.',
+                'Task marked as done.',
                 async () => {
                     await ipcRenderer.invoke('update-task', task.id, { status: 'open' });
                     await refreshTaskViews();
@@ -1261,49 +1363,61 @@ document.querySelectorAll('.modal-overlay').forEach(modal => {
 // ==========================================
 // 10. Progress & Stats
 // ==========================================
+// The study analytics, on the screen that exists to answer "how am I doing".
+// Deck-wide rather than per-subject: this is the reflective view, and the
+// subject-by-subject comparison below is what breaks it down.
+async function renderStudyAnalytics() {
+    const card = document.getElementById('study-analytics-card');
+    if (!card) return;
+
+    const stats = lastStudyStats || await ipcRenderer.invoke('get-study-stats');
+    if (!stats) { card.hidden = true; return; }
+    lastStudyStats = stats;
+
+    renderConfidenceMix(stats.calibration);
+    renderSureTrend(stats.trend);
+    renderPace(stats.pace);
+    renderSubjectCalibration(stats.subjectCalibration);
+
+    // With no review history at all, every panel inside renders empty - so
+    // the card would be a heading over nothing.
+    card.hidden = !(stats.reviewsAllTime > 0);
+}
+
+// The link from Study across to it.
+const studyProgressLink = document.getElementById('study-progress-link');
+if (studyProgressLink) {
+    studyProgressLink.onclick = () => {
+        const nav = document.getElementById('nav-progress');
+        if (nav) nav.click();
+    };
+}
+
 async function loadAndRenderProgress() {
     const progressView = document.getElementById('view-progress');
     if (!progressView) return;
 
-    const stats = await ipcRenderer.invoke('get-stats');
-    if (!stats) return;
+    renderStudyAnalytics();
 
-    let rankName = "Novice";
-    if (stats.level >= 10 && stats.level <= 24) rankName = "Advanced";
-    else if (stats.level >= 25 && stats.level <= 49) rankName = "Proficient";
-    else if (stats.level >= 50 && stats.level <= 74) rankName = "Expert";
-    else if (stats.level >= 75) rankName = "Master";
+    // The two numbers this screen now leads with come from the study record,
+    // not from a points system: how much you have actually answered, and how
+    // often "I'm sure" turned out to be true.
+    const stats = lastStudyStats || await ipcRenderer.invoke('get-study-stats');
+    if (stats) {
+        lastStudyStats = stats;
+        const reviewsEl = document.getElementById('metric-reviews');
+        if (reviewsEl) reviewsEl.textContent = stats.reviewsAllTime || 0;
 
-    const levelTitle = document.getElementById('user-level-title');
-    const xpText = document.getElementById('user-xp-text');
-    const xpBar = document.getElementById('user-xp-bar');
-    const totalXpCard = document.getElementById('user-total-xp');
-    const streakCard = document.getElementById('user-streak');
-
-    if (levelTitle) levelTitle.innerText = `Level ${stats.level}: ${rankName}`;
-    if (totalXpCard) totalXpCard.innerText = stats.xp;
-    
-    const currentMultiplier = (1 + (stats.streak * 0.1)).toFixed(1);
-    if (streakCard) streakCard.textContent = stats.streak;
-    const multEl = document.getElementById('user-streak-multiplier');
-    if (multEl) multEl.textContent = `x${currentMultiplier}`;
-
-    const currentLevelBaseXp = (stats.level - 1) * 1000;
-    const xpInCurrentLevel = stats.xp - currentLevelBaseXp;
-    const progressPercentage = (xpInCurrentLevel / 1000) * 100;
-    
-    if (xpText) xpText.innerText = xpInCurrentLevel;
-    if (xpBar) xpBar.style.width = `${progressPercentage}%`;
-
-    const remainingEl = document.getElementById('user-xp-remaining');
-    if (remainingEl) {
-        const remaining = 1000 - xpInCurrentLevel;
-        remainingEl.textContent = `${remaining} XP to reach level ${stats.level + 1}.`;
+        const sureEl = document.getElementById('metric-sure-accuracy');
+        const sure = stats.calibration && stats.calibration.sure;
+        if (sureEl) {
+            // An em dash, not 0%: no data and "wrong every time" are not the
+            // same claim, and this panel of all places must not confuse them.
+            sureEl.textContent = (sure && sure.accuracy !== null && sure.total >= CALIBRATION_MIN_REVIEWS)
+                ? `${sure.accuracy}%`
+                : '—';
+        }
     }
-
-    // Sidebar streak chip
-    const sidebarStreak = document.getElementById('sidebar-streak-value');
-    if (sidebarStreak) sidebarStreak.textContent = stats.streak;
 
     await renderProgressInsights();
 }
@@ -1603,64 +1717,89 @@ if (resetBtn) {
 // ==========================================
 // 13. AI Weekly Planner (With Google Sync!)
 // ==========================================
+// ==========================================
+// Planning the week
+// ==========================================
+// This used to send the tasks and the calendar to the model and ask it for a
+// schedule. Placing appointments is the wrong job for a language model: it
+// answers differently every time, can't be checked, and will cheerfully put
+// two things in the same hour. Fitting work around fixed commitments is
+// arithmetic, and weekPlanner.js does it the same way every time.
+//
+// The model's job is upstream - reading "hand in the stats exercise by
+// Thursday, about two hours" and turning it into a deadline and a length.
+// Interpretation for the model, arithmetic for the code.
 const generateWeeklyAiBtn = document.getElementById('generate-weekly-ai-btn');
 if (generateWeeklyAiBtn) {
     generateWeeklyAiBtn.onclick = async () => {
-        const tasks = await ipcRenderer.invoke('get-tasks') || [];
+        const allTasks = await ipcRenderer.invoke('get-tasks') || [];
         const events = await ipcRenderer.invoke('get-events') || [];
 
-        if (tasks.length === 0) {
-            toast.error("Your tasks list is empty! Nothing to plan. 🎉");
+        const openTasks = allTasks.filter(t => t.status !== 'completed');
+        if (openTasks.length === 0) {
+            toast.info('No open tasks to plan. Add some first.', 'Nothing to schedule');
             return;
         }
 
+        // Previously placed blocks are excluded from the busy set, or the
+        // planner would treat last week's plan as immovable furniture and
+        // find no room at all.
+        const fixedEvents = events.filter(e => !e.autoScheduled);
+        const { blocks, unplaced, freeMinutes } = planWeek(openTasks, fixedEvents);
+
+        if (blocks.length === 0) {
+            toast.error('There is no free time left in the week to put anything in.', 'Nothing could be scheduled');
+            return;
+        }
+
+        // Show the plan before touching the calendar. This rewrites the
+        // week, and a rewrite you didn't agree to is the fastest way to lose
+        // someone's trust in a planner.
+        const preview = blocks
+            .slice(0, 12)
+            .map(b => `${b.day.slice(0, 3)} ${b.time} · ${b.durationMinutes}m · ${b.title}`)
+            .join('\n');
+
+        const tail = blocks.length > 12 ? `\n… and ${blocks.length - 12} more` : '';
+        const leftOut = unplaced.length
+            ? `\n\nNot scheduled: ${unplaced.map(u => `${u.title} (${u.reason})`).join('; ')}`
+            : '';
+
+        const ok = await confirmDialog(
+            `Plan ${blocks.length} block(s) across your week?`,
+            `${preview}${tail}${leftOut}\n\nAny blocks from a previous plan are replaced. Events you added yourself are left alone.`,
+            { confirmText: 'Add to my week' }
+        );
+        if (!ok) return;
+
         const originalText = generateWeeklyAiBtn.innerHTML;
-        generateWeeklyAiBtn.innerHTML = 'Analyzing load and scheduling... ⏳';
+        generateWeeklyAiBtn.innerHTML = 'Planning…';
         generateWeeklyAiBtn.disabled = true;
 
         try {
-            const aiResponse = await ipcRenderer.invoke('generate-weekly-plan', tasks, events);
-            const newPlan = JSON.parse(aiResponse);
+            await ipcRenderer.invoke('clear-auto-scheduled-events');
 
-            if (newPlan.error) {
-                toast.error("Oops, AI problem: " + newPlan.error);
-            } else if (Array.isArray(newPlan) && newPlan.length > 0) {
-                
-                const syncToGoogle = await confirmDialog("Sync to Google Calendar?", "The new study blocks will also be added to your Google Calendar.", { confirmText: "Sync", cancelText: "Skip" });
-                let syncErrors = [];
-
-                for (const planEvent of newPlan) {
-                    planEvent.type = planEvent.type || 'study';
-                    
-                    if (syncToGoogle) {
-                        const result = await ipcRenderer.invoke('add-to-google-calendar', planEvent);
-                        if (result.success) {
-                            planEvent.googleEventId = result.eventId;
-                        } else {
-                            console.error("Google Sync Error for", planEvent.title, ":", result.error);
-                            syncErrors.push(result.error);
-                        }
-                    }
-                    
-                    const planRes = await ipcRenderer.invoke('save-event', planEvent);
-                    if (planRes && planRes.error) console.error('Save plan event failed:', planRes.error, planEvent);
-                }
-                
-                await loadAndRenderEvents();
-                await loadAndRenderWeeklyBoard();
-                await loadAndRenderHome();
-
-                if (syncToGoogle && syncErrors.length > 0) {
-                    toast.error(`⚠️ ${syncErrors.length} out of ${newPlan.length} study blocks failed to sync to Google Calendar.\n\nReason: ${syncErrors[0]}\n\nThe blocks were still saved in MindSync itself.`);
-                } else {
-                    toast.success(`Added ${newPlan.length} study blocks to your calendar.`, 'Weekly plan ready');
-                }
-            } else {
-                toast.error("The AI read the tasks but decided not to add anything to the schedule.");
+            let failed = 0;
+            for (const block of blocks) {
+                const res = await ipcRenderer.invoke('save-event', {
+                    title: block.title,
+                    day: block.day,
+                    time: block.time,
+                    type: 'study',
+                    durationMinutes: block.durationMinutes,
+                    autoScheduled: true,
+                    task: block.taskId || null
+                });
+                if (res && res.error) { failed += 1; console.error('Save plan block failed:', res.error, block); }
             }
-        } catch (e) {
-            toast.error("Error parsing the plan from the AI.");
-            console.error(e);
+
+            await loadAndRenderEvents();
+            await loadAndRenderWeeklyBoard();
+            await loadAndRenderHome();
+
+            const hours = Math.round(freeMinutes / 60);
+            if (failed > 0) toast.error(`${failed} block(s) could not be saved.`, 'Partly planned');
+            else toast.success(`${blocks.length} block(s) placed. You had about ${hours} free hours this week.`, 'Week planned');
         } finally {
             generateWeeklyAiBtn.innerHTML = originalText;
             generateWeeklyAiBtn.disabled = false;
@@ -1780,7 +1919,10 @@ function updateBulkBar() {
                 subtasks: (t.subtasks || []).map(st => ({ title: st.title, completed: st.completed }))
             }));
 
-        await runBulk(id => ipcRenderer.invoke('delete-task', id), `Deleted ${count} task(s).`);
+        await runBulk(async (id) => {
+            await ipcRenderer.invoke('clear-events-for-task', id);
+            return ipcRenderer.invoke('delete-task', id);
+        }, `Deleted ${count} task(s).`);
 
         showUndoToast(`Deleted ${count} task(s).`, async () => {
             for (const snap of snapshots) await ipcRenderer.invoke('save-task', snap);
@@ -2118,57 +2260,146 @@ function pickMultiple(title, options) {
 // what makes the data meaningful; asked afterwards, everyone reports having
 // known it all along.
 
+// Which subject the next session draws from. '' means every subject.
+//
+// Persisted, because it is a statement about what you are studying this week,
+// not a per-visit whim: someone revising for a databases exam wants databases
+// tomorrow too, and re-picking it on every visit is friction with no purpose.
+const STUDY_CATEGORY_KEY = 'mindsync.studyCategory';
+// Records that a choice was made at all, so that picking "All subjects"
+// deliberately is remembered rather than re-defaulting to one subject on the
+// next visit - an empty category and "never chose" are different states.
+const STUDY_CATEGORY_PICKED_KEY = 'mindsync.studyCategoryPicked';
+let studyCategory = localStorage.getItem(STUDY_CATEGORY_KEY) || '';
+let lastStudyStats = null;
+
 const studyState = {
     queue: [],
     index: 0,
+    // The subject this session was drawn from, kept so its saved place goes
+    // back to the right slot even after the home screen switches subject.
+    category: '',
     confidence: null,
     startedAt: null,
     session: { reviewed: 0, correct: 0, overconfident: 0 }
 };
 
-// Sessions survive leaving the screen and closing the app.
+// Sessions survive leaving the screen and closing the app, and there is one
+// per subject.
 //
-// Reviews are already saved to the server one at a time, so no answer was ever
-// lost - but the PLACE in the queue was, so stopping at question 5 of 20 meant
-// starting from the top next time. For a 20-item session that's enough friction
-// to stop people opening it at all.
-const SESSION_KEY = 'mindsync.activeSession';
+// Reviews are already saved to the server one at a time, so no answer was
+// ever lost - but the PLACE in the queue was, so stopping at question 5 of 20
+// meant starting from the top next time.
+//
+// One shared slot was not enough once subjects existed: pausing halfway
+// through data structures and then studying advanced programming silently
+// destroyed the first session, which made having separate subjects
+// pointless. Each subject now keeps its own place, so you can leave one
+// mid-way, work on another, and come back to both exactly where you were.
+const SESSION_KEY = 'mindsync.activeSessions';
+const LEGACY_SESSION_KEY = 'mindsync.activeSession';
+const ALL_SUBJECTS = '';   // the key a session covering every subject is stored under
+
+function readAllSessions() {
+    let map = {};
+    try {
+        map = JSON.parse(localStorage.getItem(SESSION_KEY)) || {};
+        if (typeof map !== 'object' || Array.isArray(map)) map = {};
+    } catch { map = {}; }
+
+    // One-time carry-over from the single-slot format, so an in-progress
+    // session isn't thrown away by the upgrade itself.
+    try {
+        const legacy = localStorage.getItem(LEGACY_SESSION_KEY);
+        if (legacy) {
+            const parsed = JSON.parse(legacy);
+            if (parsed && Array.isArray(parsed.ids)) {
+                map[parsed.category || ALL_SUBJECTS] = parsed;
+                localStorage.setItem(SESSION_KEY, JSON.stringify(map));
+            }
+            localStorage.removeItem(LEGACY_SESSION_KEY);
+        }
+    } catch { /* a corrupt legacy value is not worth failing over */ }
+
+    // A day-old session is stale: the schedule has moved on and different
+    // items are due, so resuming it would be reviewing the wrong things.
+    let changed = false;
+    const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    Object.keys(map).forEach(key => {
+        const entry = map[key];
+        if (!entry || !Array.isArray(entry.ids) || !(entry.savedAt > dayAgo)) {
+            delete map[key];
+            changed = true;
+        }
+    });
+    if (changed) writeAllSessions(map);
+
+    return map;
+}
+
+function writeAllSessions(map) {
+    try {
+        if (Object.keys(map).length === 0) localStorage.removeItem(SESSION_KEY);
+        else localStorage.setItem(SESSION_KEY, JSON.stringify(map));
+    } catch (e) { /* storage full or unavailable - not worth failing over */ }
+}
 
 function saveSessionProgress() {
+    // The subject the session was STARTED with, not whatever is selected on
+    // the home screen now - those can differ the moment the user goes back
+    // and switches while a session is paused.
+    const key = studyState.category || ALL_SUBJECTS;
+    const map = readAllSessions();
+
     if (!studyState.queue.length || studyState.index >= studyState.queue.length) {
-        localStorage.removeItem(SESSION_KEY);
-        return;
-    }
-    try {
-        localStorage.setItem(SESSION_KEY, JSON.stringify({
+        delete map[key];
+    } else {
+        map[key] = {
             // Only ids are stored; the items themselves are re-fetched so a
             // resumed session never shows stale content.
             ids: studyState.queue.map(i => i.id),
             index: studyState.index,
             session: studyState.session,
+            category: studyState.category,
             savedAt: Date.now()
-        }));
-    } catch (e) { /* storage full or unavailable - not worth failing over */ }
+        };
+    }
+    writeAllSessions(map);
+    renderResumeBanner();
 }
 
-function readSessionProgress() {
-    try {
-        const raw = localStorage.getItem(SESSION_KEY);
-        if (!raw) return null;
-        const data = JSON.parse(raw);
-
-        // A day-old session is stale: the schedule has moved on and different
-        // items are due, so resuming it would be reviewing the wrong things.
-        if (Date.now() - data.savedAt > 24 * 60 * 60 * 1000) {
-            localStorage.removeItem(SESSION_KEY);
-            return null;
-        }
-        return data;
-    } catch { return null; }
+function readSessionProgress(category = studyCategory) {
+    return readAllSessions()[category || ALL_SUBJECTS] || null;
 }
 
-function clearSessionProgress() {
-    localStorage.removeItem(SESSION_KEY);
+function clearSessionProgress(category = studyState.category ?? studyCategory) {
+    const map = readAllSessions();
+    delete map[category || ALL_SUBJECTS];
+    writeAllSessions(map);
+    renderResumeBanner();
+}
+
+// The banner is a view of storage and nothing else, so it is redrawn wherever
+// that storage changes rather than only inside loadStudyHome().
+//
+// It shows the session for the subject currently selected. A paused session
+// in another subject is not gone - switch to that subject and it is there.
+function renderResumeBanner() {
+    const startBtn = document.getElementById('start-study-btn');
+    const freshBtn = document.getElementById('start-fresh-btn');
+    if (!startBtn) return;
+
+    const resume = readSessionProgress(studyCategory);
+    const hasResume = resume && Array.isArray(resume.ids) && resume.index < resume.ids.length;
+
+    if (hasResume) {
+        startBtn.innerHTML = `${icon('sparkle', { size: 18 })} Continue — ${resume.index + 1} of ${resume.ids.length}`;
+        startBtn.title = `${resume.ids.length - resume.index} questions left in this session`;
+    } else {
+        startBtn.innerHTML = `${icon('sparkle', { size: 18 })} Start session`;
+        startBtn.removeAttribute('title');
+    }
+    if (freshBtn) freshBtn.hidden = !hasResume;
 }
 
 // Outcome vocabulary differs per mode because the modes measure different
@@ -2208,13 +2439,20 @@ async function loadStudyHome() {
     if (!stats) return;
 
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-    set('study-due-count', stats.dueCount);
-    set('study-total-count', stats.totalItems);
-    set('study-new-count', stats.newCount);
-    set('study-reviews-count', stats.reviewsAllTime);
 
-    // Sidebar badge - the only nudge to come back, so it only appears when
-    // there is genuinely something to do.
+    // Kept so switching subject is a redraw, not a round trip.
+    lastStudyStats = stats;
+
+    renderSubjectPicker(stats.subjects);
+
+    // Every headline number follows the chosen subject. Showing the whole
+    // deck's counts above a button that studies one course would make the
+    // screen lie about what pressing it does.
+    set('study-reviews-count', stats.reviewsAllTime);
+    applyStudyScope();
+
+    // Sidebar badge - the only nudge to come back, so it stays on the whole
+    // deck: something due in another course is still something due.
     const badge = document.getElementById('study-due-badge');
     if (badge) {
         badge.textContent = stats.dueCount;
@@ -2222,31 +2460,258 @@ async function loadStudyHome() {
     }
 
     // Offer to pick up where you left off, before anything else on the page.
-    const resume = readSessionProgress();
-    const banner = document.getElementById('resume-banner');
-    if (banner) {
-        if (resume && resume.ids && resume.index < resume.ids.length) {
-            banner.hidden = false;
-            const remaining = resume.ids.length - resume.index;
-            document.getElementById('resume-banner-detail').textContent =
-                `You stopped at question ${resume.index + 1} of ${resume.ids.length} — ${remaining} left.`;
-        } else {
-            banner.hidden = true;
-        }
+    renderResumeBanner();
+
+}
+
+function renderSubjectPicker(subjects) {
+    const wrap = document.getElementById('subject-picker');
+    const filters = document.getElementById('subject-filters');
+    if (!wrap || !filters) return;
+
+    const list = Array.isArray(subjects) ? subjects : [];
+
+    // With one subject there is nothing to choose between, and a picker
+    // offering a single option is just noise on the screen.
+    if (list.length < 2) {
+        wrap.hidden = true;
+        studyCategory = '';
+        localStorage.removeItem(STUDY_CATEGORY_KEY);
+        return;
+    }
+    wrap.hidden = false;
+
+    // A subject deleted since the choice was made would otherwise leave the
+    // session drawing from a category that no longer exists - and reporting
+    // "nothing is due" forever.
+    if (studyCategory && !list.some(s => s.category === studyCategory)) {
+        studyCategory = '';
+        localStorage.removeItem(STUDY_CATEGORY_KEY);
     }
 
-    renderCalibration(stats.calibration, stats.reviewsAllTime);
+    // No choice made yet: start on the subject with the most waiting rather
+    // than on everything at once. Exams are in one subject at a time, so a
+    // mixed queue is the wrong default - it just makes you switch context
+    // between questions for no gain.
+    if (!studyCategory && !localStorage.getItem(STUDY_CATEGORY_PICKED_KEY)) {
+        const busiest = list.find(s => s.due > 0) || list[0];
+        if (busiest) studyCategory = busiest.category;
+    }
+
+    const totalDue = list.reduce((sum, s) => sum + s.due, 0);
+    const options = [{ category: '', label: 'All subjects', due: totalDue }]
+        .concat(list.map(s => ({ category: s.category, label: s.category, due: s.due })));
+
+    filters.innerHTML = options.map(o => `
+        <button class="filter-chip ${o.category === studyCategory ? 'active' : ''}" data-category="${escapeHtml(o.category)}">
+            ${escapeHtml(o.label)}${o.due > 0 ? ` <span class="filter-chip__count">${o.due}</span>` : ''}
+        </button>`).join('');
+
+    filters.querySelectorAll('.filter-chip').forEach(chip => {
+        chip.onclick = () => {
+            studyCategory = chip.dataset.category;
+            localStorage.setItem(STUDY_CATEGORY_PICKED_KEY, '1');
+            if (studyCategory) localStorage.setItem(STUDY_CATEGORY_KEY, studyCategory);
+            else localStorage.removeItem(STUDY_CATEGORY_KEY);
+
+            // Redraw from what is already in memory. Switching subject used
+            // to call loadStudyHome(), which re-fetched /study/stats - and
+            // that endpoint loads every item in the deck to recompute
+            // calibration. A second of waiting to change which of two numbers
+            // already on the screen is shown.
+            //
+            // Nothing about the deck changed here, only which slice of it we
+            // are looking at, so no server call is needed at all.
+            applyStudyScope();
+            // Each subject has its own paused session, so the banner belongs
+            // to whichever one is now selected.
+            renderResumeBanner();
+        };
+    });
+}
+
+// The parts of the study screen that depend on which subject is selected.
+// Everything they need comes from the last stats response, so switching
+// subject is a redraw rather than a round trip.
+function applyStudyScope() {
+    const stats = lastStudyStats;
+    if (!stats) return;
+
+    const scope = studyCategory
+        ? (stats.subjects || []).find(s => s.category === studyCategory)
+        : null;
+
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    set('study-due-count', scope ? scope.due : stats.dueCount);
+    set('study-total-count', scope ? scope.items : stats.totalItems);
+    set('study-new-count', scope ? scope.neverReviewed : stats.newCount);
+
+    document.querySelectorAll('#subject-filters .filter-chip').forEach(chip => {
+        chip.classList.toggle('active', chip.dataset.category === studyCategory);
+    });
+
+    const subjectRow = studyCategory
+        ? (stats.subjectCalibration || []).find(s => s.category === studyCategory)
+        : null;
+
+    // "How well you judge yourself" - about the subject in front of you when
+    // one is selected. An average across courses you are not studying tonight
+    // answers a question nobody asked.
+    if (studyCategory) {
+        // No row means the subject has too little history to say anything.
+        // Falling back to the deck-wide report here would quietly describe
+        // every other course while this one is selected.
+        renderCalibration(
+            subjectRow ? subjectRow.calibration : null,
+            subjectRow ? subjectRow.total : 0,
+            studyCategory
+        );
+    } else {
+        renderCalibration(stats.calibration, stats.reviewsAllTime, '');
+    }
+
     renderConfidentlyWrong(stats.confidentlyWrong);
 }
 
-function renderCalibration(cal, totalReviews) {
+const CALIBRATION_MIN_REVIEWS = 5;
+
+// How often each confidence level gets claimed at all.
+//
+// The accuracy rows above answer "is 'I'm sure' trustworthy?". This answers
+// "how freely do you reach for it?" - a different habit, and one worth seeing:
+// someone who marks everything "I'm sure" has stopped making a judgement, and
+// the calibration number above quietly stops measuring anything.
+function renderConfidenceMix(cal) {
+    const el = document.getElementById('confidence-mix-panel');
+    if (!el) return;
+
+    const buckets = [
+        { key: 'sure',     label: "I'm sure",   tone: 'good' },
+        { key: 'think_so', label: 'I think so', tone: 'ok'   },
+        { key: 'guessing', label: 'Guessing',   tone: 'bad'  }
+    ];
+
+    const total = buckets.reduce((sum, b) => sum + ((cal && cal[b.key] && cal[b.key].total) || 0), 0);
+    if (!cal || total === 0) { el.innerHTML = ''; return; }
+
+    const segments = buckets.map(b => {
+        const n = (cal[b.key] && cal[b.key].total) || 0;
+        const pct = Math.round((n / total) * 100);
+        return { ...b, n, pct };
+    }).filter(b => b.n > 0);
+
+    el.innerHTML = `
+        <div class="mix-head">
+            <span class="ms-text-sm">How often you say each</span>
+            <span class="ms-muted ms-text-xs">${total} answers</span>
+        </div>
+        <div class="mix-bar">
+            ${segments.map(b => `<div class="mix-seg cal-${b.tone}" style="width:${b.pct}%" title="${b.label}: ${b.n}"></div>`).join('')}
+        </div>
+        <div class="mix-legend">
+            ${segments.map(b => `<span class="mix-legend__item"><i class="mix-dot cal-${b.tone}"></i>${b.label} ${b.pct}%</span>`).join('')}
+        </div>`;
+}
+
+// Whether the gap is closing.
+//
+// The rows above say how often "I'm sure" is right. They never said whether
+// that is improving - which, after a couple of weeks, is the only number that
+// matters here. The product's claim is that seeing the gap closes it, and
+// this is the line that either backs that up or doesn't.
+function renderSureTrend(trend) {
+    const el = document.getElementById('trend-panel');
+    if (!el) return;
+    if (!trend) { el.innerHTML = ''; return; }
+
+    const delta = trend.recent - trend.earlier;
+    const tone = delta >= 8 ? 'good' : delta <= -8 ? 'bad' : 'ok';
+    const verdict = delta >= 8
+        ? 'Your judgement is getting more reliable.'
+        : delta <= -8
+            ? 'Your judgement has slipped — worth slowing down on the ones that feel obvious.'
+            : 'Holding steady.';
+
+    el.innerHTML = `
+        <div class="trend">
+            <div class="trend__title ms-text-sm">Is the gap closing?</div>
+            <div class="trend__pair">
+                <div class="trend__side">
+                    <div class="trend__value ms-tabular">${trend.earlier}%</div>
+                    <div class="trend__label ms-text-xs ms-muted">first ${trend.earlierCount}</div>
+                </div>
+                <div class="trend__arrow cal-${tone}">${delta > 0 ? '↗' : delta < 0 ? '↘' : '→'}</div>
+                <div class="trend__side">
+                    <div class="trend__value ms-tabular cal-${tone}">${trend.recent}%</div>
+                    <div class="trend__label ms-text-xs ms-muted">last ${trend.recentCount}</div>
+                </div>
+            </div>
+            <div class="trend__note ms-text-xs ms-muted">Right when you said "I'm sure". ${verdict}</div>
+        </div>`;
+}
+
+// Speed against accuracy.
+//
+// secondsSpent has been recorded since the beginning and nothing ever read
+// it. Comparing the student's own fastest third against their slowest third
+// asks whether rushing costs THEM accuracy, in their own units - a fixed
+// "under 10 seconds" would mean different things on a definition and on a
+// Java exercise.
+function renderPace(pace) {
+    const el = document.getElementById('pace-panel');
+    if (!el) return;
+    if (!pace) { el.innerHTML = ''; return; }
+
+    // Enough answers to look at, but they were all answered at much the same
+    // speed - so there is no fast group and slow group to compare.
+    if (pace.tooUniform) {
+        el.innerHTML = `
+            <div class="trend">
+                <div class="trend__title ms-text-sm">Does rushing cost you?</div>
+                <div class="trend__note ms-text-xs ms-muted">
+                    You spend about the same time on everything (${pace.fastSeconds}s to ${pace.slowSeconds}s),
+                    so there's no fast group and slow group to compare yet.
+                </div>
+            </div>`;
+        return;
+    }
+
+    const gap = pace.slowAccuracy - pace.fastAccuracy;
+    const note = gap >= 15
+        ? 'Rushing is costing you. The ones that feel obvious are where marks go.'
+        : gap <= -15
+            ? 'You do better at speed — sitting longer may mean second-guessing a right answer.'
+            : 'Speed makes little difference to you either way.';
+
+    el.innerHTML = `
+        <div class="trend">
+            <div class="trend__title ms-text-sm">Does rushing cost you?</div>
+            <div class="pace-row">
+                <span>Quickest answers <span class="ms-muted">(~${pace.fastSeconds}s)</span></span>
+                <strong class="ms-tabular cal-${pace.fastAccuracy < pace.slowAccuracy ? 'bad' : 'good'}">${pace.fastAccuracy}%</strong>
+            </div>
+            <div class="pace-row">
+                <span>Slowest answers <span class="ms-muted">(~${pace.slowSeconds}s)</span></span>
+                <strong class="ms-tabular cal-${pace.slowAccuracy >= pace.fastAccuracy ? 'good' : 'bad'}">${pace.slowAccuracy}%</strong>
+            </div>
+            <div class="trend__note ms-text-xs ms-muted">${note}</div>
+        </div>`;
+}
+
+function renderCalibration(cal, totalReviews, subject = '') {
     const el = document.getElementById('calibration-panel');
     if (!el) return;
 
     // Below a handful of reviews this says nothing real, and a misleading
     // number here would undermine the whole point of the feature.
-    if (!cal || totalReviews < 8) {
-        el.innerHTML = `<div class="ms-muted ms-text-sm">Answer about ${Math.max(0, 8 - (totalReviews || 0))} more questions and this will show how reliable your sense of "I know this" actually is.</div>`;
+    //
+    // Five rather than eight: a subject can legitimately produce only seven
+    // or eight questions, and a threshold that a whole subject cannot reach
+    // on its first pass is a panel that never appears.
+    if (!cal || totalReviews < CALIBRATION_MIN_REVIEWS) {
+        const left = Math.max(0, CALIBRATION_MIN_REVIEWS - (totalReviews || 0));
+        const where = subject ? ` in ${bidiName(subject)}` : '';
+        el.innerHTML = `<div class="ms-muted ms-text-sm">Answer about ${left} more questions${where} and this will show how reliable your sense of "I know this" actually is.</div>`;
         return;
     }
 
@@ -2285,21 +2750,205 @@ function renderCalibration(cal, totalReviews) {
     }
 }
 
+// ---- Calibration by subject ----
+//
+// Rendering only. The grouping and the thresholds live on the server, in
+// GET /api/study/stats, which already has every item in memory for the
+// global report - computing it again here meant fetching the whole deck a
+// second time, and over a slightly different set of items (that endpoint
+// excludes suspended ones, GET /api/study does not), so the two panels on
+// this screen could disagree.
+
+function renderSubjectCalibration(rows) {
+    const el = document.getElementById('subject-calibration-panel');
+    if (!el) return;
+
+    // Nothing worth saying yet: stay silent rather than adding an empty
+    // section. The panel above already explains the "keep going" state.
+    if (!rows || rows.length === 0) { el.innerHTML = ''; return; }
+
+    let html = '<div class="ms-text-sm ms-muted" style="margin: var(--space-5) 0 var(--space-3)">Where that number comes apart:</div>';
+
+    html += rows.map(r => {
+        if (r.sureAccuracy === null) {
+            return `
+                <div class="cal-row">
+                    <div class="cal-row__head">
+                        <span>${escapeHtml(r.category)}</span>
+                        <span class="ms-muted ms-text-xs">${r.accuracy}% overall</span>
+                    </div>
+                    <div class="cal-row__note ms-text-xs ms-muted">Not enough "I'm sure" answers here yet</div>
+                </div>`;
+        }
+        // Measured against the same 95% ideal as the global panel: saying
+        // "I'm sure" should mean being right almost every time.
+        const off = Math.abs(r.sureAccuracy - 95);
+        const tone = off <= 12 ? 'good' : off <= 25 ? 'ok' : 'bad';
+        return `
+            <div class="cal-row">
+                <div class="cal-row__head">
+                    <span>${escapeHtml(r.category)}</span>
+                    <span class="cal-row__value cal-${tone}">${r.sureAccuracy}% right when sure</span>
+                </div>
+                <div class="cal-track">
+                    <div class="cal-fill cal-${tone}" style="width:${r.sureAccuracy}%"></div>
+                    <div class="cal-ideal" style="left:95%" title="Well-calibrated: about 95%"></div>
+                </div>
+                <div class="cal-row__note ms-text-xs ms-muted">${r.sureCorrect} of ${r.sureTotal} · ${r.accuracy}% overall across ${r.total} reviews</div>
+            </div>`;
+    }).join('');
+
+    // The line worth reading. Only shown when the gap is wide enough to act
+    // on - naming a 4-point difference as a weakness would be inventing one.
+    const scored = rows.filter(r => r.sureAccuracy !== null);
+    if (scored.length >= 2) {
+        const worst = scored[0];
+        const best = scored[scored.length - 1];
+        if (best.sureAccuracy - worst.sureAccuracy >= 20) {
+            // Laid out as rows rather than one sentence: two long Hebrew
+            // course names inside an English sentence wrapped mid-name and
+            // scrambled the punctuation between them.
+            html += `
+                <div class="cal-verdict cal-verdict--warn">
+                    <div class="cal-verdict__row">
+                        <span class="cal-verdict__label">Reliable in</span>
+                        <span class="cal-verdict__name">${bidiName(best.category)}</span>
+                        <span class="cal-verdict__pct">${best.sureAccuracy}%</span>
+                    </div>
+                    <div class="cal-verdict__row">
+                        <span class="cal-verdict__label">Not in</span>
+                        <span class="cal-verdict__name">${bidiName(worst.category)}</span>
+                        <span class="cal-verdict__pct">${worst.sureAccuracy}%</span>
+                    </div>
+                    <div class="cal-verdict__tail">Both are "I'm sure" answers. The single number above averages them together and hides the gap — the second one is where tonight goes.</div>
+                </div>`;
+        }
+    }
+
+    el.innerHTML = html;
+}
+
+// A course name dropped into an English sentence has to be isolated, or the
+// bidi algorithm reorders the sentence around it. Every interpolation of a
+// subject name goes through this.
+function bidiName(text) {
+    return `<span class="bidi-name" dir="auto">${escapeHtml(text)}</span>`;
+}
+
+// Cap the list. Past a handful this stops being "here is what to fix
+// tonight" and becomes a wall of text nobody reads - which is the same as
+// showing nothing, only noisier.
+const CONFIDENTLY_WRONG_SHOWN = 5;
+
 function renderConfidentlyWrong(items) {
     const el = document.getElementById('confidently-wrong-panel');
     if (!el) return;
-    if (!items || items.length === 0) {
-        el.innerHTML = '<div class="ms-muted ms-text-sm">Nothing here yet — nothing you were certain about has turned out wrong.</div>';
+
+    // Scoped to the selected subject, like everything else on this screen.
+    const all = (items || []).filter(i =>
+        !studyCategory || ((i.category || '').trim() || 'Uncategorized') === studyCategory
+    );
+
+    if (all.length === 0) {
+        el.innerHTML = studyCategory
+            ? `<div class="ms-muted ms-text-sm">Nothing in ${bidiName(studyCategory)} that you were certain about has turned out wrong.</div>`
+            : '<div class="ms-muted ms-text-sm">Nothing here yet — nothing you were certain about has turned out wrong.</div>';
         return;
     }
-    el.innerHTML = items.map(i => `
-        <div class="attention-item">
+
+    const shown = all.slice(0, CONFIDENTLY_WRONG_SHOWN);
+    el.innerHTML = shown.map((i, idx) => `
+        <div class="attention-item" data-index="${idx}">
             <span class="attention-item__dot" style="background: var(--status-danger)"></span>
             <div class="attention-item__body">
-                <div class="attention-item__title" dir="auto">${escapeHtml(i.question)}</div>
+                <div class="attention-item__title" dir="auto"></div>
                 <div class="attention-item__meta">${escapeHtml(i.category || 'Uncategorized')} · ${MODE_LABELS[i.mode] || i.mode}</div>
             </div>
         </div>`).join('');
+
+    // Filled in afterwards so a question carrying a Java class renders as a
+    // formatted, left-to-right code block instead of a wall of braces and
+    // stray ``` fences running right to left through the Hebrew.
+    el.querySelectorAll('.attention-item').forEach(row => {
+        const body = row.querySelector('.attention-item__title');
+        renderRichText(body, shown[Number(row.dataset.index)].question);
+
+        // A clamped code block with no way past it is worse than no code at
+        // all: you can see there is more and you can't reach it.
+        //
+        // The toggle is added whenever there IS a code block, rather than
+        // only when measurement says it overflows. Measuring here is
+        // unreliable: this panel is also drawn while the Study view is still
+        // display:none at startup, and a hidden element reports a height of
+        // zero - so "is it clipped?" answered "no" for everything and the
+        // toggle was never created at all.
+        //
+        // The measurement below only ever REMOVES a toggle that turned out
+        // to be unnecessary, and only when the numbers are trustworthy. An
+        // unnecessary toggle on a short snippet costs a line; a missing one
+        // costs the code.
+        // Every code block in the row, not just the first. A question that
+        // shows a set of classes and then a main method carries two, both of
+        // them clamped - expanding only one looked like the button was doing
+        // nothing at all.
+        const blocks = [...body.querySelectorAll('.code-block')];
+        if (blocks.length === 0) return;
+
+        const toggle = document.createElement('button');
+        toggle.className = 'code-expand';
+        toggle.textContent = 'Show the full code';
+        toggle.onclick = () => {
+            const open = toggle.dataset.expanded !== 'true';
+            toggle.dataset.expanded = String(open);
+
+            blocks.forEach(block => {
+                // setProperty with 'important' rather than a class or a plain
+                // inline style. Several rules in styles.css touch .code-block
+                // and which one wins is not worth reasoning about from here -
+                // the one thing this button must never do is nothing.
+                if (open) {
+                    block.style.setProperty('max-height', 'none', 'important');
+                    block.style.setProperty('mask-image', 'none', 'important');
+                    block.style.setProperty('-webkit-mask-image', 'none', 'important');
+                } else {
+                    block.style.removeProperty('max-height');
+                    block.style.removeProperty('mask-image');
+                    block.style.removeProperty('-webkit-mask-image');
+                }
+            });
+
+            toggle.textContent = open ? 'Collapse' : 'Show the full code';
+            // Temporary, so a click that still appears to do nothing can be
+            // told apart from a click that never reached this handler.
+            console.log(`[code-expand] ${open ? 'expanded' : 'collapsed'} ${blocks.length} block(s)`);
+        };
+        body.appendChild(toggle);
+
+        requestAnimationFrame(() => {
+            // clientHeight of 0 means the panel isn't laid out yet - measured
+            // now, every answer would be wrong.
+            const measurable = blocks.filter(b => b.clientHeight > 0);
+            if (measurable.length === 0) return;
+            const anyClipped = measurable.some(b => b.scrollHeight > b.clientHeight + 4);
+            if (!anyClipped) toggle.remove();
+        });
+    });
+
+    const hidden = all.length - shown.length;
+    if (hidden > 0) {
+        // appendChild, NOT `el.innerHTML += ...`.
+        //
+        // `+=` on innerHTML serialises the whole panel back to a string and
+        // re-parses it, which destroys and recreates every node inside. The
+        // expand buttons created above survived as markup but lost their
+        // onclick handlers with the objects they were attached to - so they
+        // looked perfect and did nothing.
+        const more = document.createElement('div');
+        more.className = 'ms-muted ms-text-xs';
+        more.style.marginTop = 'var(--space-3)';
+        more.textContent = `and ${hidden} more — they are all scheduled to come back.`;
+        el.appendChild(more);
+    }
 }
 
 // ---- Session flow ----
@@ -2315,13 +2964,26 @@ async function startStudySession(resume = null) {
 
         if (items.length === 0) {
             toast.info('Those questions are no longer available. Starting a new session.');
-            clearSessionProgress();
+            clearSessionProgress(resume.category || ALL_SUBJECTS);
             return startStudySession();
         }
     } else {
-        items = await ipcRenderer.invoke('get-due-study-items', { limit: 20 });
+        // The chosen subject, or everything when none is chosen. The server
+        // has supported this filter all along; nothing was ever passing it.
+        items = await ipcRenderer.invoke('get-due-study-items', {
+            limit: 20,
+            ...(studyCategory ? { category: studyCategory } : {})
+        });
         if (!items || items.length === 0) {
-            toast.info('Nothing is due right now. Create questions from a file, or come back later.', 'All caught up');
+            toast.info(
+                studyCategory
+                    ? `Nothing is due in "${studyCategory}" right now. Switch subject, or come back later.`
+                    : 'Nothing is due right now. Create questions from a file, or come back later.',
+                'All caught up'
+            );
+            // Nothing opened, so the home screen stays - and it has to be
+            // truthful about whether a paused session is still waiting.
+            renderResumeBanner();
             return;
         }
     }
@@ -2329,20 +2991,195 @@ async function startStudySession(resume = null) {
     studyState.queue = items;
     studyState.index = resume ? Math.min(resume.index, items.length - 1) : 0;
     studyState.session = resume ? resume.session : { reviewed: 0, correct: 0, overconfident: 0 };
+    studyState.category = resume ? (resume.category || '') : studyCategory;
 
     clearManageSelection();
     document.getElementById('study-home').hidden = true;
     document.getElementById('study-summary').hidden = true;
     document.getElementById('study-review').hidden = true;
     document.getElementById('study-manage').hidden = true;
+    document.getElementById('study-browse').hidden = true;
     document.getElementById('study-session').hidden = false;
 
     renderStudyCard();
 }
 
+// ---- Rendering text that may contain code ----
+//
+// A question is set into a div, and HTML collapses every newline into a
+// space - so a Java class the model formatted across thirty lines arrived as
+// one unbroken paragraph running right to left, with the braces and
+// semicolons scattered through it. The line breaks were in the database the
+// whole time; the screen was throwing them away.
+//
+// Code also has to be laid out left-to-right even inside a Hebrew question,
+// or the bidi algorithm reorders the punctuation and the snippet stops
+// matching what the student would see in an IDE.
+
+// A line is treated as code if it ends in a brace or semicolon, or opens with
+// a keyword that has no business in prose. Deliberately conservative: a
+// paragraph misread as code looks broken, which is worse than a code block
+// left as prose.
+const CODE_LINE_RE = /[;{}]\s*$|^\s*(?:@\w+|public|private|protected|static|final|abstract|class|interface|enum|extends|implements|import|package|void|int|double|float|boolean|char|String|var|let|const|function|def|return|if|else|for|while|switch|case|break|new|try|catch|finally|throw|print|println|System\.|console\.|#include|using)\b/;
+
+// The model formats code however it feels like, and "however it feels like"
+// regularly means one 900-character line: the fence is there, the newlines
+// are not. Asking the prompt nicely helps and does not solve it, so the
+// layout is rebuilt here from the syntax itself - which works the same on
+// every response, including the ones already sitting in the deck.
+//
+// Only Java/C/JS-shaped code has anything to key off. Python and pseudo-code
+// pass through untouched, which is correct: their line breaks carry meaning
+// and cannot be reconstructed.
+function reindentCode(source) {
+    const text = String(source || '').replace(/\r\n/g, '\n').trim();
+
+    // Leave well-formatted code alone. Only step in when a line is too long
+    // to read without scrolling sideways.
+    const longestLine = text.split('\n').reduce((m, l) => Math.max(m, l.length), 0);
+    if (longestLine <= 90) return text;
+    if (!text.includes(';') && !text.includes('{')) return text;
+
+    const lines = [];
+    let line = '';
+    let depth = 0;
+    let parens = 0;
+    let inString = false;
+    let inChar = false;
+    let escaped = false;
+
+    const flush = () => {
+        const trimmed = line.trim();
+        if (trimmed) lines.push('    '.repeat(Math.max(0, depth)) + trimmed);
+        line = '';
+    };
+
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+
+        // Inside a string literal nothing is punctuation. "Galaxy S23" and
+        // "iOS" must survive, and a brace or semicolon in a string must never
+        // start a new line.
+        if (escaped) { line += ch; escaped = false; continue; }
+        if ((inString || inChar) && ch === '\\') { line += ch; escaped = true; continue; }
+        if (ch === '"' && !inChar) { inString = !inString; line += ch; continue; }
+        if (ch === "'" && !inString) { inChar = !inChar; line += ch; continue; }
+        if (inString || inChar) { line += ch; continue; }
+
+        if (ch === '(') { parens++; line += ch; continue; }
+        if (ch === ')') { parens = Math.max(0, parens - 1); line += ch; continue; }
+
+        if (ch === '{') {
+            if (line.endsWith(' ')) line = line.slice(0, -1);
+            line += (line.trim() ? ' ' : '') + '{';
+            flush();
+            depth++;
+            continue;
+        }
+
+        if (ch === '}') {
+            flush();                     // whatever was before the brace
+            depth--;
+            line = '}';
+            // Keep a trailing semicolon attached: "};" is one thing.
+            if (text[i + 1] === ';') { line += ';'; i++; }
+            flush();
+            continue;
+        }
+
+        // A semicolon inside parentheses is a for-loop separator, not a
+        // statement end: for (int i = 0; i < n; i++) stays on one line.
+        if (ch === ';' && parens === 0) { line += ';'; flush(); continue; }
+
+        if (ch === '\n') { flush(); continue; }
+
+        // Collapse runs of whitespace the model left behind.
+        if (/\s/.test(ch)) {
+            // An annotation gets its own line, the way it is written in a file.
+            if (/^@\w+$/.test(line.trim())) { flush(); continue; }
+            if (line && !line.endsWith(' ')) line += ' ';
+            continue;
+        }
+
+        line += ch;
+    }
+    flush();
+
+    return lines.join('\n');
+}
+
+function makeCodeBlock(text) {
+    const pre = document.createElement('pre');
+    pre.className = 'code-block';
+    // Explicit LTR: the snippet must read as code, not as part of the
+    // surrounding Hebrew sentence.
+    pre.setAttribute('dir', 'ltr');
+    pre.textContent = reindentCode(text);
+    return pre;
+}
+
+function makeProseBlock(text) {
+    const div = document.createElement('div');
+    div.className = 'rich-prose';
+    div.setAttribute('dir', 'auto');
+    div.textContent = text.replace(/^\n+|\n+$/g, '');
+    return div;
+}
+
+// Triple-backtick fences are unambiguous, so they win wherever they appear.
+function splitFenced(raw) {
+    return raw
+        .split(/```[a-zA-Z]*\n?/)
+        .map((text, i) => ({ code: i % 2 === 1, text }))
+        .filter(seg => seg.text.trim().length > 0);
+}
+
+// Without fences, group consecutive lines by whether they look like code.
+function splitByHeuristic(raw) {
+    const segments = [];
+    let buffer = [];
+    let bufferIsCode = null;
+
+    const flush = () => {
+        if (buffer.length) segments.push({ code: bufferIsCode, text: buffer.join('\n') });
+        buffer = [];
+    };
+
+    raw.split('\n').forEach(line => {
+        // A blank line belongs to whatever it sits inside - code blocks have
+        // blank lines between methods, and splitting on them would shatter
+        // one class into five separate blocks.
+        if (!line.trim()) { buffer.push(line); return; }
+
+        const isCode = CODE_LINE_RE.test(line);
+        if (bufferIsCode === null) bufferIsCode = isCode;
+        else if (isCode !== bufferIsCode) { flush(); bufferIsCode = isCode; }
+        buffer.push(line);
+    });
+    flush();
+
+    // One lone code-looking line is far more likely to be a sentence that
+    // happens to end in a brace than an actual block.
+    return segments.map(seg =>
+        seg.code && seg.text.trim().split('\n').length < 2 ? { code: false, text: seg.text } : seg
+    ).filter(seg => seg.text.trim().length > 0);
+}
+
+function renderRichText(el, text) {
+    if (!el) return;
+    el.textContent = '';
+    const raw = String(text || '');
+    const segments = raw.includes('```') ? splitFenced(raw) : splitByHeuristic(raw);
+
+    // Nothing detected either way: fall back to the plain behaviour.
+    if (segments.length === 0) { el.textContent = raw; return; }
+
+    segments.forEach(seg => el.appendChild(seg.code ? makeCodeBlock(seg.text) : makeProseBlock(seg.text)));
+}
+
 function renderStudyCard() {
     const item = studyState.queue[studyState.index];
-    if (!item) return endStudySession();
+    if (!item) return finishStudySession();
 
     studyState.confidence = null;
     studyState.startedAt = Date.now();
@@ -2359,7 +3196,7 @@ function renderStudyCard() {
     if (badgeText) { catBadge.textContent = badgeText; catBadge.hidden = false; }
     else catBadge.hidden = true;
 
-    document.getElementById('study-question').textContent = item.question;
+    renderRichText(document.getElementById('study-question'), item.question);
     document.getElementById('study-confidence-prompt').textContent = MODE_PROMPTS[item.mode] || MODE_PROMPTS.recall;
 
     document.getElementById('study-confidence-step').hidden = false;
@@ -2399,7 +3236,7 @@ function revealAnswer() {
     }
 
     if (item.answer && item.answer.trim()) {
-        answerEl.textContent = item.answer;
+        renderRichText(answerEl, item.answer);
         answerEl.classList.remove('study-answer--none');
         answerEl.classList.toggle('study-answer--ai', item.solutionSource === 'ai');
 
@@ -2410,6 +3247,13 @@ function revealAnswer() {
         if (labelEl) {
             if (item.solutionSource === 'ai') {
                 labelEl.innerHTML = `<span class="ai-answer-flag">${icon('sparkle', { size: 13 })} AI-generated solution — worth checking</span>`;
+            } else if (item.solutionSource === 'imported') {
+                // Imported cards were written by someone else, against
+                // material this app has never read. That is a third kind of
+                // trust and it gets said out loud, like the other two.
+                labelEl.textContent = item.sourceFile
+                    ? `Imported — ${item.sourceFile}`
+                    : 'Imported from another deck';
             } else {
                 labelEl.textContent = item.sourceFile
                     ? `From your material — ${item.sourceFile}`
@@ -2477,38 +3321,91 @@ async function submitReview(outcome) {
 
     studyState.index += 1;
     saveSessionProgress();
+    // The answer just recorded changes this item's history and its place in
+    // the browse groups.
+    invalidateListCache('browse');
 
-    if (studyState.index >= studyState.queue.length) endStudySession();
+    if (studyState.index >= studyState.queue.length) finishStudySession();
     else renderStudyCard();
 }
 
-function endStudySession() {
-    clearSessionProgress();
+// Two ways out of a session, and they must not do the same thing.
+//
+// Reaching the end of the queue is a real finish: nothing is left to come back
+// to, so the saved place is deleted.
+//
+// Clicking the exit button at question 5 of 20 is a PAUSE. Deleting the place
+// there was a bug - every early exit sent you back to question 1 next time,
+// which is exactly the friction the saved session was meant to remove.
+function finishStudySession() {
+    clearSessionProgress(studyState.category);
+    showStudySummary(true);
+}
+
+function pauseStudySession() {
+    // Left before answering anything: there is no place worth keeping, and a
+    // "continue from question 1" banner is just noise.
+    if (studyState.index === 0) {
+        clearSessionProgress(studyState.category);
+        studyState.queue = [];
+        document.getElementById('study-session').hidden = true;
+        document.getElementById('study-home').hidden = false;
+        loadStudyHome();
+        return;
+    }
+    saveSessionProgress();
+    showStudySummary(false);
+}
+
+function showStudySummary(finished) {
     document.getElementById('study-session').hidden = true;
     document.getElementById('study-summary').hidden = false;
+
+    const title = document.getElementById('study-summary-title');
+    if (title) title.textContent = finished ? 'Session complete' : 'Session paused';
 
     const s = studyState.session;
     document.getElementById('summary-reviewed').textContent = s.reviewed;
     document.getElementById('summary-correct').textContent = s.correct;
     document.getElementById('summary-overconfident').textContent = s.overconfident;
 
-    const msg = document.getElementById('summary-message');
-    if (s.reviewed === 0) msg.textContent = '';
-    else if (s.overconfident > 0) {
-        msg.textContent = `${s.overconfident} question${s.overconfident === 1 ? '' : 's'} you felt sure about turned out wrong. Those are scheduled to come back quickly.`;
-    } else {
-        msg.textContent = 'Your confidence matched your results this session.';
+    const parts = [];
+    if (s.overconfident > 0) {
+        parts.push(`${s.overconfident} question${s.overconfident === 1 ? '' : 's'} you felt sure about turned out wrong. Those are scheduled to come back quickly.`);
+    } else if (s.reviewed > 0) {
+        parts.push('Your confidence matched your results this session.');
     }
+    if (!finished) {
+        const left = studyState.queue.length - studyState.index;
+        parts.push(`Your place is saved - ${left} question${left === 1 ? '' : 's'} left. Pick it up from the Study screen.`);
+    }
+    document.getElementById('summary-message').textContent = parts.join(' ');
 }
 
 const startStudyBtn = document.getElementById('start-study-btn');
 // Wrapped, not passed directly: onclick hands the handler a MouseEvent, which
 // would arrive as the `resume` argument and send a fresh session down the
 // resume path with no ids - throwing, so the button appeared to do nothing.
-if (startStudyBtn) startStudyBtn.onclick = () => startStudySession();
+if (startStudyBtn) startStudyBtn.onclick = () => {
+    // One button, two meanings, and the label always says which. Splitting
+    // "continue" into a separate banner meant the page height changed every
+    // time you switched subject.
+    const resume = readSessionProgress(studyCategory);
+    const hasResume = resume && Array.isArray(resume.ids) && resume.index < resume.ids.length;
+    startStudySession(hasResume ? resume : null);
+};
+
+const startFreshBtn = document.getElementById('start-fresh-btn');
+if (startFreshBtn) startFreshBtn.onclick = async () => {
+    clearSessionProgress(studyCategory);
+    toast.info('Session cleared. Your answers were already saved.');
+    await loadStudyHome();
+};
 
 const endStudyBtn = document.getElementById('end-study-btn');
-if (endStudyBtn) endStudyBtn.onclick = endStudySession;
+// Wrapped for the same reason as start-study-btn: onclick hands the handler a
+// MouseEvent, which would arrive as the `finished` flag and read as truthy.
+if (endStudyBtn) endStudyBtn.onclick = () => pauseStudySession();
 
 const summaryDoneBtn = document.getElementById('summary-done-btn');
 if (summaryDoneBtn) summaryDoneBtn.onclick = async () => {
@@ -2517,11 +3414,67 @@ if (summaryDoneBtn) summaryDoneBtn.onclick = async () => {
     await loadStudyHome();
 };
 
+// ---- The "this is still working" overlay ----
+//
+// Generation is the one action in the app that can run for minutes. It has no
+// intermediate output to show, so the only defence against looking crashed is
+// to say what is happening and keep a clock running.
+const aiProgress = {
+    timer: null,
+    startedAt: 0,
+
+    show(title) {
+        const box = document.getElementById('ai-progress');
+        if (!box) return;
+        this.startedAt = Date.now();
+        document.getElementById('ai-progress-title').textContent = title;
+        document.getElementById('ai-progress-detail').textContent = 'This usually takes under a minute.';
+        document.getElementById('ai-progress-elapsed').textContent = '0s';
+        box.hidden = false;
+
+        clearInterval(this.timer);
+        this.timer = setInterval(() => {
+            const secs = Math.floor((Date.now() - this.startedAt) / 1000);
+            const el = document.getElementById('ai-progress-elapsed');
+            if (el) el.textContent = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
+
+            // After a while, say so. A minute of silence on a task the user
+            // was told takes "under a minute" needs acknowledging, or they
+            // start wondering whether to force-quit.
+            if (secs === 75) {
+                const detail = document.getElementById('ai-progress-detail');
+                if (detail) detail.textContent = 'Taking longer than usual — the model may be busy. Still working.';
+            }
+        }, 1000);
+    },
+
+    update(message) {
+        const detail = document.getElementById('ai-progress-detail');
+        if (detail && message) detail.textContent = message;
+    },
+
+    hide() {
+        clearInterval(this.timer);
+        this.timer = null;
+        const box = document.getElementById('ai-progress');
+        if (box) box.hidden = true;
+    }
+};
+
+// Sent by the main process from inside the AI call: retries, model switches,
+// and the handover to validation.
+ipcRenderer.on('ai-progress', (_event, message) => aiProgress.update(message));
+
 // ---- Generating questions from an uploaded file ----
 const generateStudyBtn = document.getElementById('generate-study-btn');
 if (generateStudyBtn) {
     generateStudyBtn.onclick = async () => {
-        const files = await ipcRenderer.invoke('get-files');
+        // Light: names and paths only. The full text of one file is fetched
+        // below, and only on the path that actually needs it. Served from the
+        // warm cache when there is one, so the picker opens immediately.
+        const files = listCache.get('files:light')
+            || await ipcRenderer.invoke('get-files', { light: true });
+        listCache.set('files:light', files);
         if (!files || files.length === 0) {
             toast.info('Upload course material under Materials first.', 'No files yet');
             return;
@@ -2545,6 +3498,7 @@ if (generateStudyBtn) {
 
         generateStudyBtn.disabled = true;
         const originalHTML = generateStudyBtn.innerHTML;
+        aiProgress.show(`Reading ${file.name}`);
 
         try {
             const aiConfig = await ipcRenderer.invoke('get-ai-config');
@@ -2564,8 +3518,10 @@ if (generateStudyBtn) {
                     sourceFile: file.name
                 });
             } else {
-                generateStudyBtn.textContent = 'Reading the document...';
-                response = await ipcRenderer.invoke('generate-study-items', file.content, {
+                // This is the only path that reads the extracted text, so
+                // this is where that text is fetched.
+                const full = await ipcRenderer.invoke('get-file', file.id);
+                response = await ipcRenderer.invoke('generate-study-items', (full && full.content) || '', {
                     category: category.trim(),
                     sourceFile: file.name
                 });
@@ -2583,6 +3539,9 @@ if (generateStudyBtn) {
         } catch (e) {
             toast.error(e.message, 'Something went wrong');
         } finally {
+            // In `finally`, so a thrown error or an early return can never
+            // leave the overlay stuck over a screen the user cannot reach.
+            aiProgress.hide();
             generateStudyBtn.disabled = false;
             generateStudyBtn.innerHTML = originalHTML;
         }
@@ -2593,6 +3552,172 @@ const navStudyBtn = document.getElementById('nav-study');
 if (navStudyBtn) navStudyBtn.addEventListener('click', loadStudyHome);
 
 loadStudyHome();
+
+// ---- Reviewing what you've already answered ----
+//
+// Finishing a session made questions disappear: they were scheduled for some
+// future date and there was no way to look at one again. This screen is that
+// way back, and it is strictly read-only - opening a question here records
+// nothing and reschedules nothing, so browsing can never corrupt the history
+// the calibration numbers are built from.
+//
+// Grouped by how the LAST attempt went, using the same vocabulary the session
+// itself uses, so the three groups mean exactly what the buttons meant.
+const BROWSE_GROUPS = [
+    { key: 'wrong',   label: 'Got it wrong', outcomes: ['missed', 'wrong'],    tone: 'danger'  },
+    { key: 'partial', label: 'Partly',       outcomes: ['partial', 'stuck'],   tone: 'warning' },
+    { key: 'correct', label: 'Got it right', outcomes: ['got_it', 'solved'],   tone: 'success' }
+];
+
+let browseGroup = 'wrong';   // the one worth opening first
+let browseItems = [];
+
+function lastOutcomeGroup(item) {
+    const reviews = Array.isArray(item.reviews) ? item.reviews : [];
+    if (reviews.length === 0) return null;
+    const last = reviews[reviews.length - 1];
+    const found = BROWSE_GROUPS.find(g => g.outcomes.includes(last.outcome));
+    return found ? found.key : null;
+}
+
+async function openBrowseScreen() {
+    document.getElementById('study-home').hidden = true;
+    document.getElementById('study-summary').hidden = true;
+    document.getElementById('study-session').hidden = true;
+    document.getElementById('study-manage').hidden = true;
+    document.getElementById('study-browse').hidden = false;
+
+    const listEl = document.getElementById('browse-list');
+    if (listEl) {
+        listEl.innerHTML = `
+            <div class="ms-skeleton ms-skeleton--card"></div>
+            <div class="ms-skeleton ms-skeleton--card"></div>`;
+    }
+
+    const titleEl = document.getElementById('browse-title');
+    if (titleEl) {
+        titleEl.innerHTML = studyCategory
+            ? `${bidiName(studyCategory)} — questions you've answered`
+            : "Questions you've answered";
+    }
+
+    // Full items, not the light form: this screen is entirely about the
+    // review history and the stored answer.
+    const key = `browse:${studyCategory || '*'}`;
+    await cachedFetch(
+        key,
+        () => ipcRenderer.invoke('get-study-items', studyCategory ? { category: studyCategory } : {}),
+        {
+            onData: (items) => {
+                browseItems = (items || []).filter(i => Array.isArray(i.reviews) && i.reviews.length > 0);
+                // Don't redraw over a screen the user has already left.
+                if (!document.getElementById('study-browse').hidden) renderBrowseScreen();
+            }
+        }
+    );
+}
+
+function renderBrowseScreen() {
+    const filtersEl = document.getElementById('browse-outcome-filters');
+    const listEl = document.getElementById('browse-list');
+    if (!listEl) return;
+
+    const counts = {};
+    BROWSE_GROUPS.forEach(g => { counts[g.key] = 0; });
+    browseItems.forEach(i => {
+        const key = lastOutcomeGroup(i);
+        if (key) counts[key] += 1;
+    });
+
+    // Land on a group that has something in it, rather than on an empty tab.
+    if (counts[browseGroup] === 0) {
+        const firstWithContent = BROWSE_GROUPS.find(g => counts[g.key] > 0);
+        if (firstWithContent) browseGroup = firstWithContent.key;
+    }
+
+    if (filtersEl) {
+        filtersEl.innerHTML = BROWSE_GROUPS.map(g => `
+            <button class="filter-chip ${g.key === browseGroup ? 'active' : ''}" data-group="${g.key}">
+                ${g.label}${counts[g.key] > 0 ? ` <span class="filter-chip__count">${counts[g.key]}</span>` : ''}
+            </button>`).join('');
+
+        filtersEl.querySelectorAll('.filter-chip').forEach(chip => {
+            chip.onclick = () => { browseGroup = chip.dataset.group; renderBrowseScreen(); };
+        });
+    }
+
+    const visible = browseItems.filter(i => lastOutcomeGroup(i) === browseGroup);
+
+    if (visible.length === 0) {
+        listEl.innerHTML = browseItems.length === 0
+            ? `<div class="ms-muted ms-text-sm">You haven't answered anything${studyCategory ? ` in ${bidiName(studyCategory)}` : ''} yet.</div>`
+            : '<div class="ms-muted ms-text-sm">Nothing in this group.</div>';
+        return;
+    }
+
+    listEl.innerHTML = visible.map((item, idx) => {
+        const reviews = item.reviews;
+        const last = reviews[reviews.length - 1];
+        const due = item.dueDate ? new Date(item.dueDate) : null;
+        const dueLabel = due
+            ? (due <= new Date() ? 'due now' : `next on ${due.toLocaleDateString('en-GB')}`)
+            : '';
+
+        return `
+            <div class="manage-item browse-item" data-index="${idx}">
+                <div class="manage-item__body">
+                    <div class="manage-item__q browse-item__q" dir="auto"></div>
+                    <div class="manage-item__meta">
+                        ${CONFIDENCE_LABELS[last.confidence] || last.confidence}
+                        · ${OUTCOME_LABELS[last.outcome] || last.outcome}
+                        · answered ${reviews.length}×
+                        ${dueLabel ? ` · ${dueLabel}` : ''}
+                    </div>
+                    <details class="browse-item__reveal">
+                        <summary>Show the answer</summary>
+                        <div class="browse-item__a" dir="auto"></div>
+                    </details>
+                </div>
+            </div>`;
+    }).join('');
+
+    // Question and answer are filled in afterwards rather than interpolated,
+    // so a code block is laid out properly instead of collapsing into one
+    // line - and so document text never reaches innerHTML.
+    listEl.querySelectorAll('.browse-item').forEach(row => {
+        const item = visible[Number(row.dataset.index)];
+        renderRichText(row.querySelector('.browse-item__q'), item.question);
+
+        const answerEl = row.querySelector('.browse-item__a');
+        const text = item.answer && item.answer.trim()
+            ? item.answer
+            : (item.mySolution && item.mySolution.trim()
+                ? item.mySolution
+                : 'No stored answer for this one.');
+        renderRichText(answerEl, text);
+    });
+}
+
+const CONFIDENCE_LABELS = {
+    sure: 'Said "I\'m sure"',
+    think_so: 'Said "I think so"',
+    guessing: 'Said "guessing"'
+};
+
+const OUTCOME_LABELS = {
+    got_it: 'got it', partial: 'partly', missed: 'missed it',
+    solved: 'solved it', stuck: 'got stuck', wrong: 'wrong'
+};
+
+const browseStudyBtn = document.getElementById('browse-study-btn');
+if (browseStudyBtn) browseStudyBtn.onclick = openBrowseScreen;
+
+const closeBrowseBtn = document.getElementById('close-browse-btn');
+if (closeBrowseBtn) closeBrowseBtn.onclick = async () => {
+    document.getElementById('study-browse').hidden = true;
+    document.getElementById('study-home').hidden = false;
+    await loadStudyHome();
+};
 
 // ---- Managing / deleting study questions ----
 // Generated questions are only as good as the model that made them, so
@@ -2654,6 +3779,7 @@ function updateManageSelectionBar() {
         if (!ok) return;
 
         const res = await ipcRenderer.invoke('delete-study-items-bulk', [...selectedQuestionIds]);
+        invalidateListCache('study'); invalidateListCache('browse');
         if (res && res.error) { toast.error(res.error, 'Could not delete'); return; }
 
         clearManageSelection();
@@ -2670,6 +3796,7 @@ if (manageStudyBtn) {
     manageStudyBtn.onclick = async () => {
         document.getElementById('study-home').hidden = true;
         document.getElementById('study-review').hidden = true;
+        document.getElementById('study-browse').hidden = true;
         document.getElementById('study-manage').hidden = false;
         await loadManageList();
     };
@@ -2684,11 +3811,82 @@ if (closeManageBtn) {
     };
 }
 
+// ---- Cached lists ----
+//
+// Opening Manage questions, Review answered or the file picker meant waiting
+// on a full round trip before anything appeared: renderer -> IPC -> the local
+// server -> MongoDB Atlas, which is across the internet. That is a second or
+// more per screen, every time, for data that rarely changed since last look.
+//
+// So each of those lists is remembered, drawn instantly from memory, and then
+// refreshed in the background. The screen is usable immediately and correct a
+// moment later. Anything that changes the deck clears the relevant entry.
+const listCache = new Map();
+
+async function cachedFetch(key, fetcher, { onData }) {
+    const cached = listCache.get(key);
+    if (cached) onData(cached, { stale: true });
+
+    const fresh = await fetcher();
+    listCache.set(key, fresh);
+    onData(fresh, { stale: false });
+    return fresh;
+}
+
+// Called wherever questions or files are created, edited or deleted.
+function invalidateListCache(prefix) {
+    if (!prefix) { listCache.clear(); return; }
+    [...listCache.keys()].filter(k => k.startsWith(prefix)).forEach(k => listCache.delete(k));
+}
+
+// Warm the caches once the app has settled, so even the FIRST time a screen
+// is opened it is already there. Idle work, so it costs the user nothing.
+function prefetchLists() {
+    setTimeout(async () => {
+        try {
+            if (!listCache.has('study:light')) {
+                listCache.set('study:light', await ipcRenderer.invoke('get-study-items', { light: true }));
+            }
+            if (!listCache.has('files:light')) {
+                listCache.set('files:light', await ipcRenderer.invoke('get-files', { light: true }));
+            }
+        } catch { /* a warm cache is an optimisation, never a requirement */ }
+    }, 2500);
+}
+prefetchLists();
+
 async function loadManageList() {
-    const items = await ipcRenderer.invoke('get-study-items', {});
     const listEl = document.getElementById('manage-list');
-    const filtersEl = document.getElementById('manage-source-filters');
     if (!listEl) return;
+
+    // Paint something before waiting. The fetch takes a second or two on a
+    // real deck, and the old order - await first, touch the DOM after - left
+    // the screen frozen on whatever was there before, which reads as a hang.
+    listEl.innerHTML = `
+        <div class="ms-skeleton ms-skeleton--card"></div>
+        <div class="ms-skeleton ms-skeleton--card"></div>
+        <div class="ms-skeleton ms-skeleton--card"></div>`;
+
+    // `light` drops each item's review history: this screen shows the
+    // question, its mode, its subject and its repetition count, and never
+    // reads a single review.
+    const cached = listCache.get('study:light');
+    const items = cached || await ipcRenderer.invoke('get-study-items', { light: true });
+    listCache.set('study:light', items);
+
+    // Served from memory: check for changes behind the user's back and redraw
+    // only if the deck actually moved.
+    if (cached) {
+        ipcRenderer.invoke('get-study-items', { light: true }).then(fresh => {
+            if (!fresh) return;
+            const changed = fresh.length !== items.length
+                || fresh.some((f, i) => !items[i] || f.id !== items[i].id);
+            listCache.set('study:light', fresh);
+            if (changed && !document.getElementById('study-manage').hidden) loadManageList();
+        }).catch(() => {});
+    }
+
+    const filtersEl = document.getElementById('manage-source-filters');
 
     // Reset the bulk-delete control FIRST, before any early return.
     // The previous version only configured it on the path where items exist,
@@ -2765,6 +3963,7 @@ async function loadManageList() {
                 const res = deletingAll
                     ? await ipcRenderer.invoke('delete-all-study-items')
                     : await ipcRenderer.invoke('delete-study-items-bulk', targets.map(i => i.id));
+                invalidateListCache('study'); invalidateListCache('browse');
 
                 if (res && res.error) { toast.error(res.error, 'Could not delete'); return; }
                 toast.success(`Deleted ${res.deleted} question(s).`);
@@ -2829,6 +4028,7 @@ async function loadManageList() {
 
         row.querySelector('.manage-item__delete').onclick = async () => {
             const res = await ipcRenderer.invoke('delete-study-item', row.dataset.id);
+            invalidateListCache('study'); invalidateListCache('browse');
             if (res && res.error) { toast.error(res.error, 'Could not delete'); return; }
             toast.info('Question deleted.');
             // Reload rather than just removing the row. Removing the element
@@ -2853,6 +4053,7 @@ if (saveSolutionBtn) {
         const text = input.value.trim();
         saveSolutionBtn.disabled = true;
         const res = await ipcRenderer.invoke('update-study-item', item.id, { mySolution: text });
+        invalidateListCache('browse');
         saveSolutionBtn.disabled = false;
 
         if (res && res.error) { toast.error(res.error, 'Could not save'); return; }
@@ -2881,6 +4082,218 @@ if (copyQuestionBtn) {
         }
     };
 }
+
+// ==========================================
+// 15b. Importing an existing deck
+// ==========================================
+// Generating cards from a PDF is now something every study app does, and one
+// of them is Google's, for free. What almost none of them do is bring the
+// cards BACK - a NotebookLM set is generated once and then sits there.
+//
+// So this is the other way in: a deck the student already has, from Quizlet,
+// Anki, a spreadsheet or anywhere else, arriving in two minutes instead of
+// twenty. Once it's here it gets confidence tracking and scheduling like
+// everything else.
+//
+// Imported cards go through the same approval screen as generated ones. They
+// were written by someone else against material we have never seen, which is
+// if anything MORE reason to look before they enter the deck.
+
+// Splits one delimited line, honouring quotes. Card answers contain commas
+// constantly ("a set, a list, or a map"), so a naive split() would cut cards
+// in half and silently produce nonsense.
+function splitDelimited(line, delimiter) {
+    const fields = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+
+        if (ch === '"') {
+            // "" inside a quoted field is one literal quote character.
+            if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+            else inQuotes = !inQuotes;
+            continue;
+        }
+        if (ch === delimiter && !inQuotes) { fields.push(current); current = ''; continue; }
+        current += ch;
+    }
+    fields.push(current);
+    return fields.map(f => f.trim());
+}
+
+// Which character separates the columns.
+//
+// Guessing from the first line alone is unreliable - a single question
+// containing a comma would win the vote. This counts across the file and
+// picks the delimiter that splits the MOST lines into the same number of
+// fields, which is what a real table does and what prose does not.
+function detectDelimiter(lines) {
+    const candidates = ['\t', ',', ';', '|'];
+    let best = { delimiter: '\t', score: 0 };
+
+    candidates.forEach(delimiter => {
+        const counts = lines.slice(0, 50).map(l => splitDelimited(l, delimiter).length);
+        const twoOrMore = counts.filter(n => n >= 2);
+        if (twoOrMore.length === 0) return;
+
+        // Consistency, not just "did it split".
+        const mode = twoOrMore.sort((a, b) =>
+            twoOrMore.filter(v => v === a).length - twoOrMore.filter(v => v === b).length
+        ).pop();
+        const score = counts.filter(n => n === mode).length;
+
+        if (score > best.score) best = { delimiter, score };
+    });
+
+    return best.delimiter;
+}
+
+function looksLikeHeaderRow(fields) {
+    const header = fields.map(f => f.toLowerCase().trim());
+    // Exports are labelled in whatever language the student's account is in,
+    // so a German header row ("Frage;Antwort") would otherwise become the
+    // first card in the deck.
+    const known = [
+        'question', 'front', 'term', 'prompt', 'word', 'key',
+        'answer', 'back', 'definition', 'meaning', 'value',
+        'שאלה', 'תשובה', 'מונח', 'הגדרה',
+        'frage', 'antwort', 'begriff',
+        'pregunta', 'respuesta',
+        'question ', 'réponse'
+    ];
+    return header.some(f => known.includes(f));
+}
+
+function parseDeckText(raw) {
+    const lines = String(raw || '')
+        .replace(/\r\n/g, '\n')
+        .split('\n')
+        .filter(l => l.trim().length > 0);
+
+    if (lines.length === 0) return { cards: [], skipped: 0 };
+
+    const delimiter = detectDelimiter(lines);
+    const cards = [];
+    let skipped = 0;
+
+    lines.forEach((line, index) => {
+        const fields = splitDelimited(line, delimiter);
+
+        if (index === 0 && looksLikeHeaderRow(fields)) return;
+
+        // A row with nothing to answer is not a card. Anki exports carry tag
+        // and metadata columns after the answer, which are ignored.
+        const question = (fields[0] || '').trim();
+        const answer = (fields[1] || '').trim();
+        if (!question || !answer) { skipped += 1; return; }
+
+        cards.push({
+            question,
+            answer,
+            mode: 'recall',
+            solutionSource: 'imported'
+        });
+    });
+
+    return { cards, skipped, delimiter };
+}
+
+async function importDeck(rawText, sourceLabel) {
+    const { cards, skipped, delimiter } = parseDeckText(rawText);
+
+    if (cards.length === 0) {
+        toast.error(
+            'No question-and-answer pairs found. Each line needs a question and an answer separated by a tab, comma or semicolon.',
+            'Nothing to import'
+        );
+        return;
+    }
+    if (cards.length > 200) {
+        toast.info(`That deck has ${cards.length} cards. Only the first 200 are imported at once.`, 'Large deck');
+        cards.length = 200;
+    }
+
+    // Same three-argument promptDialog used everywhere else: title, message,
+    // default value.
+    const category = await promptDialog(
+        'Which subject?',
+        'These cards are grouped under this name, so you can study them on their own.',
+        sourceLabel
+    );
+    if (category === null) return;
+
+    cards.forEach(c => {
+        c.category = (category || '').trim();
+        c.sourceFile = sourceLabel;
+    });
+
+    const named = { '\t': 'tabs', ',': 'commas', ';': 'semicolons', '|': 'pipes' };
+    console.log(`📥 Imported ${cards.length} card(s), split on ${named[delimiter] || delimiter}, ${skipped} row(s) skipped.`);
+    if (skipped > 0) {
+        toast.info(`${skipped} row(s) had no answer and were left out.`, `${cards.length} cards ready`);
+    }
+
+    document.getElementById('study-import').hidden = true;
+    openReviewScreen(cards);
+}
+
+const importDeckBtn = document.getElementById('import-deck-btn');
+if (importDeckBtn) importDeckBtn.onclick = () => {
+    document.getElementById('study-home').hidden = true;
+    document.getElementById('study-manage').hidden = true;
+    document.getElementById('study-browse').hidden = true;
+    document.getElementById('study-review').hidden = true;
+    document.getElementById('study-import').hidden = false;
+
+    const box = document.getElementById('import-paste-box');
+    if (box) { box.value = ''; box.focus(); }
+    const fileNote = document.getElementById('import-file-note');
+    if (fileNote) fileNote.textContent = '';
+    importedFileName = '';
+};
+
+// Set when a file is chosen, so the subject defaults to the file's name the
+// way it does for a generated deck.
+let importedFileName = '';
+
+const importFileBtn = document.getElementById('import-file-btn');
+if (importFileBtn) importFileBtn.onclick = async () => {
+    const file = await ipcRenderer.invoke('select-deck-file');
+    if (!file) return;
+    if (file.error) { toast.error(file.error, 'Could not read the file'); return; }
+
+    const box = document.getElementById('import-paste-box');
+    if (box) box.value = file.text;
+    importedFileName = file.name.replace(/\.[^.]+$/, '');
+
+    // Say what was understood before anything is committed. A parser that
+    // silently reads two columns out of a five-column export is the kind of
+    // thing you only notice a week later.
+    const { cards, skipped } = parseDeckText(file.text);
+    const note = document.getElementById('import-file-note');
+    if (note) {
+        note.textContent = cards.length
+            ? `${file.name}: found ${cards.length} card(s)${skipped ? `, ${skipped} row(s) without an answer will be skipped` : ''}.`
+            : `${file.name}: no question-and-answer pairs found. Check that each line has both, separated by a tab or a comma.`;
+    }
+};
+
+const importContinueBtn = document.getElementById('import-continue-btn');
+if (importContinueBtn) importContinueBtn.onclick = async () => {
+    const box = document.getElementById('import-paste-box');
+    const text = box ? box.value : '';
+    if (!text.trim()) { toast.info('Paste some cards, or choose a file.'); return; }
+    await importDeck(text, importedFileName || 'Imported');
+};
+
+const closeImportBtn = document.getElementById('close-import-btn');
+if (closeImportBtn) closeImportBtn.onclick = async () => {
+    document.getElementById('study-import').hidden = true;
+    document.getElementById('study-home').hidden = false;
+    await loadStudyHome();
+};
 
 // ==========================================
 // 16. Reviewing generated questions before they enter the deck
@@ -3002,6 +4415,8 @@ if (reviewConfirmBtn) reviewConfirmBtn.onclick = async () => {
 
     reviewConfirmBtn.disabled = true;
     const res = await ipcRenderer.invoke('save-study-items', chosen);
+    // New questions in the deck: every cached list is now out of date.
+    invalidateListCache();
     reviewConfirmBtn.disabled = false;
 
     if (res && res.error) { toast.error(res.error, 'Could not save'); return; }
@@ -3101,18 +4516,14 @@ if (saveKeyBtn) {
 const navSettingsBtn = document.getElementById('nav-settings');
 if (navSettingsBtn) navSettingsBtn.addEventListener('click', loadAiSettings);
 
+const openAistudioBtn = document.getElementById('open-aistudio-btn');
+if (openAistudioBtn) openAistudioBtn.onclick = async () => {
+    const res = await ipcRenderer.invoke('open-external', 'https://aistudio.google.com/apikey');
+    if (res && res.ok) toast.info('Opened in your browser. Come back here once you have the key.');
+    else toast.error("Couldn't open the page. Visit aistudio.google.com/apikey in your browser.");
+};
+
 loadAiSettings();
 
-const resumeSessionBtn = document.getElementById('resume-session-btn');
-if (resumeSessionBtn) resumeSessionBtn.onclick = async () => {
-    const resume = readSessionProgress();
-    if (!resume) { toast.info('That session has expired.'); await loadStudyHome(); return; }
-    await startStudySession(resume);
-};
-
-const discardSessionBtn = document.getElementById('discard-session-btn');
-if (discardSessionBtn) discardSessionBtn.onclick = async () => {
-    clearSessionProgress();
-    await loadStudyHome();
-    toast.info('Session cleared. Your answers were already saved.');
-};
+// The resume controls moved onto the start row - see start-study-btn and
+// start-fresh-btn above, next to the button they actually act on.

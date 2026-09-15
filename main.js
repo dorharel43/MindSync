@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -805,11 +805,52 @@ function looksLikeExercisePaper(text) {
 // Strips multiple-choice scaffolding. The model still occasionally emits
 // options despite being told not to, and a question ending in "choose one:"
 // with no options is worse than useless.
+// Multiple choice has no place here: the student self-grades against a
+// passage, and four options turn recall into recognition - a far easier task
+// that feels like knowing.
+//
+// The old version only matched an option written as "א) ..." at the start of
+// its own line. Models write them every other way too: "א. Smartphone" run
+// inline at the end of a question, "(a) ...", "ב ) ...". Rather than guess at
+// one shape, this finds every marker and only cuts when at least three of
+// them appear in the right order - so a sentence that merely happens to
+// contain "ב." is never truncated.
+const MC_LETTERS_HE = ['א', 'ב', 'ג', 'ד', 'ה', 'ו'];
+const MC_LETTERS_EN = ['a', 'b', 'c', 'd', 'e', 'f'];
+
 function stripMultipleChoice(question) {
-    return String(question || '')
+    const text = String(question || '')
         .replace(/\s*(בחר\s*(אחת|אחד)|choose\s*one|select\s*one)\s*[:：]?\s*$/i, '')
-        .replace(/\s*[\u0590-\u05FF]\s*\)\s*.+$/gm, '') // stray "א) ..." lines
         .trim();
+
+    // Note: no \b anywhere. In JavaScript \b is defined over [A-Za-z0-9_] and
+    // does not recognise Hebrew at all, so it fails silently next to א-ת.
+    const markerRe = /(?:^|[\s(])([א-ו]|[a-fA-F])\s*[.)]\s+/g;
+    const markers = [];
+    let match;
+    while ((match = markerRe.exec(text)) !== null) {
+        markers.push({
+            letter: match[1].toLowerCase(),
+            // Where the letter itself starts, not the whitespace before it.
+            at: match.index + match[0].search(/\S/)
+        });
+    }
+
+    for (let i = 0; i < markers.length; i++) {
+        const first = markers[i].letter;
+        const alphabet = first === 'א' ? MC_LETTERS_HE : first === 'a' ? MC_LETTERS_EN : null;
+        if (!alphabet) continue; // a run has to begin at the first letter
+
+        let expected = 1;
+        let run = 1;
+        for (let j = i + 1; j < markers.length && expected < alphabet.length; j++) {
+            if (markers[j].letter === alphabet[expected]) { run++; expected++; }
+        }
+
+        if (run >= 3) return text.slice(0, markers[i].at).trim();
+    }
+
+    return text;
 }
 
 // Turns a model-supplied ISO date into (a) a display label and (b) an urgency
@@ -940,8 +981,163 @@ ${chunks[i]}`;
     }
 });
 
-ipcMain.handle('add-smart-task', async (event, freeText, category = '') => {
+// Turns the words people actually write into a real deadline.
+//
+// Deterministic, and tried before any model: "מחר" and "יום חמישי" have
+// exactly one meaning, and a model asked the same question can answer
+// differently between runs. Same split as the weekday names in
+// parse-smart-event and the event type keywords - interpretation the code can
+// do reliably, the code does.
+const TASK_DAY_MAP = { 'ראשון': 0, 'שני': 1, 'שלישי': 2, 'רביעי': 3, 'חמישי': 4, 'שישי': 5, 'שבת': 6 };
+const EN_DAY_MAP = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
+
+function nextDateForWeekday(targetIndex, from = new Date()) {
+  const result = new Date(from);
+  result.setHours(23, 59, 0, 0);
+  let delta = (targetIndex - from.getDay() + 7) % 7;
+  // "Thursday" said on a Thursday means next Thursday, not five minutes ago.
+  if (delta === 0) delta = 7;
+  result.setDate(result.getDate() + delta);
+  return result;
+}
+
+function detectDeadline(text) {
+  const source = String(text || '');
+  const now = new Date();
+
+  // An explicit date wins over everything: 15/09, 15.9, 15-09-2026.
+  const explicit = source.match(/(\d{1,2})[/.\-](\d{1,2})(?:[/.\-](\d{2,4}))?/);
+  if (explicit) {
+    const day = Number(explicit[1]);
+    const month = Number(explicit[2]);
+    let year = explicit[3] ? Number(explicit[3]) : now.getFullYear();
+    if (year < 100) year += 2000;
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      const parsed = new Date(year, month - 1, day, 23, 59, 0, 0);
+      // A date already behind us in an undated sentence means next year.
+      if (!explicit[3] && parsed < now) parsed.setFullYear(year + 1);
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+  }
+
+  if (source.includes('מחר')) {
+    const d = new Date(now); d.setDate(d.getDate() + 1); d.setHours(23, 59, 0, 0); return d;
+  }
+  if (source.includes('היום') || /\btoday\b/i.test(source)) {
+    const d = new Date(now); d.setHours(23, 59, 0, 0); return d;
+  }
+  if (/\btomorrow\b/i.test(source)) {
+    const d = new Date(now); d.setDate(d.getDate() + 1); d.setHours(23, 59, 0, 0); return d;
+  }
+
+  // "יום X" before a bare day word: in Hebrew every weekday name is also an
+  // ordinal, so "תרגיל שני" would otherwise be read as Monday.
+  const withPrefix = source.match(/(?:ב?יום)\s+(ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)/);
+  if (withPrefix) return nextDateForWeekday(TASK_DAY_MAP[withPrefix[1]], now);
+
+  // "עד חמישי" is unambiguous too - the preposition marks it as a deadline.
+  const untilDay = source.match(/עד\s+(?:יום\s+)?(ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)/);
+  if (untilDay) return nextDateForWeekday(TASK_DAY_MAP[untilDay[1]], now);
+
+  if (/שבת/.test(source)) return nextDateForWeekday(6, now);
+
+  const enDay = source.match(/\b(?:by|on|before)\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i);
+  if (enDay) return nextDateForWeekday(EN_DAY_MAP[enDay[1].toLowerCase()], now);
+
+  return null;
+}
+
+// How long the person said it would take. Only explicit statements - guessing
+// "an essay takes three hours" is the model's job, not a regex's.
+function detectEstimate(text) {
+  const source = String(text || '');
+
+  const hebrewHours = source.match(/(\d+(?:\.\d+)?)\s*שעות?/);
+  if (hebrewHours) return Math.round(Number(hebrewHours[1]) * 60);
+  if (/שעתיים/.test(source)) return 120;
+  if (/חצי\s*שעה/.test(source)) return 30;
+
+  const hebrewMinutes = source.match(/(\d+)\s*דק(?:ות|')?/);
+  if (hebrewMinutes) return Number(hebrewMinutes[1]);
+
+  const enHours = source.match(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)\b/i);
+  if (enHours) return Math.round(Number(enHours[1]) * 60);
+
+  const enMinutes = source.match(/(\d+)\s*(?:minutes?|mins?)\b/i);
+  if (enMinutes) return Number(enMinutes[1]);
+
+  return null;
+}
+
+// A task that carries an explicit clock time is not a task.
+//
+// "Lesson from 18:00 to 23:00" describes something already fixed in the week.
+// The planner has nothing to decide about it, and left in the task list it
+// gets treated as an hour of flexible work and dropped into the first free
+// morning slot - which is what happened.
+//
+// Deterministic on purpose, and keyword-first like the day names and the
+// event types: the shapes below are exactly the ones people write, and a
+// model asked the same question would answer differently between runs.
+const CLOCK_RANGE_RE = /\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:-|–|—|עד|until|to)\s*([01]?\d|2[0-3])[:.]([0-5]\d)\b/;
+// No \b before the Hebrew alternatives. In JavaScript \b is defined over
+// [A-Za-z0-9_] and does not recognise Hebrew at all, so "\bבשעה" never
+// matches - the same trap already documented for the weekday names.
+const CLOCK_SINGLE_RE = /(?:^|[\s(])(?:at|בשעה|ב[-\s]?)\s*([01]?\d|2[0-3])[:.]([0-5]\d)/;
+
+function detectFixedTime(text) {
+  const source = String(text || '');
+
+  const range = source.match(CLOCK_RANGE_RE);
+  if (range) {
+    const startMinutes = (Number(range[1]) * 60) + Number(range[2]);
+    let endMinutes = (Number(range[3]) * 60) + Number(range[4]);
+    // "22:00 - 01:00" runs past midnight.
+    if (endMinutes <= startMinutes) endMinutes += 24 * 60;
+    return {
+      time: `${String(range[1]).padStart(2, '0')}:${range[2]}`,
+      durationMinutes: endMinutes - startMinutes
+    };
+  }
+
+  const single = source.match(CLOCK_SINGLE_RE);
+  if (single) {
+    return { time: `${String(single[1]).padStart(2, '0')}:${single[2]}`, durationMinutes: null };
+  }
+
+  return null;
+}
+
+ipcMain.handle('add-smart-task', async (event, freeText, category = '', options = {}) => {
     try {
+        // Checked before anything is written. A sentence with a start and an
+        // end time describes something already fixed in the week - the
+        // planner has nothing to decide about it. Asking first means the
+        // answer can change what gets created, rather than leaving a wrong
+        // task behind and a note explaining that it's wrong.
+        if (!options.forceTask) {
+            const fixed = detectFixedTime(freeText);
+
+            // A clock time isn't the only sign. "מבחן ביום חמישי" has no time
+            // in it and is still a commitment - exams and lectures happen when
+            // they happen, and the planner has nothing to decide about them.
+            // classifyEventByKeywords already knows the difference, including
+            // that "ללמוד למבחן" is revision (work to fit in) rather than the
+            // exam itself.
+            const kind = classifyEventByKeywords(freeText);
+            const isCommitment = kind === 'exam' || kind === 'lesson';
+
+            if (fixed || isCommitment) {
+                return JSON.stringify({
+                    looksFixed: {
+                        time: fixed ? fixed.time : null,
+                        durationMinutes: fixed ? fixed.durationMinutes : null,
+                        kind: kind || null
+                    }
+                });
+            }
+        }
+
         const now = new Date();
         const todayStr = now.toLocaleDateString('en-US');
         const tomorrow = new Date(now);
@@ -959,23 +1155,109 @@ ipcMain.handle('add-smart-task', async (event, freeText, category = '') => {
             .trim();
         if (!cleanTitle) cleanTitle = freeText; 
 
+        // The model is asked for the two things a regex cannot know: how
+        // pressing this is, and roughly how long it takes. Anything stated
+        // outright - a date, "שעתיים" - was already read deterministically
+        // above and is not up for reinterpretation.
         const prompt = `Return ONLY a valid JSON object.
-Classify the urgency of this task: "${cleanTitle}"
-Choose exactly one urgency: "Normal", "Medium", "High", or "Urgent".
-Format: {"urgency": "your_choice"}`;
+
+The student wrote: "${freeText}"
+
+1. title: SHORTEN what they wrote to 2-6 words, in their language.
+   Use ONLY words that appear in their sentence. Do not rephrase, do not add
+   a subject they did not mention, and do not replace their words with your
+   own. Drop the timing and the size - those are stored separately - and drop
+   any word left dangling once they are gone.
+   If their sentence is already short, return it unchanged.
+2. urgency: exactly one of "Normal", "Medium", "High", "Urgent".
+3. estimatedMinutes: how long this realistically takes a student, in minutes.
+   Use 30, 60, 90, 120, 180, 300 or 480. Reading a chapter is about 60.
+   Writing an assignment is 180 or more. Revising for an exam is 300 or more.
+
+Format: {"title": "...", "urgency": "your_choice", "estimatedMinutes": 90}`;
 
         let responseText = await callAIWithFallback(prompt);
         responseText = extractJsonFromText(responseText);
         const aiData = JSON.parse(responseText);
         
+        // What the person actually wrote wins over what the model guessed.
+        const statedEstimate = detectEstimate(freeText);
+        const modelEstimate = Number(aiData.estimatedMinutes);
+
+        // A shorter title from the model, but only if it is genuinely THEIR
+        // sentence made shorter.
+        //
+        // The first version of this prompt carried a worked example in Hebrew,
+        // and a model handed "מבחן מחר ב 10:00" returned the example instead -
+        // the user's exam became someone else's assignment. The example is
+        // gone, but a prompt can always be echoed or ignored, so the check
+        // below is structural rather than a matter of wording: every
+        // substantial word in the title has to come from what they wrote. A
+        // title is the one field they read every day; it is the last place to
+        // let a model be creative.
+        const suggested = String(aiData.title || '').trim();
+
+        const words = (s) => String(s).toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || [];
+
+        // Hebrew glues its prepositions onto the front of a word: the same noun
+        // appears as "מבחן", "למבחן", "במכללה", "שהמבחן". Comparing written
+        // forms would reject "מבחן" as foreign to a sentence saying "למבחן" -
+        // which is precisely the shortening we asked for.
+        //
+        // Stripping those letters greedily doesn't work: every letter of
+        // "למכללה" is a possible prefix, so a greedy rule eats the whole word.
+        // Instead each word offers up to three readings - itself, minus one
+        // leading letter, minus two - and two words match if any reading is
+        // shared. "מבחן" offers {מבחן, בחן, חן} and "למבחן" offers {למבחן,
+        // מבחן, בחן}, which overlap. English is untouched, since the letters
+        // stripped have to be Hebrew prefixes.
+        const HEB_PREFIX = /^[ובלכמשה]+$/;
+        const readings = (w) => {
+            const out = [w];
+            for (let n = 1; n <= 2; n++) {
+                if (w.length - n >= 2 && HEB_PREFIX.test(w.slice(0, n))) out.push(w.slice(n));
+            }
+            return out;
+        };
+
+        const alike = (a, b) => {
+            const A = readings(a);
+            const B = readings(b);
+            if (A.some(x => B.includes(x))) return true;
+            // Catches English inflections: assignment / assignments.
+            return A.some(x => B.some(y => x.length >= 4 && y.length >= 4 && (x.startsWith(y) || y.startsWith(x))));
+        };
+
+        const sourceWords = words(freeText);
+        const titleWords = words(suggested);
+        const borrowed = titleWords.filter(w => sourceWords.some(src => alike(w, src))).length;
+
+        const usableTitle = suggested
+            && suggested.length >= 3
+            && suggested.length <= 80
+            && suggested.split(/\s+/).length <= 10
+            // Every word must trace back to one of theirs, allowing for the
+            // prefixes Hebrew attaches and drops as a sentence is trimmed.
+            && titleWords.length > 0
+            && borrowed === titleWords.length;
+
+        if (suggested && !usableTitle) {
+            console.warn(`⚠️ Rejected model title "${suggested}" - not drawn from the user's words. Keeping "${cleanTitle}".`);
+        }
+
         const task = {
-            title: cleanTitle,
+            title: usableTitle ? suggested : cleanTitle,
             date: targetDate,
+            dueDate: detectDeadline(freeText),
+            estimatedMinutes: statedEstimate
+                || (Number.isFinite(modelEstimate) && modelEstimate > 0 ? Math.min(modelEstimate, 600) : null),
             category: category || '',
             urgency: aiData.urgency || "Normal"
         };
 
         await api.createTask(task);
+        console.log(`✅ Task: "${task.title}" | due ${task.dueDate ? task.dueDate.toLocaleDateString('en-GB') : 'unset'} | ${task.estimatedMinutes || 60}m | ${task.urgency}`);
+
         return JSON.stringify({ success: true });
     } catch (error) {
         return JSON.stringify({ error: "Could not format the task." });
@@ -1061,7 +1343,7 @@ ipcMain.handle('parse-smart-event', async (event, freeText) => {
         if (dayWithPrefix) {
             matchedHebrewDayWord = dayWithPrefix[1];
             targetDayName = dayNames[hebrewDayMap[matchedHebrewDayWord]];
-        } else if (/\bשבת\b/.test(freeText)) {
+        } else if (/(?:^|\s)שבת(?=\s|$|[,.])/.test(freeText)) {
             matchedHebrewDayWord = 'שבת';
             targetDayName = dayNames[6];
         }
@@ -1130,7 +1412,7 @@ ipcMain.handle('parse-smart-event', async (event, freeText) => {
         if (matchedHebrewDayWord) {
             cleanTitle = cleanTitle
                 .replace(new RegExp(`ב?יום\\s+${matchedHebrewDayWord}`, 'g'), '')
-                .replace(new RegExp(`\\bב?${matchedHebrewDayWord}\\b`, 'g'), '');
+                .replace(new RegExp(`(?:^|\\s)ב?${matchedHebrewDayWord}(?=\\s|$|[,.])`, 'g'), ' ');
         }
 
         // Strip the relative day word - but NOT when it's part of "כל היום"
@@ -1138,19 +1420,36 @@ ipcMain.handle('parse-smart-event', async (event, freeText) => {
         // blindly turned "זמן אישי היום כל היום" into "זמן אישי כל".
         cleanTitle = cleanTitle
             .replace(/כל\s+היום/g, '\u0000ALLDAY\u0000')   // shield it
-            .replace(/\bמחר\b|\bהיום\b/g, '')
+            // No \b: it is defined over [A-Za-z0-9_] and never matches beside
+            // Hebrew, so this quietly stripped nothing and every event kept
+            // "מחר" in its title.
+            .replace(/(?:^|\s)(?:מחר|היום)(?=\s|$|[,.])/g, ' ')
             .replace(/\u0000ALLDAY\u0000/g, 'כל היום');     // restore
 
         // Remove a matched time-of-day word from the title too, so we don't
         // end up with "מבחן בבוקר" when the time already says 09:00.
         if (matchedTimeWord && matchedTimeWord !== 'כל היום') {
-            cleanTitle = cleanTitle.replace(new RegExp(`\\b${matchedTimeWord}\\b`, 'g'), '');
+            cleanTitle = cleanTitle.replace(new RegExp(`(?:^|\\s)${matchedTimeWord}(?=\\s|$|[,.])`, 'g'), ' ');
         }
 
         cleanTitle = cleanTitle
             .replace(/\s+/g, ' ')
             .replace(/^[\s,.\-־]+|[\s,.\-־]+$/g, '')
             .trim();
+
+        // Removing the times leaves the words that introduced them behind.
+        // "ללמוד למבחן מחר מ 15:00-17:00" became "ללמוד למבחן מחר מ" - a
+        // preposition pointing at nothing. Stripped repeatedly, because a
+        // range leaves two of them ("מ ... עד ...").
+        //
+        // Note: no \b anywhere. It is defined over [A-Za-z0-9_] in JavaScript
+        // and does not recognise Hebrew, so it would silently never match.
+        const DANGLING = /(?:^|\s)(?:מ|ב|ל|עד|מה|from|to|until|at|between)\s*$/;
+        let guard = 0;
+        while (DANGLING.test(cleanTitle) && guard++ < 4) {
+            cleanTitle = cleanTitle.replace(DANGLING, '').trim();
+        }
+        cleanTitle = cleanTitle.replace(/^[\s,.\-־]+|[\s,.\-־]+$/g, '').trim();
 
         if (!cleanTitle) cleanTitle = "New Event";
 
@@ -1226,46 +1525,12 @@ Return ONLY this JSON, with no other text: {"type": "one_of_the_four"}`;
 });
 
 // =====================================
-// AI Operations (Smart Weekly Planner)
+// Weekly planning
 // =====================================
-ipcMain.handle('generate-weekly-plan', async (event, currentTasks, currentEvents) => {
-    try {
-        const openTasks = currentTasks.filter(t => t.date === "Not set" || !t.date);
-        if (openTasks.length === 0) return JSON.stringify([]);
-
-        const plannedEvents = [];
-        const now = new Date();
-        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-        let dayOffset = 1; 
-        let timeSlot = 16; 
-
-        for (let i = 0; i < openTasks.length; i++) {
-            const task = openTasks[i];
-            
-            const targetDate = new Date(now);
-            targetDate.setDate(now.getDate() + dayOffset);
-            
-            plannedEvents.push({
-                title: `Study Block: ${task.title}`,
-                day: dayNames[targetDate.getDay()],
-                time: `${timeSlot.toString().padStart(2, '0')}:00`,
-                type: "study"
-            });
-
-            timeSlot += 2; 
-            if (timeSlot > 20) { 
-                timeSlot = 16;
-                dayOffset++;
-            }
-        }
-
-        return JSON.stringify(plannedEvents);
-    } catch (error) {
-        console.error("Weekly Planner Error:", error);
-        return JSON.stringify({ error: error.message });
-    }
-});
+// The planner moved to client/weekPlanner.js and is now ordinary code, not
+// an AI call. Placing blocks around fixed commitments is arithmetic: it must
+// give the same answer twice, never double-book an hour, and be testable.
+// None of those are things a language model provides.
 
 // =====================================
 // File Reading 
@@ -1304,6 +1569,59 @@ async function readPdf(filePath) {
     return repairHebrewPdfText(legacy);
 }
 
+// Picking a deck file to import. Separate from select-and-read-file because
+// the filters are different and because this one never parses - it hands the
+// raw text back and the renderer does the rest.
+// Removes only the blocks the planner placed, so re-planning starts from a
+// clean week without touching anything entered by hand.
+// A finished or deleted task shouldn't leave its planned blocks sitting in
+// the week. Called from both places.
+// Changing which server this copy talks to. Exposed because the alternative -
+// a new installer for every tester - is not a thing anyone should have to do.
+ipcMain.handle('set-server-url', async (event, url) => {
+  try {
+    const resolved = api.setServerUrl(url || null);
+    aiProvider.writeConfig({ serverUrl: url || null });
+    const reachable = await api.ping().catch(() => false);
+    return { ok: true, url: resolved, reachable };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('get-server-url', async () => {
+  return { url: api.getServerUrl() };
+});
+
+ipcMain.handle('clear-events-for-task', async (event, taskId) => {
+  try { return await api.clearEventsForTask(taskId); }
+  catch (err) { return { error: err.message }; }
+});
+
+ipcMain.handle('clear-auto-scheduled-events', async () => {
+  try { return await api.clearAutoScheduledEvents(); }
+  catch (err) { return { error: err.message }; }
+});
+
+ipcMain.handle('select-deck-file', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: 'Flashcard exports', extensions: ['csv', 'tsv', 'txt'] }]
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+
+  const filePath = result.filePaths[0];
+  try {
+    // Exports from Quizlet and Anki are commonly UTF-8 with a BOM, which
+    // would otherwise turn the first field of the first row into a card whose
+    // question starts with an invisible character.
+    const text = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
+    return { name: path.basename(filePath), text };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
 ipcMain.handle('select-and-read-file', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile'],
@@ -1331,19 +1649,11 @@ ipcMain.handle('select-and-read-file', async () => {
   }
 });
 
-// =====================================
-// Stats 
-// =====================================
-ipcMain.handle('get-stats', async () => {
-  try { return await api.getStats(); } 
-  catch (err) { return { xp: 0, level: 1, streak: 0, lastTaskDate: null }; }
-});
-
-ipcMain.handle('complete-task-xp', async (event, urgency) => {
-  try { return await api.completeTaskXP(urgency); } 
-  catch (err) { return { stats: null, addedXP: 0, error: err.message }; }
-});
-
+// XP, levels and the streak were removed. The IPC handlers, the /api/stats
+// routes, the Stats model and its client methods all went with them: dead
+// code that still looks alive is worse than no code, because the next person
+// has to work out whether it matters.
+//
 // =====================================
 // Profile
 // =====================================
@@ -1888,6 +2198,20 @@ CODE in any document:
 Ask what a function returns, its time complexity, what a construct does, or what
 a snippet outputs and why. Put the code INSIDE the question, formatted. Never ask
 the student to write a whole program - there is no way to check that.
+- Wrap every code snippet in a fenced block, on its own lines:
+  \`\`\`
+  public double getPrice() { ... }
+  \`\`\`
+  The app renders a fenced block in a monospace, left-to-right panel. Code that
+  arrives as one long line is unreadable, so keep one statement per line and
+  keep the original indentation.
+- Include only the classes and methods the question actually turns on. A
+  student re-reading forty lines to find the one that matters is being tested
+  on patience, not on the material.
+- NEVER offer answer options. No "א. ... ב. ... ג. ...", no "(a) ... (b) ...".
+  The student states their confidence and then self-grades against the answer;
+  a list of options turns recall into recognition, which is a far easier task
+  that feels like knowing.
 
 ---
 RULES FOR EVERYTHING:
@@ -1911,15 +2235,93 @@ Return ONLY JSON:
 {"items": [{"question": "...", "answer": "...", "mode": "recall|practice", "solutionSource": "document|ai", "topic": "short skill or topic name"}]}`;
 }
 
+// A JSON string may not contain a raw control character - a newline inside a
+// string has to be written as \n. Models get this right almost always, and
+// then get it wrong on code: asked to put a Java class inside a "question"
+// field, the model writes the class the way it would write it in a file,
+// with real line breaks, and the whole response fails to parse. One
+// unescaped newline throws away every item in a 50-second call.
+//
+// This walks the text tracking whether it is inside a string literal and
+// escapes any control character found there. Outside strings it changes
+// nothing, so well-formed JSON passes through untouched.
+function escapeControlCharsInJsonStrings(text) {
+    let out = '';
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+
+        if (escaped) { out += ch; escaped = false; continue; }
+        if (ch === '\\') { out += ch; escaped = true; continue; }
+        if (ch === '"') { inString = !inString; out += ch; continue; }
+
+        if (inString && ch < ' ') {
+            if (ch === '\n') out += '\\n';
+            else if (ch === '\r') out += '\\r';
+            else if (ch === '\t') out += '\\t';
+            else out += '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0');
+            continue;
+        }
+
+        out += ch;
+    }
+    return out;
+}
+
+// Parses what the model returned, with one repair attempt and, failing that,
+// diagnostics good enough to actually identify the problem.
+//
+// The old failure mode was a 300-character preview in the terminal - which
+// almost never contains the broken part, since the break is usually deep
+// inside a code block halfway down the response.
+function parseModelJson(responseText) {
+    const candidate = extractJsonFromText(String(responseText || ''));
+
+    try {
+        return { ok: true, value: JSON.parse(candidate) };
+    } catch (firstError) {
+        try {
+            const value = JSON.parse(escapeControlCharsInJsonStrings(candidate));
+            console.warn('⚠️ Model JSON contained unescaped control characters inside strings (usually a code block). Repaired and parsed.');
+            return { ok: true, value };
+        } catch {
+            // Repair didn't help either - report where it actually broke.
+            console.error('❌ Response was not valid JSON:', firstError.message);
+
+            const at = Number((firstError.message.match(/position (\d+)/) || [])[1]);
+            if (Number.isFinite(at)) {
+                const from = Math.max(0, at - 120);
+                const to = Math.min(candidate.length, at + 120);
+                console.error(`   around character ${at} of ${candidate.length}:`);
+                console.error('   ...' + candidate.slice(from, at) + '  <<< HERE >>>  ' + candidate.slice(at, to) + '...');
+            } else {
+                console.error('   first 300 chars:', candidate.slice(0, 300));
+            }
+
+            // The full text goes to a file. It is the only copy - the call
+            // that produced it cost 50 seconds and can't be replayed.
+            try {
+                const dumpPath = path.join(app.getPath('temp'), `mindsync-bad-response-${Date.now()}.txt`);
+                fs.writeFileSync(dumpPath, String(responseText || ''), 'utf8');
+                console.error('   full response saved to:', dumpPath);
+            } catch (writeErr) {
+                console.error('   (could not save the full response:', writeErr.message + ')');
+            }
+
+            return { ok: false };
+        }
+    }
+}
+
 // Shared validation for whatever the model returns.
 function finaliseStudyItems(responseText, category, sourceFile) {
-    let parsed;
-    try {
-        parsed = JSON.parse(extractJsonFromText(responseText));
-    } catch (e) {
-        console.error('❌ Response was not valid JSON:', String(responseText).slice(0, 300));
+    const result = parseModelJson(responseText);
+    if (!result.ok) {
         return { error: 'The AI response could not be read. Try again.' };
     }
+    const parsed = result.value;
 
     let list = Array.isArray(parsed) ? parsed : (parsed.items || []);
     if (!Array.isArray(list)) list = [];
@@ -2025,8 +2427,16 @@ ipcMain.handle('generate-study-items-pdf', async (event, sourcePath, options = {
             // earlier run produced only two questions with both set tight.
             maxTokens: 16384,
             thinkingLevel: 'medium',
-            forceJson: true
+            forceJson: true,
+            // Relayed to the window so a retry or a model switch is visible.
+            // This call can legitimately run for minutes; without this the
+            // only honest thing the UI could say was nothing at all.
+            onProgress: (message) => {
+                if (!event.sender.isDestroyed()) event.sender.send('ai-progress', message);
+            }
         });
+
+        if (!event.sender.isDestroyed()) event.sender.send('ai-progress', 'Checking the questions...');
 
         return JSON.stringify(finaliseStudyItems(responseText, category, sourceFile));
     } catch (error) {
@@ -2101,13 +2511,13 @@ Return ONLY JSON:
             forceJson: true
         });
 
-        let parsed;
-        try {
-            parsed = JSON.parse(extractJsonFromText(responseText));
-        } catch (e) {
-            console.error('❌ Vision response was not valid JSON:', responseText.slice(0, 300));
+        // Same repair and diagnostics as the PDF path - an image of a code
+        // slide breaks in exactly the same way.
+        const visionResult = parseModelJson(responseText);
+        if (!visionResult.ok) {
             return JSON.stringify({ error: 'The AI response could not be read. Try again.' });
         }
+        const parsed = visionResult.value;
 
         let list = Array.isArray(parsed) ? parsed : (parsed.items || []);
         if (!Array.isArray(list)) list = [];
@@ -2394,8 +2804,31 @@ ipcMain.handle('save-folder', async (event, newFolder) => {
 ipcMain.handle('delete-folder', async (event, id) => {
   try { return await api.deleteFolder(id); } catch (err) { return { error: err.message }; }
 });
-ipcMain.handle('get-files', async () => {
-  try { return await api.getFiles(); } catch (err) { return []; }
+// One file with its content. The list is fetched light, so the text of the
+// one file the user picked is fetched here instead of everything up front.
+// Opening a URL in the real browser rather than inside the app. Used by the
+// key setup, which walks the user through Google's page: signing in to a
+// Google account inside an Electron window is both worse UX and something
+// Google actively blocks.
+ipcMain.handle('open-external', async (event, url) => {
+  // Only ever our own known destinations. A URL arriving from anywhere else
+  // would make this a way to launch arbitrary things from the renderer.
+  const ALLOWED = [
+    'https://aistudio.google.com/apikey',
+    'https://aistudio.google.com/',
+    'https://ollama.com/download'
+  ];
+  if (!ALLOWED.includes(url)) return { ok: false, error: 'Not an allowed destination' };
+  await shell.openExternal(url);
+  return { ok: true };
+});
+
+ipcMain.handle('get-file', async (event, id) => {
+  try { return await api.getFile(id); } catch (err) { return null; }
+});
+
+ipcMain.handle('get-files', async (event, opts = {}) => {
+  try { return await api.getFiles(opts); } catch (err) { return []; }
 });
 ipcMain.handle('save-file', async (event, newFile) => {
   try { return await api.createFile(newFile); } catch (err) { return { error: err.message }; }
@@ -2501,9 +2934,34 @@ function createWindow () {
   setInterval(checkAndBlockApps, 3000);
 }
 
+// Where this build talks to.
+//
+// Set at build time by writing server.json next to main.js, so one codebase
+// produces both a developer build pointing at localhost and an installer
+// pointing at the deployed server - without either of them asking the person
+// who runs it to configure anything.
+//
+// A saved setting still wins, so a tester can be moved to a different server
+// without a new installer.
+function resolveServerUrl() {
+    const saved = aiProvider.readConfig().serverUrl;
+    if (saved) return saved;
+
+    try {
+        const bundled = JSON.parse(fs.readFileSync(path.join(__dirname, 'server.json'), 'utf8'));
+        if (bundled && bundled.serverUrl) return bundled.serverUrl;
+    } catch { /* absent in development, which is the normal case */ }
+
+    return null; // apiClient falls back to localhost
+}
+
 app.whenReady().then(() => {
     app.setAppUserModelId("com.mindsync.app");
     aiProvider.initConfig(app.getPath('userData'));
+
+    const resolved = api.setServerUrl(resolveServerUrl());
+    console.log(`🔗 Server: ${resolved || 'http://localhost:5000/api (default)'}`);
+
     createWindow();
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

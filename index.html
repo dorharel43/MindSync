@@ -10,6 +10,9 @@
     <link rel="stylesheet" href="styles.css">
     <script src="icons.js" defer></script>
     <script src="ui.js" defer></script>
+    <!-- Pure scheduling logic, kept out of renderer.js so it can be tested
+         on its own. Must load before renderer.js, which calls planWeek(). -->
+    <script src="weekPlanner.js" defer></script>
     <script src="renderer.js" defer></script>
 </head>
 <body>
@@ -35,12 +38,6 @@
         <div class="sidebar-spacer"></div>
 
         <div class="sidebar-footer">
-            <div class="sidebar-stat" id="sidebar-streak-chip" title="Learning streak">
-                <span data-icon="flame" data-icon-size="15"></span>
-                <span id="sidebar-streak-value">0</span>
-                <span class="sidebar-stat__label">day streak</span>
-            </div>
-
             <button id="theme-toggle-btn" class="btn-icon sidebar-theme-btn" aria-label="Toggle dark mode" title="Toggle dark mode">
                 <span data-icon="moon" data-icon-size="17"></span>
             </button>
@@ -151,10 +148,10 @@
 
             <div class="schedule-actions">
                 <button id="trigger-add-event" class="btn-primary">
-                    + Add Calendar Block
+                    + Add a fixed commitment
                 </button>
                 <button id="generate-weekly-ai-btn" class="btn-primary">
-                    <span data-icon="brain"></span> Generate Smart Weekly Plan
+                    <span data-icon="brain"></span> Plan my week
                 </button>
             </div>
         </div>
@@ -247,24 +244,30 @@
                     </div>
                 </div>
 
-                <!-- Only rendered when a paused session exists -->
-                <div class="resume-banner" id="resume-banner" hidden>
-                    <div class="resume-banner__text">
-                        <strong id="resume-banner-title">Session in progress</strong>
-                        <span id="resume-banner-detail"></span>
-                    </div>
-                    <div class="resume-banner__actions">
-                        <button class="btn-primary btn-sm" id="resume-session-btn">Continue</button>
-                        <button class="btn-secondary btn-sm" id="discard-session-btn">Start fresh</button>
-                    </div>
+                <!-- One course at a time. Rendered from the deck, so it only
+                     appears once there is more than one subject in it. -->
+                <div class="subject-picker" id="subject-picker" hidden>
+                    <span class="subject-picker__label">Studying</span>
+                    <div class="filter-group" id="subject-filters"></div>
                 </div>
 
                 <div class="study-start-row">
                     <button class="btn-primary btn-lg" id="start-study-btn">
                         <span data-icon="sparkle" data-icon-size="18"></span> Start session
                     </button>
+                    <!-- Only shown when the main button says "Continue". A
+                         paused session used to live in a banner above, which
+                         appeared and disappeared as you switched subject and
+                         shoved the whole page down each time. -->
+                    <button class="btn-ghost-danger" id="start-fresh-btn" hidden>Start fresh</button>
                     <button class="btn-secondary" id="generate-study-btn">
                         <span data-icon="file" data-icon-size="16"></span> Create questions from a file
+                    </button>
+                    <button class="btn-secondary" id="import-deck-btn">
+                        <span data-icon="upload" data-icon-size="16"></span> Import a deck
+                    </button>
+                    <button class="btn-secondary" id="browse-study-btn">
+                        <span data-icon="list" data-icon-size="16"></span> Review answered
                     </button>
                     <button class="btn-secondary" id="manage-study-btn">
                         <span data-icon="list" data-icon-size="16"></span> Manage questions
@@ -278,6 +281,13 @@
                             <h3 class="section-title">How well you judge yourself</h3>
                         </div>
                         <div id="calibration-panel"></div>
+                        <!-- Everything else this data supports - the trend,
+                             the pace pattern, the subject-by-subject
+                             comparison - now lives on the Progress screen.
+                             Study answers "what do I do now"; Progress
+                             answers "how am I doing". Stacking both here is
+                             what made this screen exhausting to look at. -->
+                        <button class="panel-link" id="study-progress-link">See how this is changing over time →</button>
                     </div>
 
                     <div class="card">
@@ -323,6 +333,55 @@
                 </div>
             </div>
 
+            <!-- Importing a deck the student already has. The other way in:
+                 generating cards from a PDF is something every study app now
+                 does, including a free one from Google - but almost none of
+                 them bring the cards back afterwards. This turns a set that
+                 was generated elsewhere into one that gets scheduled here. -->
+            <div id="study-import" hidden>
+                <div class="study-manage-head">
+                    <button class="btn-secondary btn-sm" id="close-import-btn">Back</button>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="section-title">Import a deck</h3>
+                    </div>
+                    <p class="settings-hint">
+                        Cards from Quizlet, Anki, a spreadsheet, or anywhere that can export a list.
+                        One card per line: the question, then a tab or a comma, then the answer.
+                        Everything you import passes through the same approval screen as generated questions.
+                    </p>
+
+                    <div class="import-actions">
+                        <button class="btn-secondary" id="import-file-btn">Choose a file (.csv, .tsv, .txt)</button>
+                        <span class="settings-hint settings-hint--inline" id="import-file-note"></span>
+                    </div>
+
+                    <textarea id="import-paste-box" class="input-field import-box" rows="10"
+                              placeholder="What is a hash collision?&#9;Two keys mapping to the same bucket&#10;What does O(1) mean?&#9;Constant time, independent of input size"></textarea>
+
+                    <div class="import-footer">
+                        <button class="btn-primary" id="import-continue-btn">Continue to review</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Looking back at what you've answered. Read-only on purpose:
+                 nothing here touches the schedule. -->
+            <div id="study-browse" hidden>
+                <div class="study-manage-head">
+                    <button class="btn-secondary btn-sm" id="close-browse-btn">Back</button>
+                    <div class="filter-group" id="browse-outcome-filters"></div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="section-title" id="browse-title">Questions you've answered</h3>
+                    </div>
+                    <p class="settings-hint">Grouped by how the last attempt went. Looking at a question here doesn't reschedule it.</p>
+                    <div id="browse-list"></div>
+                </div>
+            </div>
+
             <!-- Manage / delete questions -->
             <div id="study-manage" hidden>
                 <div class="study-manage-head">
@@ -343,13 +402,24 @@
             </div>
 
             <!-- Active session -->
+            <!-- Shown while the model reads a document. That call can run for
+                 minutes, and a silent screen reads as a crash. -->
+            <div class="ai-progress" id="ai-progress" hidden>
+                <div class="ai-progress__box">
+                    <div class="ai-progress__spinner"></div>
+                    <div class="ai-progress__title" id="ai-progress-title">Reading the document...</div>
+                    <div class="ai-progress__detail" id="ai-progress-detail">This usually takes under a minute.</div>
+                    <div class="ai-progress__elapsed" id="ai-progress-elapsed">0s</div>
+                </div>
+            </div>
+
             <div id="study-session" hidden>
                 <div class="study-progress-bar">
                     <div class="study-progress-fill" id="study-progress-fill"></div>
                 </div>
                 <div class="study-session-meta">
                     <span id="study-position">1 / 10</span>
-                    <button class="btn-secondary btn-sm" id="end-study-btn">End session</button>
+                    <button class="btn-secondary btn-sm" id="end-study-btn">Save &amp; exit</button>
                 </div>
 
                 <div class="card study-card">
@@ -402,7 +472,7 @@
             <!-- Session summary -->
             <div id="study-summary" hidden>
                 <div class="card study-summary-card">
-                    <h3 class="study-summary__title">Session complete</h3>
+                    <h3 class="study-summary__title" id="study-summary-title">Session complete</h3>
                     <div class="metric-grid">
                         <div class="card metric">
                             <div class="metric__label">Reviewed</div>
@@ -431,37 +501,14 @@
                 </div>
             </div>
 
-            <div class="progress-top">
-            <!-- Level card: the headline number, given the space it deserves -->
-            <div class="card level-card">
-                <div class="level-card__head">
-                    <div>
-                        <div class="level-card__label">Current level</div>
-                        <h3 class="level-card__title" id="user-level-title">Level 1: Novice</h3>
-                    </div>
-                    <div class="level-card__xp">
-                        <span id="user-xp-text" class="ms-tabular">0</span><span class="ms-muted"> / <span id="user-next-level-xp" class="ms-tabular">1000</span> XP</span>
-                    </div>
-                </div>
-                <div class="xp-track">
-                    <div class="xp-fill" id="user-xp-bar"></div>
-                </div>
-                <div class="level-card__foot ms-muted ms-text-xs" id="user-xp-remaining">Complete tasks to earn XP.</div>
-            </div>
-
-            <!-- Compact metric strip - four numbers instead of two, so the row
-                 reads as a dashboard rather than two cards adrift in space. -->
+            <!-- XP, levels and the streak were removed here.
+                 They answered "how much have you done", which every habit app
+                 answers, and they answered it in a voice that contradicts the
+                 rest of the product: a screen that exists to tell you the
+                 truth about your knowledge should not also be handing out
+                 points for showing up. What is left measures work and
+                 judgement, both of which are real. -->
             <div class="metric-grid">
-                <div class="card metric">
-                    <div class="metric__label">Total XP</div>
-                    <div class="metric__value ms-tabular" id="user-total-xp">0</div>
-                </div>
-                <div class="card metric">
-                    <div class="metric__label">Streak</div>
-                    <div class="metric__value ms-tabular">
-                        <span id="user-streak">0</span><span class="metric__suffix" id="user-streak-multiplier">x1.0</span>
-                    </div>
-                </div>
                 <div class="card metric">
                     <div class="metric__label">Open tasks</div>
                     <div class="metric__value ms-tabular" id="metric-open-tasks">0</div>
@@ -470,7 +517,30 @@
                     <div class="metric__label">Done this week</div>
                     <div class="metric__value ms-tabular" id="metric-week-done">0</div>
                 </div>
+                <div class="card metric">
+                    <div class="metric__label">Questions answered</div>
+                    <div class="metric__value ms-tabular" id="metric-reviews">0</div>
+                </div>
+                <div class="card metric">
+                    <div class="metric__label">Right when sure</div>
+                    <div class="metric__value ms-tabular" id="metric-sure-accuracy">—</div>
+                </div>
             </div>
+
+            <!-- Study analytics, moved off the Study screen where four of
+                 these stacked under the session buttons and buried the thing
+                 the student actually came to do. -->
+            <div class="card" id="study-analytics-card" hidden>
+                <div class="card-header">
+                    <h3 class="section-title">How your judgement is changing</h3>
+                </div>
+                <p class="settings-hint">Built from every answer you've graded. Each panel appears once there is enough history behind it to mean anything.</p>
+                <div class="analytics-grid">
+                    <div class="analytics-cell" id="confidence-mix-panel"></div>
+                    <div class="analytics-cell" id="trend-panel"></div>
+                    <div class="analytics-cell" id="pace-panel"></div>
+                </div>
+                <div id="subject-calibration-panel"></div>
             </div>
 
             <div class="progress-columns">
@@ -527,15 +597,31 @@
                     <div class="ms-grow">
                         <div class="settings-row__title">Gemini API key</div>
                         <div class="settings-hint settings-hint--inline" id="ai-key-status">No key saved.</div>
+
+                        <!-- The key is the single biggest thing standing between
+                             installing this and using it. Telling someone to
+                             "get an API key" assumes they know what that is;
+                             most people stop there. So the steps are numbered,
+                             the button opens the exact page, and the app says
+                             what the key looks like so they know what to copy. -->
+                        <ol class="key-steps" id="key-steps">
+                            <li>
+                                <span>Open Google AI Studio and sign in with any Google account.</span>
+                                <button class="btn-secondary btn-sm" id="open-aistudio-btn">Open the page</button>
+                            </li>
+                            <li>Press <strong>Create API key</strong>. No card and no billing setup — the free tier is enough for normal study use.</li>
+                            <li>Copy the key it shows you. It starts with <code>AQ.</code> and is one long line.</li>
+                            <li>Paste it below and press <strong>Save</strong>. It's checked straight away and stays on this machine.</li>
+                        </ol>
+
                         <div class="input-with-action ai-key-row">
                             <input type="password" id="gemini-key-input" class="input-field" placeholder="Paste your key here" autocomplete="off">
                             <button class="btn-secondary" id="test-key-btn">Test</button>
                             <button class="btn-primary" id="save-key-btn">Save</button>
                         </div>
                         <div class="settings-hint settings-hint--footnote">
-                            Get a free key at <strong>aistudio.google.com/apikey</strong> — a Google account is
-                            enough, no card required. Without a key the app falls back to the local model,
-                            which handles text well but struggles with formulas and code.
+                            Without a key the app falls back to the local model, which handles text well but
+                            struggles with formulas and code.
                         </div>
                     </div>
                 </div>
@@ -670,15 +756,19 @@
     <!-- 1. Smart Task Modal -->
     <div id="add-task-modal" class="modal-overlay" style="display: none;">
         <div class="modal-content card">
-            <h3><span data-icon="sparkle"></span> Create Smart Task</h3>
+            <h3><span data-icon="sparkle"></span> Add something to finish</h3>
             <p>
-                Write freely what needs to be done and when, and the AI will schedule it.
+                Work with a deadline. Write it however you like — "hand in the stats
+                exercise by Thursday, about two hours" — and the deadline, the size and
+                the urgency are read from the sentence. You don't say when you'll do it;
+                the weekly planner finds the time around your fixed commitments.
             </p>
             <div>
-                <textarea id="smart-task-input" placeholder="e.g.: Study for Data Structures exam by tomorrow morning (very urgent)" class="input-field"></textarea>
+                <textarea id="smart-task-input" placeholder="e.g.: Hand in the Data Structures exercise by Thursday, about 2 hours" class="input-field"></textarea>
 
                 <input type="text" id="smart-task-category" class="input-field" placeholder="Category (optional) - e.g. Database Exam" list="existing-categories" />
                 <datalist id="existing-categories"></datalist>
+
 
                 <div>
                     <button id="save-smart-task-btn" class="btn-primary">Add Task</button>
@@ -710,9 +800,10 @@
     <!-- 3. Add Event Modal -->
     <div id="add-event-modal" class="modal-overlay" style="display: none;">
         <div class="modal-content card">
-            <h3><span data-icon="sparkle"></span> Create Smart Event</h3>
+            <h3><span data-icon="sparkle"></span> Add a fixed commitment</h3>
             <p>
-                Write freely what you have planned, and the AI will schedule it for you.
+                Something that happens at a set time and can't move — a class, an exam, an
+                appointment. Write it however you like and it gets placed on your week.
             </p>
             <div>
                 <textarea id="smart-event-input" placeholder="e.g.: Database exam on Tuesday at 09:00" class="input-field"></textarea>

@@ -4,8 +4,40 @@
 // Centralising fetch here means every IPC handler gets the same error shape
 // and the same "server is down" handling for free.
 
-const SERVER_URL = process.env.MINDSYNC_SERVER_URL || 'http://localhost:5000/api';
-const SERVER_ROOT = SERVER_URL.replace(/\/api\/?$/, ''); // health check lives at '/', not '/api'
+// Where the server lives.
+//
+// Resolved at call time rather than fixed when this file loads, because an
+// installed app has no environment variables to read: the person who double
+// clicks an icon never set MINDSYNC_SERVER_URL, and never should have to.
+// The order below runs from most specific to most general - a developer's
+// override, then whatever the app was built pointing at, then localhost for
+// running the two halves side by side.
+let serverUrl = null;
+
+function normaliseServerUrl(url) {
+  const trimmed = String(url || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return null;
+  // Accept both "https://host" and "https://host/api" - forgetting the suffix
+  // is the obvious mistake and there is no reason to punish it.
+  return /\/api$/.test(trimmed) ? trimmed : `${trimmed}/api`;
+}
+
+// Called once by main.js at startup, after the saved settings are read.
+function setServerUrl(url) {
+  serverUrl = normaliseServerUrl(url);
+  return serverUrl;
+}
+
+function getServerUrl() {
+  return serverUrl
+    || normaliseServerUrl(process.env.MINDSYNC_SERVER_URL)
+    || 'http://localhost:5000/api';
+}
+
+// The health check lives at '/', not '/api'.
+function getServerRoot() {
+  return getServerUrl().replace(/\/api\/?$/, '');
+}
 
 // A predictable error for IPC handlers to catch: has a clear .message and,
 // when the server responded with structured JSON, .status and .details.
@@ -21,7 +53,7 @@ class ApiClientError extends Error {
 async function request(method, path, body) {
   let response;
   try {
-    response = await fetch(`${SERVER_URL}${path}`, {
+    response = await fetch(`${getServerUrl()}${path}`, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -30,7 +62,7 @@ async function request(method, path, body) {
     // Server not running, wrong port, no network. This is the most common
     // failure mode once the app depends on a separate process.
     throw new ApiClientError(
-      `Can't reach the MindSync server at ${SERVER_URL}. Is it running? (${networkErr.message})`
+      `Can't reach the MindSync server at ${getServerUrl()}. Is it running? (${networkErr.message})`
     );
   }
 
@@ -58,6 +90,8 @@ function withIdAliases(docs) {
 }
 
 module.exports = {
+  setServerUrl,
+  getServerUrl,
   ApiClientError,
 
   // ---- Tasks ----
@@ -88,7 +122,8 @@ module.exports = {
   deleteFolder: (id) => request('DELETE', `/folders/${id}`),
 
   // ---- Files ----
-  getFiles: async () => withIdAliases(await request('GET', '/files')),
+  getFiles: async (opts = {}) => withIdAliases(await request('GET', `/files${opts.light ? '?light=1' : ''}`)),
+  getFile: async (id) => withIdAlias(await request('GET', `/files/${id}`)),
   createFile: (file) => request('POST', '/files', file).then(withIdAlias),
   deleteFile: (id) => request('DELETE', `/files/${id}`),
 
@@ -96,9 +131,11 @@ module.exports = {
   getProfile: () => request('GET', '/profile'),
   updateProfile: (profile) => request('PUT', '/profile', profile),
 
-  // ---- Stats ----
-  getStats: () => request('GET', '/stats'),
-  completeTaskXP: (urgency) => request('POST', '/stats/complete-task', { urgency }),
+  clearAutoScheduledEvents: () => request('DELETE', '/events/auto-scheduled'),
+  clearEventsForTask: (taskId) => request('DELETE', `/events/by-task/${taskId}`),
+
+  // ---- Study stats ----
+  // The XP/level/streak endpoints were removed along with the feature.
 
   // ---- Settings / blocked apps ----
   getBlockedApps: () => request('GET', '/settings/blocked-apps'),
@@ -118,6 +155,8 @@ module.exports = {
     const params = new URLSearchParams();
     if (opts.category) params.set('category', opts.category);
     if (opts.mode) params.set('mode', opts.mode);
+    // Callers that never touch review history ask for the light form.
+    if (opts.light) params.set('light', '1');
     const qs = params.toString();
     return withIdAliases(await request('GET', `/study${qs ? '?' + qs : ''}`));
   },
@@ -139,7 +178,7 @@ module.exports = {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
     try {
-      const res = await fetch(SERVER_ROOT, { signal: controller.signal });
+      const res = await fetch(getServerRoot(), { signal: controller.signal });
       if (!res.ok) throw new Error(`Health check returned ${res.status}`);
       return true;
     } finally {
