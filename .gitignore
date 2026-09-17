@@ -1,18 +1,31 @@
-/node_modules
+node_modules/
+
+# Environment files - never commit real credentials
 .env
+.env.local
+.env.*.local
+
+# Google OAuth client and generated token - never commit
 credentials.json
 token.json
-*.zip
 
-# קובצי מערכת נסתרים (של מאק ווינדוס) שאין להם קשר לקוד
-.DS_Store
-Thumbs.db
-
-# קובצי לוג של שגיאות שיכולים להיווצר פתאום
+# Logs
 *.log
 npm-debug.log*
+mindsync.log
 
-# תיקיות שייווצרו בעתיד כשנרצה לארוז את התוכנה לקובץ התקנה (exe)
+# Build output (electron-builder)
 /dist
 /out
 /build
+
+# Archives and backups
+*.zip
+*.bak
+
+# Internal working notes, not part of the published project
+MindSync-handoff.md
+
+# OS files
+.DS_Store
+Thumbs.db

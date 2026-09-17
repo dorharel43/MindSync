@@ -1,8 +1,29 @@
 {
   "name": "mindsync",
   "version": "1.0.0",
-  "description": "MindSync AI - Smart Learning Assistant",
+  "description": "AI study assistant for students - Electron desktop client. Extracts tasks and recall questions from your own course material and measures the gap between confidence and actual recall.",
+  "author": "Dor Harel",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dorharel43/MindSync.git"
+  },
+  "homepage": "https://github.com/dorharel43/MindSync#readme",
+  "bugs": {
+    "url": "https://github.com/dorharel43/MindSync/issues"
+  },
+  "keywords": [
+    "electron",
+    "study-assistant",
+    "ai",
+    "gemini",
+    "ollama",
+    "edtech",
+    "spaced-repetition",
+    "pdf"
+  ],
   "main": "main.js",
+  "type": "commonjs",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win"
@@ -14,18 +35,17 @@
       "target": "nsis"
     }
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "devDependencies": {
-    "electron": "^43.1.1",
-    "electron-builder": "^24.13.3"
-  },
   "dependencies": {
     "dotenv": "^17.4.2",
     "googleapis": "^176.0.0",
     "pdf2json": "^4.0.3",
     "pdfjs-dist": "^3.11.174"
+  },
+  "devDependencies": {
+    "electron": "^43.1.1",
+    "electron-builder": "^24.13.3"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
