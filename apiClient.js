@@ -4,40 +4,22 @@
 // Centralising fetch here means every IPC handler gets the same error shape
 // and the same "server is down" handling for free.
 
-// Where the server lives.
-//
-// Resolved at call time rather than fixed when this file loads, because an
-// installed app has no environment variables to read: the person who double
-// clicks an icon never set MINDSYNC_SERVER_URL, and never should have to.
-// The order below runs from most specific to most general - a developer's
-// override, then whatever the app was built pointing at, then localhost for
-// running the two halves side by side.
-let serverUrl = null;
+// BUG FIX: .env doesn't travel inside a packaged .exe (npm run dist) - it's
+// gitignored on purpose, and electron-builder doesn't bundle it either. A
+// friend running the built app therefore always got this exact fallback,
+// which used to be localhost:5000 - a server that only exists on YOUR
+// machine. The default now points at the real shared server, so a packaged
+// build works out of the box for anyone; .env stays as your own override
+// for local development against a server running on your machine.
+const SERVER_URL = process.env.MINDSYNC_SERVER_URL || 'https://mindsync-server-gags.onrender.com/api';
+const SERVER_ROOT = SERVER_URL.replace(/\/api\/?$/, ''); // health check lives at '/', not '/api'
+const authClient = require('./authClient');
 
-function normaliseServerUrl(url) {
-  const trimmed = String(url || '').trim().replace(/\/+$/, '');
-  if (!trimmed) return null;
-  // Accept both "https://host" and "https://host/api" - forgetting the suffix
-  // is the obvious mistake and there is no reason to punish it.
-  return /\/api$/.test(trimmed) ? trimmed : `${trimmed}/api`;
-}
-
-// Called once by main.js at startup, after the saved settings are read.
-function setServerUrl(url) {
-  serverUrl = normaliseServerUrl(url);
-  return serverUrl;
-}
-
-function getServerUrl() {
-  return serverUrl
-    || normaliseServerUrl(process.env.MINDSYNC_SERVER_URL)
-    || 'http://localhost:5000/api';
-}
-
-// The health check lives at '/', not '/api'.
-function getServerRoot() {
-  return getServerUrl().replace(/\/api\/?$/, '');
-}
+// BUG FIX: only ping() had a timeout. Every other call went through fetch()
+// with no AbortController at all - so a stuck/overloaded server left the
+// whole modal frozen on "Processing..." forever, with no error and no log.
+// Same class of bug as the missing Gemini timeout.
+const REQUEST_TIMEOUT_MS = 30000; // Render free tier cold-starts after idle (30-50s) - too short a timeout misreads that as "stuck"
 
 // A predictable error for IPC handlers to catch: has a clear .message and,
 // when the server responded with structured JSON, .status and .details.
@@ -50,20 +32,39 @@ class ApiClientError extends Error {
   }
 }
 
-async function request(method, path, body) {
+// AUTH: every request now carries the logged-in user's token unless it's
+// explicitly exempted (register/login themselves - there's no token yet).
+// This is the one place that needs to know about auth at all; every
+// exported function below stays exactly as it was.
+async function request(method, path, body, { skipAuth = false } = {}) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (!skipAuth) {
+    const token = authClient.getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+
   let response;
   try {
-    response = await fetch(`${getServerUrl()}${path}`, {
+    response = await fetch(`${SERVER_URL}${path}`, {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
     });
   } catch (networkErr) {
+    if (networkErr.name === 'AbortError') {
+      throw new ApiClientError(`The MindSync server at ${SERVER_URL} did not respond within ${REQUEST_TIMEOUT_MS / 1000}s. Is it stuck or overloaded?`);
+    }
     // Server not running, wrong port, no network. This is the most common
     // failure mode once the app depends on a separate process.
     throw new ApiClientError(
-      `Can't reach the MindSync server at ${getServerUrl()}. Is it running? (${networkErr.message})`
+      `Can't reach the MindSync server at ${SERVER_URL}. Is it running? (${networkErr.message})`
     );
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   const text = await response.text();
@@ -71,6 +72,13 @@ async function request(method, path, body) {
 
   if (!response.ok) {
     const message = data?.error?.message || `Server responded with ${response.status}`;
+    // A 401 here means the token is missing/expired/invalid - not a request
+    // that can be retried, but a session that's over. Clearing it locally
+    // means the next call, or the next app start, correctly asks the person
+    // to log in again instead of silently repeating the same failure.
+    if (response.status === 401 && !skipAuth) {
+      authClient.clearSession();
+    }
     // details carries Mongoose validation messages, which is what makes a
     // "Validation failed" actually diagnosable.
     throw new ApiClientError(message, data?.error?.status || response.status, data?.error?.details);
@@ -90,8 +98,6 @@ function withIdAliases(docs) {
 }
 
 module.exports = {
-  setServerUrl,
-  getServerUrl,
   ApiClientError,
 
   // ---- Tasks ----
@@ -122,20 +128,22 @@ module.exports = {
   deleteFolder: (id) => request('DELETE', `/folders/${id}`),
 
   // ---- Files ----
-  getFiles: async (opts = {}) => withIdAliases(await request('GET', `/files${opts.light ? '?light=1' : ''}`)),
-  getFile: async (id) => withIdAlias(await request('GET', `/files/${id}`)),
+  getFiles: async () => withIdAliases(await request('GET', '/files')),
   createFile: (file) => request('POST', '/files', file).then(withIdAlias),
   deleteFile: (id) => request('DELETE', `/files/${id}`),
 
-  // ---- Profile ----
-  getProfile: () => request('GET', '/profile'),
-  updateProfile: (profile) => request('PUT', '/profile', profile),
+  // ---- Auth ----
+  // register/login skip the auth header - there's no token to send yet.
+  register: (email, password, name, degree) =>
+    request('POST', '/auth/register', { email, password, name, degree }, { skipAuth: true }),
+  login: (email, password) =>
+    request('POST', '/auth/login', { email, password }, { skipAuth: true }),
+  // Replaces the old getProfile/updateProfile - name/degree now live on the
+  // User document itself (see routes/auth.js), not a separate Profile.
+  getMe: () => request('GET', '/auth/me'),
+  updateMe: (updates) => request('PUT', '/auth/me', updates),
 
-  clearAutoScheduledEvents: () => request('DELETE', '/events/auto-scheduled'),
-  clearEventsForTask: (taskId) => request('DELETE', `/events/by-task/${taskId}`),
-
-  // ---- Study stats ----
-  // The XP/level/streak endpoints were removed along with the feature.
+  // ---- Stats: removed with /api/stats (XP/levels/streak dropped server-side) ----
 
   // ---- Settings / blocked apps ----
   getBlockedApps: () => request('GET', '/settings/blocked-apps'),
@@ -155,8 +163,6 @@ module.exports = {
     const params = new URLSearchParams();
     if (opts.category) params.set('category', opts.category);
     if (opts.mode) params.set('mode', opts.mode);
-    // Callers that never touch review history ask for the light form.
-    if (opts.light) params.set('light', '1');
     const qs = params.toString();
     return withIdAliases(await request('GET', `/study${qs ? '?' + qs : ''}`));
   },
@@ -178,7 +184,7 @@ module.exports = {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
     try {
-      const res = await fetch(getServerRoot(), { signal: controller.signal });
+      const res = await fetch(SERVER_ROOT, { signal: controller.signal });
       if (!res.ok) throw new Error(`Health check returned ${res.status}`);
       return true;
     } finally {

@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -9,32 +9,23 @@ const aiProvider = require('./aiProvider');
 const http = require('http');
 const { google } = require('googleapis');
 const api = require('./apiClient');
+const authClient = require('./authClient');
+const logger = require('./logger');
 
 // =====================================
 // Local AI Mechanism (Ollama)
 // =====================================
-const OLLAMA_URL = 'http://localhost:11434/api/generate';
 // Switched from the custom 'MindSync-AI' (qwen2.5:3b based) to aya-expanse:8b,
 // which is built for multilingual use and handles Hebrew far better - the 3B
-// model kept falling into repetition loops on Hebrew documents.
+// model kept falling into repetition loops on Hebrew documents. This is only
+// used as the localModel fallback inside aiProvider now - see the note on
+// callAIWithFallback below.
 const LOCAL_MODEL = 'aya-expanse:8b';
-
-// Two separate limits, because "slow" and "stuck" are different problems:
-// - IDLE: no new token for this long => the model is genuinely stuck.
-//   Generous, because on CPU the *prompt processing* phase happens before
-//   the first token appears and can legitimately take a while.
-// - TOTAL: hard ceiling even if tokens keep trickling in.
-const AI_IDLE_TIMEOUT_MS = 60000;   // 60s with zero output = stuck
-const AI_TOTAL_TIMEOUT_MS = 300000; // 5 min absolute ceiling
 
 // Hard cap on generated tokens. Without this, a model that doesn't know
 // when to stop will generate until something else kills it - which looks
 // exactly like a hang.
 const MAX_OUTPUT_TOKENS = 800;
-
-// Explicit context window. Ollama's default is small (2048), and anything
-// that doesn't fit gets re-processed, which on CPU is where the time goes.
-const AI_CONTEXT_SIZE = 8192;
 
 // IMPORTANT - this is much lower than it looks like it should be, on purpose:
 // Hebrew tokenizes very poorly compared to Latin text. English runs roughly
@@ -65,103 +56,26 @@ function chunkForAI(text, chunkSize = MAX_INPUT_CHARS) {
     return chunks;
 }
 
+// NOTE (bug fix): this used to talk to Ollama directly and completely bypassed
+// aiProvider.js - meaning every caller of this function (task urgency, event
+// type classification, task extraction from PDFs, etc.) could NEVER use
+// Gemini, even when the user had a Gemini key configured in Settings, and
+// would hard-fail with "Ollama is not running" on any machine without Ollama
+// installed. That's why "Add Task" worked on one machine and not another: it
+// depended on whether Ollama happened to be running locally, not on the AI
+// provider actually configured in the app.
+//
+// aiProvider.generateText() already implements the right policy (Gemini
+// first when a key exists, Ollama as fallback/offline option), so this is now
+// a thin adapter that keeps the existing call signature every caller here
+// already uses, instead of a second, parallel AI implementation.
 async function callAIWithFallback(prompt, systemOverride = null, maxTokens = MAX_OUTPUT_TOKENS, forceJson = false) {
-    const controller = new AbortController();
-    const startedAt = Date.now();
-    let lastTokenAt = Date.now();
-    let fullResponse = '';
-    let tokenCount = 0;
-
-    // Watchdog: fires if the model goes quiet, or if we blow the total ceiling.
-    const watchdog = setInterval(() => {
-        const idleFor = Date.now() - lastTokenAt;
-        const totalFor = Date.now() - startedAt;
-        if (idleFor > AI_IDLE_TIMEOUT_MS || totalFor > AI_TOTAL_TIMEOUT_MS) {
-            controller.abort();
-        }
-    }, 1000);
-
-    try {
-        const body = {
-            model: LOCAL_MODEL,
-            prompt: prompt,
-            stream: true, // streaming lets us see progress and detect a stall early
-            options: {
-                num_predict: maxTokens,
-                num_ctx: AI_CONTEXT_SIZE,
-                temperature: 0.2, // low temp: we want obedient/structured output, not creativity
-                // Repetition controls. Small models fall into loops where they
-                // emit the same JSON item hundreds of times until they hit the
-                // token cap - which truncates mid-structure and breaks parsing.
-                repeat_penalty: 1.3,
-                repeat_last_n: 256
-            }
-        };
-        // Ollama's JSON mode constrains generation to the JSON grammar, so the
-        // output is guaranteed syntactically valid (it can still be semantically
-        // wrong, but it will always parse).
-        if (forceJson) body.format = 'json';
-        if (systemOverride) body.system = systemOverride;
-
-        console.log(`🤖 Calling Ollama (${LOCAL_MODEL}), prompt: ${prompt.length} chars, max output: ${maxTokens} tokens...`);
-
-        const response = await fetch(OLLAMA_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-            signal: controller.signal
-        });
-
-        if (!response.ok) {
-            throw new Error(`Ollama Server Error: ${response.status}`);
-        }
-
-        // Ollama streams newline-delimited JSON objects, one per token chunk.
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop(); // keep the last (possibly incomplete) line
-
-            for (const line of lines) {
-                if (!line.trim()) continue;
-                try {
-                    const chunk = JSON.parse(line);
-                    if (chunk.response) {
-                        fullResponse += chunk.response;
-                        tokenCount++;
-                        lastTokenAt = Date.now();
-                        if (tokenCount % 50 === 0) {
-                            console.log(`   ...${tokenCount} tokens (${((Date.now() - startedAt) / 1000).toFixed(0)}s)`);
-                        }
-                    }
-                } catch (e) { /* partial line - ignore, it'll arrive complete next round */ }
-            }
-        }
-
-        const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
-        console.log(`🤖 Ollama finished in ${elapsed}s, ${tokenCount} tokens, ${fullResponse.length} chars`);
-        return fullResponse;
-    } catch (error) {
-        if (error.name === 'AbortError') {
-            const idleFor = ((Date.now() - lastTokenAt) / 1000).toFixed(0);
-            console.error(`❌ Ollama aborted. Tokens received: ${tokenCount}, idle for ${idleFor}s`);
-            if (tokenCount === 0) {
-                throw new Error(`The AI produced no output at all within ${AI_IDLE_TIMEOUT_MS / 1000}s. The model may be too heavy for this machine, or still loading into memory - try running it once in a terminal first: ollama run ${LOCAL_MODEL}`);
-            }
-            throw new Error(`The AI stalled after producing ${tokenCount} tokens. Try a smaller document or a lighter model.`);
-        }
-        console.error("Local AI Error:", error);
-        throw new Error("Ollama is not running. Please open the Ollama app in the background.");
-    } finally {
-        clearInterval(watchdog);
-    }
+    return aiProvider.generateText(prompt, {
+        system: systemOverride,
+        maxTokens,
+        forceJson,
+        localModel: LOCAL_MODEL
+    });
 }
 
 // Best-effort recovery if the model insists on JSON anyway (e.g. its
@@ -221,11 +135,22 @@ function extractJsonFromText(text) {
 ipcMain.handle('summarize-text', async (event, textToSummarize) => {
     try {
         console.log(`📝 summarize-text: received ${(textToSummarize || '').length} chars`);
-        // Summaries (unlike task extraction) don't need full coverage - the
-        // opening of a document carries most of the gist - so a single
-        // truncated pass is fine here and much faster than chunking.
-        const safeText = textToSummarize && textToSummarize.length > MAX_INPUT_CHARS
-            ? textToSummarize.slice(0, MAX_INPUT_CHARS) + '\n\n[...document truncated...]'
+        // BUG FIX: this was truncating to MAX_INPUT_CHARS (2000 - about one
+        // paragraph) before the AI ever saw the document, and capping the
+        // reply at the generic MAX_OUTPUT_TOKENS (800), both of which are
+        // sized for short classification prompts, not "summarize this
+        // document". A genuinely long file got summarized from roughly its
+        // first page only, into a couple of sentences - which is exactly
+        // "we uploaded a long file and it barely summarized anything".
+        // Neither number is a hard ceiling the models can't handle - Gemini
+        // in particular reads far more than this comfortably - so both are
+        // raised specifically for summaries rather than reusing the general
+        // defaults built for short prompts.
+        const SUMMARY_MAX_INPUT_CHARS = 15000;
+        const SUMMARY_MAX_OUTPUT_TOKENS = 2000;
+
+        const safeText = textToSummarize && textToSummarize.length > SUMMARY_MAX_INPUT_CHARS
+            ? textToSummarize.slice(0, SUMMARY_MAX_INPUT_CHARS) + '\n\n[...document truncated...]'
             : (textToSummarize || '');
 
         const prompt = `You are a smart learning assistant for a student. Summarize the following study material clearly, in short and concise bullet points. Highlight important concepts. 
@@ -233,7 +158,7 @@ IMPORTANT: Write the summary in the same language as the original text:
 
 ${safeText}`;
         const plainTextSystem = "You are a helpful writing assistant. Respond with plain natural-language text only. Do NOT respond with JSON, a code block, markdown fences, or any key-value/structured format - just the summary text itself, formatted as readable bullet points using '-' or '*'.";
-        const rawResponse = await callAIWithFallback(prompt, plainTextSystem);
+        const rawResponse = await callAIWithFallback(prompt, plainTextSystem, SUMMARY_MAX_OUTPUT_TOKENS);
         return coerceToPlainText(rawResponse);
     } catch (error) {
         console.error("AI Error:", error);
@@ -805,52 +730,11 @@ function looksLikeExercisePaper(text) {
 // Strips multiple-choice scaffolding. The model still occasionally emits
 // options despite being told not to, and a question ending in "choose one:"
 // with no options is worse than useless.
-// Multiple choice has no place here: the student self-grades against a
-// passage, and four options turn recall into recognition - a far easier task
-// that feels like knowing.
-//
-// The old version only matched an option written as "א) ..." at the start of
-// its own line. Models write them every other way too: "א. Smartphone" run
-// inline at the end of a question, "(a) ...", "ב ) ...". Rather than guess at
-// one shape, this finds every marker and only cuts when at least three of
-// them appear in the right order - so a sentence that merely happens to
-// contain "ב." is never truncated.
-const MC_LETTERS_HE = ['א', 'ב', 'ג', 'ד', 'ה', 'ו'];
-const MC_LETTERS_EN = ['a', 'b', 'c', 'd', 'e', 'f'];
-
 function stripMultipleChoice(question) {
-    const text = String(question || '')
+    return String(question || '')
         .replace(/\s*(בחר\s*(אחת|אחד)|choose\s*one|select\s*one)\s*[:：]?\s*$/i, '')
+        .replace(/\s*[\u0590-\u05FF]\s*\)\s*.+$/gm, '') // stray "א) ..." lines
         .trim();
-
-    // Note: no \b anywhere. In JavaScript \b is defined over [A-Za-z0-9_] and
-    // does not recognise Hebrew at all, so it fails silently next to א-ת.
-    const markerRe = /(?:^|[\s(])([א-ו]|[a-fA-F])\s*[.)]\s+/g;
-    const markers = [];
-    let match;
-    while ((match = markerRe.exec(text)) !== null) {
-        markers.push({
-            letter: match[1].toLowerCase(),
-            // Where the letter itself starts, not the whitespace before it.
-            at: match.index + match[0].search(/\S/)
-        });
-    }
-
-    for (let i = 0; i < markers.length; i++) {
-        const first = markers[i].letter;
-        const alphabet = first === 'א' ? MC_LETTERS_HE : first === 'a' ? MC_LETTERS_EN : null;
-        if (!alphabet) continue; // a run has to begin at the first letter
-
-        let expected = 1;
-        let run = 1;
-        for (let j = i + 1; j < markers.length && expected < alphabet.length; j++) {
-            if (markers[j].letter === alphabet[expected]) { run++; expected++; }
-        }
-
-        if (run >= 3) return text.slice(0, markers[i].at).trim();
-    }
-
-    return text;
 }
 
 // Turns a model-supplied ISO date into (a) a display label and (b) an urgency
@@ -893,6 +777,8 @@ ipcMain.handle('extract-tasks-from-text', async (event, textToExtract) => {
         const seen = new Set();
         const allTasks = [];
         let rejectedCount = 0;
+        let lastChunkError = null;
+        let anyChunkSucceeded = false;
 
         for (let i = 0; i < chunks.length; i++) {
             console.log(`📄 Processing chunk ${i + 1}/${chunks.length}...`);
@@ -928,10 +814,14 @@ ${chunks[i]}`;
             try {
                 const responseText = await callAIWithFallback(prompt, null, MAX_OUTPUT_TOKENS, true);
                 parsed = JSON.parse(extractJsonFromText(responseText));
+                anyChunkSucceeded = true;
             } catch (chunkErr) {
                 // One bad chunk shouldn't sink the whole import - log it and
-                // keep going with the rest of the document.
+                // keep going with the rest of the document. But if this is
+                // the ONLY thing that ever happens (every chunk fails), that
+                // failure needs to reach the user - see below.
                 console.error(`⚠️ Chunk ${i + 1} failed, skipping it:`, chunkErr.message);
+                lastChunkError = chunkErr.message;
                 continue;
             }
 
@@ -972,6 +862,16 @@ ${chunks[i]}`;
         console.log(`📄 extract-tasks-from-text: returning ${finalTasks.length} grounded task(s) from ${chunks.length} chunk(s)` + (rejectedCount > 0 ? ` (${rejectedCount} invented item(s) rejected)` : ''));
 
         if (finalTasks.length === 0) {
+            // BUG FIX: this message used to fire whenever nothing came back,
+            // whether the document genuinely had no tasks OR every single
+            // chunk failed to even reach a model (no Gemini quota, no Ollama
+            // running). The second case is a real failure, not "nothing
+            // found", and was being told to the user as if the document was
+            // just task-free - hiding exactly the information ("the AI
+            // couldn't run at all") needed to fix it.
+            if (!anyChunkSucceeded && lastChunkError) {
+                return JSON.stringify({ error: `Could not read this document: ${lastChunkError}` });
+            }
             return JSON.stringify({ error: 'The AI read the document but could not find any clear tasks.' });
         }
         return JSON.stringify(finalTasks);
@@ -981,286 +881,175 @@ ${chunks[i]}`;
     }
 });
 
-// Turns the words people actually write into a real deadline.
-//
-// Deterministic, and tried before any model: "מחר" and "יום חמישי" have
-// exactly one meaning, and a model asked the same question can answer
-// differently between runs. Same split as the weekday names in
-// parse-smart-event and the event type keywords - interpretation the code can
-// do reliably, the code does.
-const TASK_DAY_MAP = { 'ראשון': 0, 'שני': 1, 'שלישי': 2, 'רביעי': 3, 'חמישי': 4, 'שישי': 5, 'שבת': 6 };
-const EN_DAY_MAP = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
-
-function nextDateForWeekday(targetIndex, from = new Date()) {
-  const result = new Date(from);
-  result.setHours(23, 59, 0, 0);
-  let delta = (targetIndex - from.getDay() + 7) % 7;
-  // "Thursday" said on a Thursday means next Thursday, not five minutes ago.
-  if (delta === 0) delta = 7;
-  result.setDate(result.getDate() + delta);
-  return result;
+// Reads a duration hint out of free text ("ללמוד 3 שעות למבחן", "שעתיים",
+// "חצי שעה", "2 hours") so the weekly planner can size a block correctly
+// instead of assuming every task takes exactly one hour. Returns minutes,
+// or null when nothing is mentioned.
+function parseDurationMinutes(text) {
+    if (/חצי\s*שעה/.test(text)) return 30;
+    if (/שעה\s*וחצי/.test(text)) return 90;
+    if (/שעתיים/.test(text)) return 120;
+    let m = text.match(/(\d+)\s*שעות?/);
+    if (m) return parseInt(m[1], 10) * 60;
+    m = text.match(/(\d+)\s*(?:hours?|hrs?)/i);
+    if (m) return parseInt(m[1], 10) * 60;
+    return null;
 }
 
-function detectDeadline(text) {
-  const source = String(text || '');
-  const now = new Date();
-
-  // An explicit date wins over everything: 15/09, 15.9, 15-09-2026.
-  const explicit = source.match(/(\d{1,2})[/.\-](\d{1,2})(?:[/.\-](\d{2,4}))?/);
-  if (explicit) {
-    const day = Number(explicit[1]);
-    const month = Number(explicit[2]);
-    let year = explicit[3] ? Number(explicit[3]) : now.getFullYear();
-    if (year < 100) year += 2000;
-    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
-      const parsed = new Date(year, month - 1, day, 23, 59, 0, 0);
-      // A date already behind us in an undated sentence means next year.
-      if (!explicit[3] && parsed < now) parsed.setFullYear(year + 1);
-      if (!Number.isNaN(parsed.getTime())) return parsed;
-    }
-  }
-
-  if (source.includes('מחר')) {
-    const d = new Date(now); d.setDate(d.getDate() + 1); d.setHours(23, 59, 0, 0); return d;
-  }
-  if (source.includes('היום') || /\btoday\b/i.test(source)) {
-    const d = new Date(now); d.setHours(23, 59, 0, 0); return d;
-  }
-  if (/\btomorrow\b/i.test(source)) {
-    const d = new Date(now); d.setDate(d.getDate() + 1); d.setHours(23, 59, 0, 0); return d;
-  }
-
-  // "יום X" before a bare day word: in Hebrew every weekday name is also an
-  // ordinal, so "תרגיל שני" would otherwise be read as Monday.
-  const withPrefix = source.match(/(?:ב?יום)\s+(ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)/);
-  if (withPrefix) return nextDateForWeekday(TASK_DAY_MAP[withPrefix[1]], now);
-
-  // "עד חמישי" is unambiguous too - the preposition marks it as a deadline.
-  const untilDay = source.match(/עד\s+(?:יום\s+)?(ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)/);
-  if (untilDay) return nextDateForWeekday(TASK_DAY_MAP[untilDay[1]], now);
-
-  if (/שבת/.test(source)) return nextDateForWeekday(6, now);
-
-  const enDay = source.match(/\b(?:by|on|before)\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i);
-  if (enDay) return nextDateForWeekday(EN_DAY_MAP[enDay[1].toLowerCase()], now);
-
-  return null;
-}
-
-// How long the person said it would take. Only explicit statements - guessing
-// "an essay takes three hours" is the model's job, not a regex's.
-function detectEstimate(text) {
-  const source = String(text || '');
-
-  const hebrewHours = source.match(/(\d+(?:\.\d+)?)\s*שעות?/);
-  if (hebrewHours) return Math.round(Number(hebrewHours[1]) * 60);
-  if (/שעתיים/.test(source)) return 120;
-  if (/חצי\s*שעה/.test(source)) return 30;
-
-  const hebrewMinutes = source.match(/(\d+)\s*דק(?:ות|')?/);
-  if (hebrewMinutes) return Number(hebrewMinutes[1]);
-
-  const enHours = source.match(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)\b/i);
-  if (enHours) return Math.round(Number(enHours[1]) * 60);
-
-  const enMinutes = source.match(/(\d+)\s*(?:minutes?|mins?)\b/i);
-  if (enMinutes) return Number(enMinutes[1]);
-
-  return null;
-}
-
-// A task that carries an explicit clock time is not a task.
-//
-// "Lesson from 18:00 to 23:00" describes something already fixed in the week.
-// The planner has nothing to decide about it, and left in the task list it
-// gets treated as an hour of flexible work and dropped into the first free
-// morning slot - which is what happened.
-//
-// Deterministic on purpose, and keyword-first like the day names and the
-// event types: the shapes below are exactly the ones people write, and a
-// model asked the same question would answer differently between runs.
-const CLOCK_RANGE_RE = /\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:-|–|—|עד|until|to)\s*([01]?\d|2[0-3])[:.]([0-5]\d)\b/;
-// No \b before the Hebrew alternatives. In JavaScript \b is defined over
-// [A-Za-z0-9_] and does not recognise Hebrew at all, so "\bבשעה" never
-// matches - the same trap already documented for the weekday names.
-const CLOCK_SINGLE_RE = /(?:^|[\s(])(?:at|בשעה|ב[-\s]?)\s*([01]?\d|2[0-3])[:.]([0-5]\d)/;
-
-function detectFixedTime(text) {
-  const source = String(text || '');
-
-  const range = source.match(CLOCK_RANGE_RE);
-  if (range) {
-    const startMinutes = (Number(range[1]) * 60) + Number(range[2]);
-    let endMinutes = (Number(range[3]) * 60) + Number(range[4]);
-    // "22:00 - 01:00" runs past midnight.
-    if (endMinutes <= startMinutes) endMinutes += 24 * 60;
-    return {
-      time: `${String(range[1]).padStart(2, '0')}:${range[2]}`,
-      durationMinutes: endMinutes - startMinutes
-    };
-  }
-
-  const single = source.match(CLOCK_SINGLE_RE);
-  if (single) {
-    return { time: `${String(single[1]).padStart(2, '0')}:${single[2]}`, durationMinutes: null };
-  }
-
-  return null;
-}
-
-ipcMain.handle('add-smart-task', async (event, freeText, category = '', options = {}) => {
+ipcMain.handle('add-smart-task', async (event, freeText, category = '') => {
     try {
-        // Checked before anything is written. A sentence with a start and an
-        // end time describes something already fixed in the week - the
-        // planner has nothing to decide about it. Asking first means the
-        // answer can change what gets created, rather than leaving a wrong
-        // task behind and a note explaining that it's wrong.
-        if (!options.forceTask) {
-            const fixed = detectFixedTime(freeText);
-
-            // A clock time isn't the only sign. "מבחן ביום חמישי" has no time
-            // in it and is still a commitment - exams and lectures happen when
-            // they happen, and the planner has nothing to decide about them.
-            // classifyEventByKeywords already knows the difference, including
-            // that "ללמוד למבחן" is revision (work to fit in) rather than the
-            // exam itself.
-            const kind = classifyEventByKeywords(freeText);
-            const isCommitment = kind === 'exam' || kind === 'lesson';
-
-            if (fixed || isCommitment) {
-                return JSON.stringify({
-                    looksFixed: {
-                        time: fixed ? fixed.time : null,
-                        durationMinutes: fixed ? fixed.durationMinutes : null,
-                        kind: kind || null
-                    }
-                });
-            }
+        // BUG FIX: the main process is single-threaded, and this handler
+        // runs a chain of several regex passes over freeText. The HTML
+        // input already has maxlength now, but that's a UI-layer guard -
+        // this is the same check enforced here too, so an absurdly long
+        // string (however it arrives) can't block the whole app's main
+        // process, freezing every window, not just this field.
+        if (freeText && freeText.length > 500) {
+            return JSON.stringify({ error: 'That text is too long (max 500 characters). Try breaking it into a shorter task.' });
         }
 
         const now = new Date();
-        const todayStr = now.toLocaleDateString('en-US');
-        const tomorrow = new Date(now);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const tomorrowStr = tomorrow.toLocaleDateString('en-US');
+
+        // How long this will actually take, if the text says - the weekly
+        // planner uses this to size the calendar block instead of always
+        // assuming one hour (see generate-weekly-plan below).
+        const durationMinutes = parseDurationMinutes(freeText);
+
+        // ---- Date resolution ----
+        // BUG FIX: this used to build the date with toLocaleDateString('en-US'),
+        // which returns M/D/YYYY (US month/day order). But renderer.js reads
+        // task.date as DD/MM/YYYY everywhere else in the app (see the comment
+        // above the date filter there: "task.date is stored as DD/MM/YYYY" -
+        // the same format resolveDueDate() produces below for AI-extracted
+        // tasks). Whenever the day and month numbers differed, that mismatch
+        // silently turned the task's date into a different day - sometimes an
+        // invalid one that rolled over into a completely wrong month/year.
+        //
+        // Also extended to recognise Hebrew weekday names ("ביום שלישי"), not
+        // just מחר/היום, using the same detection order as parse-smart-event:
+        // "יום X" is checked first because a bare day word like "שני" is also
+        // the ordinal "second" ("מבחן שני" = "exam two", not "on Monday").
+        const hebrewDayMap = {
+            'ראשון': 0, 'שני': 1, 'שלישי': 2, 'רביעי': 3, 'חמישי': 4, 'שישי': 5, 'שבת': 6
+        };
+        const toDDMMYYYY = (d) => d.toLocaleDateString('en-GB'); // matches resolveDueDate()
 
         let targetDate = "Not set";
-        if (freeText.includes("מחר")) targetDate = tomorrowStr;
-        else if (freeText.includes("היום")) targetDate = todayStr;
+        let matchedHebrewDayWord = null;
+        let matchedRelativeWord = null;
 
-        // ניקוי מותאם לעברית
-        let cleanTitle = freeText
-            .replace(/מחר|היום/g, '') 
-            .replace(/\s+/g, ' ') 
-            .trim();
-        if (!cleanTitle) cleanTitle = freeText; 
-
-        // The model is asked for the two things a regex cannot know: how
-        // pressing this is, and roughly how long it takes. Anything stated
-        // outright - a date, "שעתיים" - was already read deterministically
-        // above and is not up for reinterpretation.
-        const prompt = `Return ONLY a valid JSON object.
-
-The student wrote: "${freeText}"
-
-1. title: SHORTEN what they wrote to 2-6 words, in their language.
-   Use ONLY words that appear in their sentence. Do not rephrase, do not add
-   a subject they did not mention, and do not replace their words with your
-   own. Drop the timing and the size - those are stored separately - and drop
-   any word left dangling once they are gone.
-   If their sentence is already short, return it unchanged.
-2. urgency: exactly one of "Normal", "Medium", "High", "Urgent".
-3. estimatedMinutes: how long this realistically takes a student, in minutes.
-   Use 30, 60, 90, 120, 180, 300 or 480. Reading a chapter is about 60.
-   Writing an assignment is 180 or more. Revising for an exam is 300 or more.
-
-Format: {"title": "...", "urgency": "your_choice", "estimatedMinutes": 90}`;
-
-        let responseText = await callAIWithFallback(prompt);
-        responseText = extractJsonFromText(responseText);
-        const aiData = JSON.parse(responseText);
-        
-        // What the person actually wrote wins over what the model guessed.
-        const statedEstimate = detectEstimate(freeText);
-        const modelEstimate = Number(aiData.estimatedMinutes);
-
-        // A shorter title from the model, but only if it is genuinely THEIR
-        // sentence made shorter.
-        //
-        // The first version of this prompt carried a worked example in Hebrew,
-        // and a model handed "מבחן מחר ב 10:00" returned the example instead -
-        // the user's exam became someone else's assignment. The example is
-        // gone, but a prompt can always be echoed or ignored, so the check
-        // below is structural rather than a matter of wording: every
-        // substantial word in the title has to come from what they wrote. A
-        // title is the one field they read every day; it is the last place to
-        // let a model be creative.
-        const suggested = String(aiData.title || '').trim();
-
-        const words = (s) => String(s).toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || [];
-
-        // Hebrew glues its prepositions onto the front of a word: the same noun
-        // appears as "מבחן", "למבחן", "במכללה", "שהמבחן". Comparing written
-        // forms would reject "מבחן" as foreign to a sentence saying "למבחן" -
-        // which is precisely the shortening we asked for.
-        //
-        // Stripping those letters greedily doesn't work: every letter of
-        // "למכללה" is a possible prefix, so a greedy rule eats the whole word.
-        // Instead each word offers up to three readings - itself, minus one
-        // leading letter, minus two - and two words match if any reading is
-        // shared. "מבחן" offers {מבחן, בחן, חן} and "למבחן" offers {למבחן,
-        // מבחן, בחן}, which overlap. English is untouched, since the letters
-        // stripped have to be Hebrew prefixes.
-        const HEB_PREFIX = /^[ובלכמשה]+$/;
-        const readings = (w) => {
-            const out = [w];
-            for (let n = 1; n <= 2; n++) {
-                if (w.length - n >= 2 && HEB_PREFIX.test(w.slice(0, n))) out.push(w.slice(n));
-            }
-            return out;
-        };
-
-        const alike = (a, b) => {
-            const A = readings(a);
-            const B = readings(b);
-            if (A.some(x => B.includes(x))) return true;
-            // Catches English inflections: assignment / assignments.
-            return A.some(x => B.some(y => x.length >= 4 && y.length >= 4 && (x.startsWith(y) || y.startsWith(x))));
-        };
-
-        const sourceWords = words(freeText);
-        const titleWords = words(suggested);
-        const borrowed = titleWords.filter(w => sourceWords.some(src => alike(w, src))).length;
-
-        const usableTitle = suggested
-            && suggested.length >= 3
-            && suggested.length <= 80
-            && suggested.split(/\s+/).length <= 10
-            // Every word must trace back to one of theirs, allowing for the
-            // prefixes Hebrew attaches and drops as a sentence is trimmed.
-            && titleWords.length > 0
-            && borrowed === titleWords.length;
-
-        if (suggested && !usableTitle) {
-            console.warn(`⚠️ Rejected model title "${suggested}" - not drawn from the user's words. Keeping "${cleanTitle}".`);
+        const dayWithPrefix = freeText.match(/(?:ב?יום)\s+(ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)/);
+        if (dayWithPrefix) {
+            matchedHebrewDayWord = dayWithPrefix[1];
+        } else if (/\bשבת\b/.test(freeText)) {
+            matchedHebrewDayWord = 'שבת';
         }
 
+        if (matchedHebrewDayWord) {
+            const targetDow = hebrewDayMap[matchedHebrewDayWord];
+            const daysToAdd = (targetDow - now.getDay() + 7) % 7; // 0 = today, else next occurrence within the week
+            const d = new Date(now);
+            d.setDate(now.getDate() + daysToAdd);
+            targetDate = toDDMMYYYY(d);
+        } else if (freeText.includes("מחר")) {
+            matchedRelativeWord = 'מחר';
+            const d = new Date(now);
+            d.setDate(now.getDate() + 1);
+            targetDate = toDDMMYYYY(d);
+        } else if (freeText.includes("היום")) {
+            matchedRelativeWord = 'היום';
+            targetDate = toDDMMYYYY(now);
+        }
+
+        // ---- Title cleanup ----
+        // A Task only carries a due DATE, not a time (handoff decision #7:
+        // a task is "something with a deadline", not a scheduled slot), so an
+        // explicit time or time-of-day word in the text has no field to go
+        // into. Previously only מחר/היום were stripped, so a phrase like
+        // "מחר ב-9" left the stray fragment "ב-9" sitting in the title. We
+        // now strip explicit times and time-of-day words too, the same way
+        // parse-smart-event already does for events.
+        let cleanTitle = freeText
+            .replace(/(?:ב\s*|ב-|בשעה\s*)?([0-1]?[0-9]|2[0-3]):([0-5][0-9])/g, '') // "9:00" / "ב-9:00"
+            .replace(/(?:בשעה\s*|(?<![א-ת])ב[\s-]?)([0-1]?[0-9]|2[0-3])(?!:)\b(\s*(?:וחצי|ורבע))?/g, '')   // bare "ב9" / "ב 9" / "ב-9" / "בשעה 9", incl. "וחצי"/"ורבע"
+            .replace(/חצי\s*שעה|שעה\s*וחצי|שעתיים|\d+\s*שעות?|\d+\s*(?:hours?|hrs?)/gi, ''); // duration phrase, now captured in estimatedMinutes instead
+
+        // BUG FIX: \b (word boundary) is defined in JS over [A-Za-z0-9_] and
+        // does not recognise Hebrew letters as "word characters" at all - so
+        // \bמחר\b silently matches nothing, ever, and .replace() quietly does
+        // nothing (see MindSync-handoff.md, "מלכודת" under decision #6). This
+        // is the same trap, just in a new spot, so it gets the same fix used
+        // elsewhere in this codebase: an explicit lookaround against the
+        // Hebrew letter range instead of \b.
+        const noHebrewNeighbor = (word) => new RegExp(`(?<![א-ת])${word}(?![א-ת])`, 'g');
+
+        const timeOfDayWords = ['בבוקר', 'בוקר', 'בצהריים', 'צהריים', 'אחהצ', 'אחה"צ',
+                                 'אחר הצהריים', 'בערב', 'ערב', 'בלילה', 'לילה'];
+        for (const w of timeOfDayWords) {
+            cleanTitle = cleanTitle.replace(noHebrewNeighbor(w), '');
+        }
+
+        if (matchedHebrewDayWord) {
+            cleanTitle = cleanTitle
+                .replace(new RegExp(`ב?יום\\s+${matchedHebrewDayWord}`, 'g'), '')
+                .replace(noHebrewNeighbor(`ב?${matchedHebrewDayWord}`), '');
+        }
+        if (matchedRelativeWord) {
+            cleanTitle = cleanTitle.replace(noHebrewNeighbor(matchedRelativeWord), '');
+        }
+
+        cleanTitle = cleanTitle
+            .replace(/\s+/g, ' ')
+            .replace(/^[\s,.\-־]+|[\s,.\-־]+$/g, '')
+            .trim();
+        if (!cleanTitle) cleanTitle = freeText.trim();
+
+        // PERFORMANCE FIX: this used to await the AI urgency classification
+        // BEFORE saving the task - two network round-trips back to back
+        // (AI, then the server) before the user saw anything happen. The
+        // task is now saved immediately with a default urgency, and
+        // classification runs afterward in the background; the renderer is
+        // notified to refresh once it lands. "Normal" is a safe default -
+        // worst case the urgency briefly reads as one level calmer than it
+        // should, never scarier.
         const task = {
-            title: usableTitle ? suggested : cleanTitle,
+            title: cleanTitle,
             date: targetDate,
-            dueDate: detectDeadline(freeText),
-            estimatedMinutes: statedEstimate
-                || (Number.isFinite(modelEstimate) && modelEstimate > 0 ? Math.min(modelEstimate, 600) : null),
             category: category || '',
-            urgency: aiData.urgency || "Normal"
+            urgency: "Normal",
+            estimatedMinutes: durationMinutes || undefined
         };
 
-        await api.createTask(task);
-        console.log(`✅ Task: "${task.title}" | due ${task.dueDate ? task.dueDate.toLocaleDateString('en-GB') : 'unset'} | ${task.estimatedMinutes || 60}m | ${task.urgency}`);
+        const created = await api.createTask(task);
+
+        (async () => {
+            try {
+                const prompt = `Return ONLY a valid JSON object.
+Classify the urgency of this task: "${cleanTitle}"
+Choose exactly one urgency: "Normal", "Medium", "High", or "Urgent".
+Format: {"urgency": "your_choice"}`;
+                let responseText = await callAIWithFallback(prompt);
+                responseText = extractJsonFromText(responseText);
+                const aiData = JSON.parse(responseText);
+                if (aiData.urgency && aiData.urgency !== 'Normal') {
+                    await api.updateTask(created._id, { urgency: aiData.urgency });
+                    if (!event.sender.isDestroyed()) event.sender.send('tasks-changed');
+                }
+            } catch (err) {
+                // Non-fatal by design: the task already exists with a sane
+                // default, so a classification failure here shouldn't (and
+                // now can't) surface as "Add Task failed".
+                console.warn('⚠️ Background urgency classification failed:', err.message);
+            }
+        })();
 
         return JSON.stringify({ success: true });
     } catch (error) {
-        return JSON.stringify({ error: "Could not format the task." });
+        // BUG FIX: this used to swallow error.message and always return the
+        // same generic string, which is exactly why a Gemini/Ollama failure
+        // was invisible to the user - see callAIWithFallback above.
+        console.error('❌ add-smart-task failed:', error.message);
+        return JSON.stringify({ error: error.message || "Could not format the task." });
     }
 });
 
@@ -1322,6 +1111,14 @@ function classifyEventByKeywords(title) {
 
 ipcMain.handle('parse-smart-event', async (event, freeText) => {
     try {
+        // BUG FIX: same guard as add-smart-task above - this handler chains
+        // several regex passes over freeText in a single-threaded process,
+        // so an extremely long input could block the whole app, not just
+        // this dialog.
+        if (freeText && freeText.length > 500) {
+            return JSON.stringify({ error: 'That text is too long (max 500 characters). Try breaking it into a shorter event.' });
+        }
+
         const now = new Date();
         const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -1343,7 +1140,7 @@ ipcMain.handle('parse-smart-event', async (event, freeText) => {
         if (dayWithPrefix) {
             matchedHebrewDayWord = dayWithPrefix[1];
             targetDayName = dayNames[hebrewDayMap[matchedHebrewDayWord]];
-        } else if (/(?:^|\s)שבת(?=\s|$|[,.])/.test(freeText)) {
+        } else if (/(?<![א-ת])שבת(?![א-ת])/.test(freeText)) {
             matchedHebrewDayWord = 'שבת';
             targetDayName = dayNames[6];
         }
@@ -1371,6 +1168,20 @@ ipcMain.handle('parse-smart-event', async (event, freeText) => {
         const timeRegex = /([0-1]?[0-9]|2[0-3]):([0-5][0-9])/;
         const timeMatch = freeText.match(timeRegex);
 
+        // BUG FIX: a bare hour with no minutes ("ב9", "ב-9", "בשעה 9") never
+        // matched the colon-only regex above, so it fell straight through to
+        // the "current time + 1 hour" fallback below - which is exactly why
+        // "ללמוד למבחן ביום שבת ב9" typed in the evening came out as 18:00
+        // instead of 09:00, and the title kept a leftover "ב 9" verbatim.
+        //
+        // Also captures an optional "וחצי" (and a half) / "ורבע" (and a
+        // quarter) right after the hour - "ב 9 וחצי" means 9:30, not 9:00,
+        // and without this the word was left dangling, unrecognised, in the
+        // title ("...וחצי את האפליקציה").
+        const bareHourRegex = /(?:בשעה\s*|(?<![א-ת])ב[\s-]?)([0-1]?[0-9]|2[0-3])(?!:)\b(\s*(?:וחצי|ורבע))?/;
+        const bareHourMatch = !timeMatch ? freeText.match(bareHourRegex) : null;
+        const bareHourSuffix = bareHourMatch && bareHourMatch[2] ? bareHourMatch[2].trim() : null;
+
         // Rough time-of-day words -> a conventional hour.
         const timeOfDayMap = [
             { words: ['בבוקר', 'בוקר'], time: '09:00' },
@@ -1387,6 +1198,10 @@ ipcMain.handle('parse-smart-event', async (event, freeText) => {
             // "Validation failed" errors.
             const h = String(parseInt(timeMatch[1], 10)).padStart(2, '0');
             const m = timeMatch[2];
+            targetTime = `${h}:${m}`;
+        } else if (bareHourMatch) {
+            const h = String(parseInt(bareHourMatch[1], 10)).padStart(2, '0');
+            const m = bareHourSuffix === 'וחצי' ? '30' : bareHourSuffix === 'ורבע' ? '15' : '00';
             targetTime = `${h}:${m}`;
         } else {
             const hit = timeOfDayMap.find(entry => entry.words.some(w => freeText.includes(w)));
@@ -1406,13 +1221,22 @@ ipcMain.handle('parse-smart-event', async (event, freeText) => {
         // Only strip the day phrase we actually matched - the old version
         // stripped every ordinal, which turned "מבחן שני ביום שלישי" into
         // just "מבחן" and threw away part of the real title.
+        // BUG FIX: \b doesn't recognise Hebrew letters, so every \b-wrapped
+        // Hebrew pattern below silently matched nothing (see handoff doc,
+        // decision #6 "מלכודת"). Replaced with an explicit lookaround.
+        const noHebrewNeighbor = (word) => new RegExp(`(?<![א-ת])${word}(?![א-ת])`, 'g');
+
         let cleanTitle = freeText
             .replace(/(?:ב\s*|ב-|בשעה\s*)?([0-1]?[0-9]|2[0-3]):([0-5][0-9])/g, '');
+
+        if (bareHourMatch) {
+            cleanTitle = cleanTitle.replace(bareHourMatch[0], '');
+        }
 
         if (matchedHebrewDayWord) {
             cleanTitle = cleanTitle
                 .replace(new RegExp(`ב?יום\\s+${matchedHebrewDayWord}`, 'g'), '')
-                .replace(new RegExp(`(?:^|\\s)ב?${matchedHebrewDayWord}(?=\\s|$|[,.])`, 'g'), ' ');
+                .replace(noHebrewNeighbor(`ב?${matchedHebrewDayWord}`), '');
         }
 
         // Strip the relative day word - but NOT when it's part of "כל היום"
@@ -1420,36 +1244,20 @@ ipcMain.handle('parse-smart-event', async (event, freeText) => {
         // blindly turned "זמן אישי היום כל היום" into "זמן אישי כל".
         cleanTitle = cleanTitle
             .replace(/כל\s+היום/g, '\u0000ALLDAY\u0000')   // shield it
-            // No \b: it is defined over [A-Za-z0-9_] and never matches beside
-            // Hebrew, so this quietly stripped nothing and every event kept
-            // "מחר" in its title.
-            .replace(/(?:^|\s)(?:מחר|היום)(?=\s|$|[,.])/g, ' ')
+            .replace(noHebrewNeighbor('מחר'), '')
+            .replace(noHebrewNeighbor('היום'), '')
             .replace(/\u0000ALLDAY\u0000/g, 'כל היום');     // restore
 
         // Remove a matched time-of-day word from the title too, so we don't
         // end up with "מבחן בבוקר" when the time already says 09:00.
         if (matchedTimeWord && matchedTimeWord !== 'כל היום') {
-            cleanTitle = cleanTitle.replace(new RegExp(`(?:^|\\s)${matchedTimeWord}(?=\\s|$|[,.])`, 'g'), ' ');
+            cleanTitle = cleanTitle.replace(noHebrewNeighbor(matchedTimeWord), '');
         }
 
         cleanTitle = cleanTitle
             .replace(/\s+/g, ' ')
             .replace(/^[\s,.\-־]+|[\s,.\-־]+$/g, '')
             .trim();
-
-        // Removing the times leaves the words that introduced them behind.
-        // "ללמוד למבחן מחר מ 15:00-17:00" became "ללמוד למבחן מחר מ" - a
-        // preposition pointing at nothing. Stripped repeatedly, because a
-        // range leaves two of them ("מ ... עד ...").
-        //
-        // Note: no \b anywhere. It is defined over [A-Za-z0-9_] in JavaScript
-        // and does not recognise Hebrew, so it would silently never match.
-        const DANGLING = /(?:^|\s)(?:מ|ב|ל|עד|מה|from|to|until|at|between)\s*$/;
-        let guard = 0;
-        while (DANGLING.test(cleanTitle) && guard++ < 4) {
-            cleanTitle = cleanTitle.replace(DANGLING, '').trim();
-        }
-        cleanTitle = cleanTitle.replace(/^[\s,.\-־]+|[\s,.\-־]+$/g, '').trim();
 
         if (!cleanTitle) cleanTitle = "New Event";
 
@@ -1525,12 +1333,104 @@ Return ONLY this JSON, with no other text: {"type": "one_of_the_four"}`;
 });
 
 // =====================================
-// Weekly planning
 // =====================================
-// The planner moved to client/weekPlanner.js and is now ordinary code, not
-// an AI call. Placing blocks around fixed commitments is arithmetic: it must
-// give the same answer twice, never double-book an hour, and be testable.
-// None of those are things a language model provides.
+// AI Operations (Smart Weekly Planner)
+// =====================================
+// BUG FIX: despite the name, this never actually reasoned about anything.
+// It hardcoded every block as type "study" regardless of the task, ignored
+// estimatedMinutes entirely (so "ללמוד 3 שעות למבחן" got exactly one hour,
+// same as everything else), and never looked at currentEvents even though
+// it received it - so it happily stacked new blocks on top of existing
+// lessons/exams, or just kept incrementing by a fixed 2 hours with no idea
+// whether that slot was actually free.
+ipcMain.handle('generate-weekly-plan', async (event, currentTasks, currentEvents) => {
+    try {
+        const openTasks = currentTasks.filter(t => t.date === "Not set" || !t.date);
+        if (openTasks.length === 0) return JSON.stringify([]);
+
+        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const DAY_START = 9 * 60;   // don't schedule before 09:00
+        const DAY_END = 21 * 60;    // or after 21:00
+        const now = new Date();
+
+        // Real availability, seeded from what's already on the calendar -
+        // this is the currentEvents parameter that used to be accepted and
+        // then never read.
+        const occupied = {};
+        dayNames.forEach(d => occupied[d] = []);
+        (currentEvents || []).forEach(evt => {
+            if (!occupied[evt.day]) return;
+            const [h, m] = String(evt.time || '00:00').split(':').map(Number);
+            const start = h * 60 + (m || 0);
+            const dur = evt.durationMinutes || 60;
+            occupied[evt.day].push([start, start + dur]);
+        });
+
+        // First open slot today (or a later day) at least `neededMinutes`
+        // long, scanning past whatever's already booked.
+        function findSlot(day, neededMinutes) {
+            const slots = occupied[day].slice().sort((a, b) => a[0] - b[0]);
+            let cursor = DAY_START;
+            for (const [start, end] of slots) {
+                if (start - cursor >= neededMinutes) return cursor;
+                cursor = Math.max(cursor, end);
+            }
+            return (DAY_END - cursor >= neededMinutes) ? cursor : null;
+        }
+
+        const plannedEvents = [];
+
+        openTasks.forEach((task, i) => {
+            // A task that actually says how long it needs gets that long a
+            // block, capped at 3 hours - a single continuous block is what
+            // "study 3 hours for the exam" means, not three disconnected
+            // one-hour appointments two hours apart (the old behaviour).
+            const blockMinutes = Math.min(task.estimatedMinutes || 60, 180);
+
+            // Real classification instead of a hardcoded "study" for every
+            // task. "personal" (not "study") is the fallback for anything
+            // that matches no keyword at all - "להכין כלים" (prepare
+            // equipment) isn't academic work just because it has no
+            // deadline, and defaulting it to "study" is exactly what made
+            // every block look the same regardless of the task.
+            const type = classifyEventByKeywords(task.title) || 'personal';
+
+            let placed = false;
+            for (let dayOffset = 1; dayOffset <= 7 && !placed; dayOffset++) {
+                const targetDate = new Date(now);
+                targetDate.setDate(now.getDate() + dayOffset);
+                const day = dayNames[targetDate.getDay()];
+
+                const startMinutes = findSlot(day, blockMinutes);
+                if (startMinutes === null) continue;
+
+                const h = String(Math.floor(startMinutes / 60)).padStart(2, '0');
+                const m = String(startMinutes % 60).padStart(2, '0');
+
+                plannedEvents.push({
+                    title: task.title,
+                    day,
+                    time: `${h}:${m}`,
+                    type,
+                    durationMinutes: blockMinutes,
+                    autoScheduled: true,
+                    task: task._id || task.id || null
+                });
+                occupied[day].push([startMinutes, startMinutes + blockMinutes]);
+                placed = true;
+            }
+
+            if (!placed) {
+                console.warn(`⚠️ Weekly planner: no free ${blockMinutes}-minute slot for "${task.title}" in the next 7 days.`);
+            }
+        });
+
+        return JSON.stringify(plannedEvents);
+    } catch (error) {
+        console.error("Weekly Planner Error:", error);
+        return JSON.stringify({ error: error.message });
+    }
+});
 
 // =====================================
 // File Reading 
@@ -1569,59 +1469,6 @@ async function readPdf(filePath) {
     return repairHebrewPdfText(legacy);
 }
 
-// Picking a deck file to import. Separate from select-and-read-file because
-// the filters are different and because this one never parses - it hands the
-// raw text back and the renderer does the rest.
-// Removes only the blocks the planner placed, so re-planning starts from a
-// clean week without touching anything entered by hand.
-// A finished or deleted task shouldn't leave its planned blocks sitting in
-// the week. Called from both places.
-// Changing which server this copy talks to. Exposed because the alternative -
-// a new installer for every tester - is not a thing anyone should have to do.
-ipcMain.handle('set-server-url', async (event, url) => {
-  try {
-    const resolved = api.setServerUrl(url || null);
-    aiProvider.writeConfig({ serverUrl: url || null });
-    const reachable = await api.ping().catch(() => false);
-    return { ok: true, url: resolved, reachable };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-});
-
-ipcMain.handle('get-server-url', async () => {
-  return { url: api.getServerUrl() };
-});
-
-ipcMain.handle('clear-events-for-task', async (event, taskId) => {
-  try { return await api.clearEventsForTask(taskId); }
-  catch (err) { return { error: err.message }; }
-});
-
-ipcMain.handle('clear-auto-scheduled-events', async () => {
-  try { return await api.clearAutoScheduledEvents(); }
-  catch (err) { return { error: err.message }; }
-});
-
-ipcMain.handle('select-deck-file', async () => {
-  const result = await dialog.showOpenDialog({
-    properties: ['openFile'],
-    filters: [{ name: 'Flashcard exports', extensions: ['csv', 'tsv', 'txt'] }]
-  });
-  if (result.canceled || result.filePaths.length === 0) return null;
-
-  const filePath = result.filePaths[0];
-  try {
-    // Exports from Quizlet and Anki are commonly UTF-8 with a BOM, which
-    // would otherwise turn the first field of the first row into a card whose
-    // question starts with an invisible character.
-    const text = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
-    return { name: path.basename(filePath), text };
-  } catch (err) {
-    return { error: err.message };
-  }
-});
-
 ipcMain.handle('select-and-read-file', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile'],
@@ -1649,22 +1496,80 @@ ipcMain.handle('select-and-read-file', async () => {
   }
 });
 
-// XP, levels and the streak were removed. The IPC handlers, the /api/stats
-// routes, the Stats model and its client methods all went with them: dead
-// code that still looks alive is worse than no code, because the next person
-// has to work out whether it matters.
-//
+// =====================================
+// Stats - removed. /api/stats no longer exists server-side (XP/levels/
+// streak were dropped as a product decision); these handlers had no caller
+// left in renderer.js after Progress and task-completion were updated to
+// not depend on them, so they're gone rather than left as dead code that
+// calls an endpoint that will always 404.
+// =====================================
+
+// =====================================
+// Auth
+// =====================================
+// Lets Settings offer a "Copy diagnostic log" button - the packaged app has
+// no visible terminal, so this is the only way a friend can hand you
+// anything useful when something breaks. See logger.js.
+ipcMain.handle('get-diagnostic-log', async () => {
+    return logger.getLogTail();
+});
+
+// On app startup, the renderer calls this once to decide whether to show
+// the login screen or go straight into the app. A saved token isn't proof
+// it still works (it could have expired, or the account could be gone), so
+// this actually calls the server rather than just checking a file exists.
+ipcMain.handle('auth-get-session', async () => {
+  const token = authClient.getToken();
+  if (!token) return { loggedIn: false };
+
+  try {
+    const user = await api.getMe();
+    return { loggedIn: true, user };
+  } catch (err) {
+    // Token rejected (expired/invalid) - apiClient already cleared it via
+    // the 401 handling in request(), so this just reports the outcome.
+    return { loggedIn: false };
+  }
+});
+
+ipcMain.handle('auth-register', async (event, { email, password, name, degree }) => {
+  try {
+    const { token, user } = await api.register(email, password, name, degree);
+    authClient.saveSession({ token, user });
+    return { success: true, user };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('auth-login', async (event, { email, password }) => {
+  try {
+    const { token, user } = await api.login(email, password);
+    authClient.saveSession({ token, user });
+    return { success: true, user };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('auth-logout', async () => {
+  authClient.clearSession();
+  return { success: true };
+});
+
 // =====================================
 // Profile
 // =====================================
+// AUTH: these now read/write the logged-in User document (name/degree)
+// via /auth/me instead of the old singleton Profile - see apiClient.js.
 ipcMain.handle('get-profile', async () => {
-  try { return await api.getProfile(); } 
+  try { return await api.getMe(); }
   catch (err) { return { name: '', degree: '' }; }
 });
 
 ipcMain.handle('save-profile', async (event, profileData) => {
   try {
-    await api.updateProfile(profileData);
+    await api.updateMe(profileData);
     return true;
   } catch (err) { return { error: err.message }; }
 });
@@ -2198,20 +2103,6 @@ CODE in any document:
 Ask what a function returns, its time complexity, what a construct does, or what
 a snippet outputs and why. Put the code INSIDE the question, formatted. Never ask
 the student to write a whole program - there is no way to check that.
-- Wrap every code snippet in a fenced block, on its own lines:
-  \`\`\`
-  public double getPrice() { ... }
-  \`\`\`
-  The app renders a fenced block in a monospace, left-to-right panel. Code that
-  arrives as one long line is unreadable, so keep one statement per line and
-  keep the original indentation.
-- Include only the classes and methods the question actually turns on. A
-  student re-reading forty lines to find the one that matters is being tested
-  on patience, not on the material.
-- NEVER offer answer options. No "א. ... ב. ... ג. ...", no "(a) ... (b) ...".
-  The student states their confidence and then self-grades against the answer;
-  a list of options turns recall into recognition, which is a far easier task
-  that feels like knowing.
 
 ---
 RULES FOR EVERYTHING:
@@ -2235,93 +2126,15 @@ Return ONLY JSON:
 {"items": [{"question": "...", "answer": "...", "mode": "recall|practice", "solutionSource": "document|ai", "topic": "short skill or topic name"}]}`;
 }
 
-// A JSON string may not contain a raw control character - a newline inside a
-// string has to be written as \n. Models get this right almost always, and
-// then get it wrong on code: asked to put a Java class inside a "question"
-// field, the model writes the class the way it would write it in a file,
-// with real line breaks, and the whole response fails to parse. One
-// unescaped newline throws away every item in a 50-second call.
-//
-// This walks the text tracking whether it is inside a string literal and
-// escapes any control character found there. Outside strings it changes
-// nothing, so well-formed JSON passes through untouched.
-function escapeControlCharsInJsonStrings(text) {
-    let out = '';
-    let inString = false;
-    let escaped = false;
-
-    for (let i = 0; i < text.length; i++) {
-        const ch = text[i];
-
-        if (escaped) { out += ch; escaped = false; continue; }
-        if (ch === '\\') { out += ch; escaped = true; continue; }
-        if (ch === '"') { inString = !inString; out += ch; continue; }
-
-        if (inString && ch < ' ') {
-            if (ch === '\n') out += '\\n';
-            else if (ch === '\r') out += '\\r';
-            else if (ch === '\t') out += '\\t';
-            else out += '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0');
-            continue;
-        }
-
-        out += ch;
-    }
-    return out;
-}
-
-// Parses what the model returned, with one repair attempt and, failing that,
-// diagnostics good enough to actually identify the problem.
-//
-// The old failure mode was a 300-character preview in the terminal - which
-// almost never contains the broken part, since the break is usually deep
-// inside a code block halfway down the response.
-function parseModelJson(responseText) {
-    const candidate = extractJsonFromText(String(responseText || ''));
-
-    try {
-        return { ok: true, value: JSON.parse(candidate) };
-    } catch (firstError) {
-        try {
-            const value = JSON.parse(escapeControlCharsInJsonStrings(candidate));
-            console.warn('⚠️ Model JSON contained unescaped control characters inside strings (usually a code block). Repaired and parsed.');
-            return { ok: true, value };
-        } catch {
-            // Repair didn't help either - report where it actually broke.
-            console.error('❌ Response was not valid JSON:', firstError.message);
-
-            const at = Number((firstError.message.match(/position (\d+)/) || [])[1]);
-            if (Number.isFinite(at)) {
-                const from = Math.max(0, at - 120);
-                const to = Math.min(candidate.length, at + 120);
-                console.error(`   around character ${at} of ${candidate.length}:`);
-                console.error('   ...' + candidate.slice(from, at) + '  <<< HERE >>>  ' + candidate.slice(at, to) + '...');
-            } else {
-                console.error('   first 300 chars:', candidate.slice(0, 300));
-            }
-
-            // The full text goes to a file. It is the only copy - the call
-            // that produced it cost 50 seconds and can't be replayed.
-            try {
-                const dumpPath = path.join(app.getPath('temp'), `mindsync-bad-response-${Date.now()}.txt`);
-                fs.writeFileSync(dumpPath, String(responseText || ''), 'utf8');
-                console.error('   full response saved to:', dumpPath);
-            } catch (writeErr) {
-                console.error('   (could not save the full response:', writeErr.message + ')');
-            }
-
-            return { ok: false };
-        }
-    }
-}
-
 // Shared validation for whatever the model returns.
 function finaliseStudyItems(responseText, category, sourceFile) {
-    const result = parseModelJson(responseText);
-    if (!result.ok) {
+    let parsed;
+    try {
+        parsed = JSON.parse(extractJsonFromText(responseText));
+    } catch (e) {
+        console.error('❌ Response was not valid JSON:', String(responseText).slice(0, 300));
         return { error: 'The AI response could not be read. Try again.' };
     }
-    const parsed = result.value;
 
     let list = Array.isArray(parsed) ? parsed : (parsed.items || []);
     if (!Array.isArray(list)) list = [];
@@ -2427,16 +2240,8 @@ ipcMain.handle('generate-study-items-pdf', async (event, sourcePath, options = {
             // earlier run produced only two questions with both set tight.
             maxTokens: 16384,
             thinkingLevel: 'medium',
-            forceJson: true,
-            // Relayed to the window so a retry or a model switch is visible.
-            // This call can legitimately run for minutes; without this the
-            // only honest thing the UI could say was nothing at all.
-            onProgress: (message) => {
-                if (!event.sender.isDestroyed()) event.sender.send('ai-progress', message);
-            }
+            forceJson: true
         });
-
-        if (!event.sender.isDestroyed()) event.sender.send('ai-progress', 'Checking the questions...');
 
         return JSON.stringify(finaliseStudyItems(responseText, category, sourceFile));
     } catch (error) {
@@ -2511,13 +2316,13 @@ Return ONLY JSON:
             forceJson: true
         });
 
-        // Same repair and diagnostics as the PDF path - an image of a code
-        // slide breaks in exactly the same way.
-        const visionResult = parseModelJson(responseText);
-        if (!visionResult.ok) {
+        let parsed;
+        try {
+            parsed = JSON.parse(extractJsonFromText(responseText));
+        } catch (e) {
+            console.error('❌ Vision response was not valid JSON:', responseText.slice(0, 300));
             return JSON.stringify({ error: 'The AI response could not be read. Try again.' });
         }
-        const parsed = visionResult.value;
 
         let list = Array.isArray(parsed) ? parsed : (parsed.items || []);
         if (!Array.isArray(list)) list = [];
@@ -2692,6 +2497,10 @@ async function syncToGoogleCalendar(evtData) {
             const endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
             console.log(`📅 Inserting into Google Calendar: "${evtData.title}" at ${startDate.toString()}`);
 
+            // BUG FIX: same class of bug already fixed for Gemini and the
+            // local server - no timeout meant a slow/hung network call here
+            // would block indefinitely. main.js is single-threaded, so that
+            // doesn't just stall this sync, it freezes the whole app.
             const res = await calendar.events.insert({
                 calendarId: 'primary',
                 resource: {
@@ -2700,7 +2509,7 @@ async function syncToGoogleCalendar(evtData) {
                     start: { dateTime: startDate.toISOString(), timeZone: 'Asia/Jerusalem' },
                     end: { dateTime: endDate.toISOString(), timeZone: 'Asia/Jerusalem' }
                 },
-            });
+            }, { timeout: 15000 });
 
             console.log('✅ Google Calendar insert succeeded:', res.data.htmlLink);
             return { success: true, link: res.data.htmlLink, eventId: res.data.id };
@@ -2728,7 +2537,7 @@ ipcMain.handle('save-event', async (event, newEvent) => {
 
     try {
         // 2. מושכים את פרופיל המשתמש כדי לבדוק הגדרות גלובליות
-        const profile = await api.getProfile().catch(() => ({}));
+        const profile = await api.getMe().catch(() => ({}));
         const alwaysSync = profile.alwaysSyncGoogle === true;
 
         // 3. בודקים אם הצ'קבוקס סומן ספציפית דרך הממשק
@@ -2775,7 +2584,8 @@ ipcMain.handle('delete-event', async (event, id) => {
       try {
         await callGoogleWithReauth(async (auth) => {
           const calendar = google.calendar({ version: 'v3', auth });
-          await calendar.events.delete({ calendarId: 'primary', eventId: evt.googleEventId });
+          // Same timeout fix as the insert call above.
+          await calendar.events.delete({ calendarId: 'primary', eventId: evt.googleEventId }, { timeout: 15000 });
         });
         console.log("Deleted from Google Calendar.");
       } catch (err) {
@@ -2804,31 +2614,8 @@ ipcMain.handle('save-folder', async (event, newFolder) => {
 ipcMain.handle('delete-folder', async (event, id) => {
   try { return await api.deleteFolder(id); } catch (err) { return { error: err.message }; }
 });
-// One file with its content. The list is fetched light, so the text of the
-// one file the user picked is fetched here instead of everything up front.
-// Opening a URL in the real browser rather than inside the app. Used by the
-// key setup, which walks the user through Google's page: signing in to a
-// Google account inside an Electron window is both worse UX and something
-// Google actively blocks.
-ipcMain.handle('open-external', async (event, url) => {
-  // Only ever our own known destinations. A URL arriving from anywhere else
-  // would make this a way to launch arbitrary things from the renderer.
-  const ALLOWED = [
-    'https://aistudio.google.com/apikey',
-    'https://aistudio.google.com/',
-    'https://ollama.com/download'
-  ];
-  if (!ALLOWED.includes(url)) return { ok: false, error: 'Not an allowed destination' };
-  await shell.openExternal(url);
-  return { ok: true };
-});
-
-ipcMain.handle('get-file', async (event, id) => {
-  try { return await api.getFile(id); } catch (err) { return null; }
-});
-
-ipcMain.handle('get-files', async (event, opts = {}) => {
-  try { return await api.getFiles(opts); } catch (err) { return []; }
+ipcMain.handle('get-files', async () => {
+  try { return await api.getFiles(); } catch (err) { return []; }
 });
 ipcMain.handle('save-file', async (event, newFile) => {
   try { return await api.createFile(newFile); } catch (err) { return { error: err.message }; }
@@ -2934,34 +2721,14 @@ function createWindow () {
   setInterval(checkAndBlockApps, 3000);
 }
 
-// Where this build talks to.
-//
-// Set at build time by writing server.json next to main.js, so one codebase
-// produces both a developer build pointing at localhost and an installer
-// pointing at the deployed server - without either of them asking the person
-// who runs it to configure anything.
-//
-// A saved setting still wins, so a tester can be moved to a different server
-// without a new installer.
-function resolveServerUrl() {
-    const saved = aiProvider.readConfig().serverUrl;
-    if (saved) return saved;
-
-    try {
-        const bundled = JSON.parse(fs.readFileSync(path.join(__dirname, 'server.json'), 'utf8'));
-        if (bundled && bundled.serverUrl) return bundled.serverUrl;
-    } catch { /* absent in development, which is the normal case */ }
-
-    return null; // apiClient falls back to localhost
-}
-
 app.whenReady().then(() => {
     app.setAppUserModelId("com.mindsync.app");
+    // Initialized first, deliberately - so any error during the rest of
+    // startup (Gemini config, session restore) is itself captured in the log
+    // instead of only existing in a terminal window a packaged app doesn't have.
+    logger.initLogger(app.getPath('userData'));
     aiProvider.initConfig(app.getPath('userData'));
-
-    const resolved = api.setServerUrl(resolveServerUrl());
-    console.log(`🔗 Server: ${resolved || 'http://localhost:5000/api (default)'}`);
-
+    authClient.initSession(app.getPath('userData'));
     createWindow();
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

@@ -2,6 +2,7 @@
 .env
 credentials.json
 token.json
+*.zip
 
 # קובצי מערכת נסתרים (של מאק ווינדוס) שאין להם קשר לקוד
 .DS_Store

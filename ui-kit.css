@@ -117,6 +117,18 @@
     overflow-wrap: break-word;
     white-space: pre-wrap;
 }
+/* BUG FIX: white-space:pre-wrap above is there so a plain confirmDialog
+   message with a literal line break renders correctly. But it also makes
+   every whitespace character in the HTML significant - including all the
+   newlines and indentation between elements in a template literal - so any
+   modal body built from structured markup (a form, a list of buttons/
+   checkboxes) instead of a plain message string rendered as one giant gap
+   between every field. Added to those bodies specifically, alongside
+   ms-modal__body, rather than changing the shared rule and risking breaking
+   confirmDialog's own line-break handling. */
+.ms-modal__body--structured {
+    white-space: normal;
+}
 .ms-modal__footer {
     display: flex;
     justify-content: flex-end;
