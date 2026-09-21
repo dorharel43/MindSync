@@ -295,8 +295,10 @@ const aiResultBox = document.getElementById('ai-result-box');
 const aiOutputText = document.getElementById('ai-output-text');
 const aiLoading = document.getElementById('ai-loading');
 
-function openAiSummary(content) {
-    aiInputText.value = content; 
+let currentSummarySourcePath = '';
+function openAiSummary(content, sourcePath) {
+    aiInputText.value = content;
+    currentSummarySourcePath = sourcePath || '';
     aiResultBox.style.display = 'none'; 
     aiModal.style.display = 'flex'; 
 }
@@ -325,7 +327,7 @@ if (aiGenerateBtn) {
         aiOutputText.style.display = 'none';
         aiLoading.style.display = 'block';
 
-        const summary = await ipcRenderer.invoke('summarize-text', textToSummarize);
+        const summary = await ipcRenderer.invoke('summarize-text', textToSummarize, currentSummarySourcePath);
         
         aiLoading.style.display = 'none';
         aiOutputText.style.display = 'block';
@@ -1382,7 +1384,7 @@ async function loadAndRenderFiles() {
             </div>
         `;
 
-        fileItem.querySelector('.btn-ai').onclick = () => openAiSummary(file.content);
+        fileItem.querySelector('.btn-ai').onclick = () => openAiSummary(file.content, file.sourcePath);
         
         fileItem.querySelector('.delete-file-btn').onclick = async () => {
             const result = await ipcRenderer.invoke('delete-file', file.id); // Fixed: Pass ID directly without searching
@@ -2529,11 +2531,15 @@ async function loadStudyHome() {
         }
     }
 
-    renderCalibration(stats.calibration, stats.reviewsAllTime);
+    renderCalibration(stats.calibration, stats.reviewsAllTime, stats.trendByConfidence);
     renderConfidentlyWrong(stats.confidentlyWrong);
+    renderAttentionList('underconfident-panel', stats.underconfidentItems,
+        'Nothing here yet — no pattern of doubting yourself on things you actually know.', 'good');
+    renderAttentionList('genuine-difficulty-panel', stats.genuineDifficultyItems,
+        'Nothing flagged as genuinely hard right now.', 'warn');
 }
 
-function renderCalibration(cal, totalReviews) {
+function renderCalibration(cal, totalReviews, trendByConfidence) {
     const el = document.getElementById('calibration-panel');
     if (!el) return;
 
@@ -2557,6 +2563,15 @@ function renderCalibration(cal, totalReviews) {
         }
         const off = Math.abs(b.accuracy - r.ideal);
         const tone = off <= 12 ? 'good' : off <= 25 ? 'ok' : 'bad';
+
+        // Is this confidence level's judgement getting more reliable over
+        // time? Was only ever shown for "sure" before - the same question
+        // matters just as much for the ambiguous "think so" middle ground.
+        const trend = trendByConfidence && trendByConfidence[r.key];
+        const trendNote = trend
+            ? `<div class="cal-row__trend ms-text-xs ms-muted">${trend.earlier}% → ${trend.recent}% over your last ${trend.earlierCount + trend.recentCount} of these</div>`
+            : '';
+
         return `
             <div class="cal-row">
                 <div class="cal-row__head">
@@ -2568,6 +2583,7 @@ function renderCalibration(cal, totalReviews) {
                     <div class="cal-ideal" style="left:${r.ideal}%" title="Well-calibrated: about ${r.ideal}%"></div>
                 </div>
                 <div class="cal-row__note ms-text-xs ms-muted">${b.correct} of ${b.total}</div>
+                ${trendNote}
             </div>`;
     }).join('');
 
@@ -2580,18 +2596,32 @@ function renderCalibration(cal, totalReviews) {
 }
 
 function renderConfidentlyWrong(items) {
-    const el = document.getElementById('confidently-wrong-panel');
+    renderAttentionList('confidently-wrong-panel', items,
+        'Nothing here yet — nothing you were certain about has turned out wrong.', 'danger');
+}
+
+// Shared by all three "items worth looking at" panels (confidently wrong,
+// underconfident, genuinely hard) - same card shape, different tone/color
+// and copy, so a change to the layout only has to happen once.
+const ATTENTION_TONE_COLOR = {
+    danger: 'var(--status-danger)',
+    warn: 'var(--status-warning)',
+    good: 'var(--status-success)'
+};
+function renderAttentionList(panelId, items, emptyMessage, tone) {
+    const el = document.getElementById(panelId);
     if (!el) return;
     if (!items || items.length === 0) {
-        el.innerHTML = '<div class="ms-muted ms-text-sm">Nothing here yet — nothing you were certain about has turned out wrong.</div>';
+        el.innerHTML = `<div class="ms-muted ms-text-sm">${escapeHtml(emptyMessage)}</div>`;
         return;
     }
+    const dotColor = ATTENTION_TONE_COLOR[tone] || ATTENTION_TONE_COLOR.danger;
     el.innerHTML = items.map(i => `
         <div class="attention-item">
-            <span class="attention-item__dot" style="background: var(--status-danger)"></span>
+            <span class="attention-item__dot" style="background: ${dotColor}"></span>
             <div class="attention-item__body">
                 <div class="attention-item__title" dir="auto">${escapeHtml(i.question)}</div>
-                <div class="attention-item__meta">${escapeHtml(i.category || 'Uncategorized')} · ${MODE_LABELS[i.mode] || i.mode}</div>
+                <div class="attention-item__meta">${escapeHtml(i.category || 'Uncategorized')} · ${MODE_LABELS[i.mode] || i.mode}${i.accuracy !== undefined ? ` · ${i.accuracy}% (${i.reviewCount})` : ''}</div>
             </div>
         </div>`).join('');
 }
@@ -2857,6 +2887,24 @@ if (generateStudyBtn) {
                     category: category.trim(),
                     sourceFile: file.name
                 });
+
+                // BUG FIX: vision had no fallback at all - a Gemini outage/
+                // rate limit (503/429) meant a hard failure with no way
+                // through, even though the text-based path a few lines down
+                // already exists and already falls back to Ollama on its
+                // own. The generated set still goes through the same review
+                // screen before anything is saved, so a lower-quality draft
+                // here is caught there, not served silently as final.
+                const visionResult = JSON.parse(response);
+                if (visionResult.error) {
+                    console.warn('⚠️ Vision generation failed, falling back to extracted text:', visionResult.error);
+                    toast.info('Direct PDF reading is unavailable right now (likely a Gemini outage/rate limit) - using the extracted text instead. Double-check the questions before saving.', 'Lower-quality fallback used');
+                    generateStudyBtn.textContent = 'Reading the document...';
+                    response = await ipcRenderer.invoke('generate-study-items', file.content, {
+                        category: category.trim(),
+                        sourceFile: file.name
+                    });
+                }
             } else {
                 generateStudyBtn.textContent = 'Reading the document...';
                 response = await ipcRenderer.invoke('generate-study-items', file.content, {

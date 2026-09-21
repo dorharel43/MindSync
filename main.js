@@ -132,8 +132,40 @@ function extractJsonFromText(text) {
 // =====================================
 // AI Operations (Smart Inputs)
 // =====================================
-ipcMain.handle('summarize-text', async (event, textToSummarize) => {
+ipcMain.handle('summarize-text', async (event, textToSummarize, sourcePath) => {
     try {
+        const SUMMARY_MAX_OUTPUT_TOKENS = 2000;
+
+        // BUG FIX: this always summarized the pre-extracted text (readPdf()
+        // at upload time - the lossy pdfjs/pdf2json path, source of the
+        // "Page (0) Break" / mangled-formula complaints) even though
+        // generateFromPdf() (vision, reads the actual file, no extraction)
+        // already exists and is used for study-item generation. There was
+        // no reason Summarize couldn't use the same good path. When we have
+        // the original file and Gemini is available, read it directly.
+        if (sourcePath && fs.existsSync(sourcePath) && aiProvider.supportsVision()) {
+            try {
+                const buffer = fs.readFileSync(sourcePath);
+                const sizeMb = buffer.length / (1024 * 1024);
+                if (sizeMb <= 18) { // inline request body cap, same limit as generate-study-items-pdf
+                    const visionPrompt = `You are a smart learning assistant for a student. Summarize this document clearly, in short and concise bullet points. Highlight important concepts, and preserve any formulas/equations exactly as shown rather than describing them.
+IMPORTANT: Write the summary in the same language as the document.`;
+                    const raw = await aiProvider.generateFromPdf(buffer, visionPrompt, {
+                        maxTokens: SUMMARY_MAX_OUTPUT_TOKENS,
+                        thinkingLevel: 'low'
+                    });
+                    console.log('📝 summarize-text: used vision (direct PDF read)');
+                    return coerceToPlainText(raw);
+                }
+            } catch (visionErr) {
+                // Gemini unavailable or failed (no key, rate limit, transient
+                // 503...) - fall through to the text-based path below rather
+                // than erroring out. Quality drops to what it always was
+                // before this fix, which still beats a hard failure.
+                console.warn('⚠️ Vision summary failed, falling back to extracted text:', visionErr.message);
+            }
+        }
+
         console.log(`📝 summarize-text: received ${(textToSummarize || '').length} chars`);
         // BUG FIX: this was truncating to MAX_INPUT_CHARS (2000 - about one
         // paragraph) before the AI ever saw the document, and capping the
@@ -147,7 +179,6 @@ ipcMain.handle('summarize-text', async (event, textToSummarize) => {
         // raised specifically for summaries rather than reusing the general
         // defaults built for short prompts.
         const SUMMARY_MAX_INPUT_CHARS = 15000;
-        const SUMMARY_MAX_OUTPUT_TOKENS = 2000;
 
         const safeText = textToSummarize && textToSummarize.length > SUMMARY_MAX_INPUT_CHARS
             ? textToSummarize.slice(0, SUMMARY_MAX_INPUT_CHARS) + '\n\n[...document truncated...]'

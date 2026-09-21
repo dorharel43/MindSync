@@ -341,6 +341,16 @@
                     </button>
                 </div>
 
+                <!-- Sets expectations before the panels below, since three
+                     of the four only surface a pattern across repeated
+                     reviews of the SAME question - not the deck's total
+                     review count - and stay empty otherwise, which read as
+                     "broken" without this. -->
+                <p class="settings-hint" style="margin-bottom: var(--space-4);">
+                    The four panels below build up as you answer the <em>same</em> question more than once — a single guess
+                    doesn't prove much, but a pattern across several reviews does.
+                </p>
+
                 <div class="progress-columns">
                     <!-- The calibration panel: the differentiating feature -->
                     <div class="card">
@@ -356,6 +366,24 @@
                         </div>
                         <p class="settings-hint">Answered wrong while marked "I'm sure". These are the dangerous ones.</p>
                         <div id="confidently-wrong-panel"></div>
+                    </div>
+
+                    <!-- The inverse of "confidently wrong" - doubt that isn't earned. -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="section-title">You know these better than you think</h3>
+                        </div>
+                        <p class="settings-hint">Answered correctly while marked "think so" or "guessing", again and again. Trust yourself more here.</p>
+                        <div id="underconfident-panel"></div>
+                    </div>
+
+                    <!-- Genuine difficulty - no miscalibration here, just hard material. -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="section-title">Genuinely hard, not a confidence problem</h3>
+                        </div>
+                        <p class="settings-hint">You never claimed to know these, and you're right not to - more reps alone won't fix it. Worth going back to the source material.</p>
+                        <div id="genuine-difficulty-panel"></div>
                     </div>
                 </div>
             </div>

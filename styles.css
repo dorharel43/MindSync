@@ -1387,7 +1387,11 @@ svg { vertical-align: -0.125em; flex-shrink: 0; }
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: var(--space-4);
-    align-items: start;
+    /* BUG FIX: was align-items:start, so a card with less content (e.g. an
+       empty "nothing here yet" state) stayed short while its row sibling
+       stretched taller - misaligned bottoms. stretch (grid's own default)
+       makes both cards in a row match height. */
+    align-items: stretch;
 }
 
 /* Only stack once there genuinely isn't room for two columns. */
@@ -2255,6 +2259,7 @@ kbd.kbd {
 }
 .cal-row__value { font-weight: var(--font-semibold); font-variant-numeric: tabular-nums; }
 .cal-row__note { margin-top: var(--space-1); }
+.cal-row__trend { margin-top: 2px; }
 
 .cal-track {
     position: relative;
