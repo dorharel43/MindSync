@@ -130,6 +130,8 @@ module.exports = {
   // ---- Files ----
   getFiles: async () => withIdAliases(await request('GET', '/files')),
   createFile: (file) => request('POST', '/files', file).then(withIdAlias),
+  getFile: (id) => request('GET', `/files/${id}`).then(withIdAlias),
+  updateFile: (id, updates) => request('PUT', `/files/${id}`, updates).then(withIdAlias),
   deleteFile: (id) => request('DELETE', `/files/${id}`),
 
   // ---- Auth ----

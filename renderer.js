@@ -4,6 +4,13 @@ const { ipcRenderer, clipboard } = require('electron');
 // add-smart-task) so creating a task doesn't wait on it. This is how the
 // main process tells us the classification landed, so the list picks up
 // the real urgency instead of staying on the "Normal" default forever.
+// A finished/deleted task's planned blocks were just removed in main.js -
+// refresh the board so they don't linger on screen.
+ipcRenderer.on('events-changed', () => {
+    if (typeof loadAndRenderWeeklyBoard === 'function') loadAndRenderWeeklyBoard();
+    if (typeof loadAndRenderHome === 'function') loadAndRenderHome();
+});
+
 ipcRenderer.on('tasks-changed', () => {
     if (typeof loadAndRenderTasks === 'function') loadAndRenderTasks();
 });
@@ -200,6 +207,11 @@ menuItems.forEach(item => {
         views.forEach(view => view.style.display = 'none');
 
         item.classList.add('active');
+        // The board can show tasks now, which change on other screens -
+        // refresh it on arrival instead of showing a stale copy.
+        if (item.id === 'nav-weekly' && typeof loadAndRenderWeeklyBoard === 'function') {
+            loadAndRenderWeeklyBoard();
+        }
         const targetViewId = item.id.replace('nav-', 'view-');
         const targetView = document.getElementById(targetViewId);
         if(targetView) {
@@ -287,53 +299,13 @@ if (focusBtn) {
 const uploadBtn = document.querySelector('.btn-upload');
 const filesListContainer = document.querySelector('.files-list');
 
-const aiModal = document.getElementById('ai-modal');
-const aiCloseBtn = document.getElementById('ai-close-btn');
-const aiInputText = document.getElementById('ai-input-text');
-const aiGenerateBtn = document.getElementById('ai-generate-btn');
-const aiResultBox = document.getElementById('ai-result-box');
-const aiOutputText = document.getElementById('ai-output-text');
-const aiLoading = document.getElementById('ai-loading');
-
-let currentSummarySourcePath = '';
-function openAiSummary(content, sourcePath) {
-    aiInputText.value = content;
-    currentSummarySourcePath = sourcePath || '';
-    aiResultBox.style.display = 'none'; 
-    aiModal.style.display = 'flex'; 
-}
-
-if (aiCloseBtn) {
-    aiCloseBtn.addEventListener('click', () => aiModal.style.display = 'none');
-}
-
-function formatAIText(text) {
-    if (!text) return '';
-    let html = text;
-    html = html.replace(/^### (.*$)/gim, '<h3 style="color: var(--accent-purple); margin-top: 15px; margin-bottom: 5px;">$1</h3>');
-    html = html.replace(/^## (.*$)/gim, '<h2 style="color: var(--accent-purple); margin-top: 15px; margin-bottom: 5px;">$1</h2>');
-    html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/^\* (.*$)/gim, '<div style="margin-left: 15px;">• $1</div>');
-    html = html.replace(/\n/g, '<br>');
-    return html;
-}
-
-if (aiGenerateBtn) {
-    aiGenerateBtn.addEventListener('click', async () => {
-        const textToSummarize = aiInputText.value;
-        if (!textToSummarize) return;
-
-        aiResultBox.style.display = 'block';
-        aiOutputText.style.display = 'none';
-        aiLoading.style.display = 'block';
-
-        const summary = await ipcRenderer.invoke('summarize-text', textToSummarize, currentSummarySourcePath);
-        
-        aiLoading.style.display = 'none';
-        aiOutputText.style.display = 'block';
-        aiOutputText.innerHTML = formatAIText(summary); 
-    });
-}
+// The AI summary used to be a small modal here. It now lives in its own
+// window (summary.html / summary.js) - see 'open-summary-window' in main.js.
+// When that window saves a summary, refresh the list so the button reads
+// "View summary" instead of "Summarize".
+ipcRenderer.on('files-changed', () => {
+    if (typeof loadAndRenderFiles === 'function') loadAndRenderFiles();
+});
 
 // ==========================================
 // 5. Schedule & Weekly Plan
@@ -445,6 +417,10 @@ function buildScheduleRow(evt, folders) {
 // somewhere in time order, and the redundant "(day)" label per row is gone
 // now that the heading already says which day it is.
 async function loadAndRenderEvents() {
+    // The "My Day" list this renders into was folded into Weekly Plan. Kept
+    // as a no-op so existing callers don't need touching, but it no longer
+    // fetches events for a list that isn't on the page.
+    if (!scheduleList) return;
     const events = await ipcRenderer.invoke('get-events');
     const folders = await ipcRenderer.invoke('get-folders').catch(() => []);
     if (scheduleList) scheduleList.innerHTML = '';
@@ -480,41 +456,96 @@ async function loadAndRenderEvents() {
     }
 }
 
+// Tasks carry a real date (DD/MM/YYYY string, or a dueDate), unlike events,
+// which repeat weekly by day name. Returns null for "Not set" / unparseable.
+function parseTaskDueDate(task) {
+    if (task.dueDate) {
+        const d = new Date(task.dueDate);
+        if (!isNaN(d)) return d;
+    }
+    if (!task.date || task.date === 'Not set') return null;
+    const parts = String(task.date).split('/').map(Number);
+    if (parts.length !== 3 || parts.some(isNaN)) return null;
+    const [dd, mm, yyyy] = parts;
+    const d = new Date(yyyy, mm - 1, dd);
+    return isNaN(d) ? null : d;
+}
+
+const WEEKLY_SHOW_TASKS_KEY = 'mindsync.weeklyShowTasks';
+const weeklyShowTasksToggle = document.getElementById('weekly-show-tasks');
+if (weeklyShowTasksToggle) {
+    weeklyShowTasksToggle.checked = localStorage.getItem(WEEKLY_SHOW_TASKS_KEY) === '1';
+    weeklyShowTasksToggle.addEventListener('change', () => {
+        localStorage.setItem(WEEKLY_SHOW_TASKS_KEY, weeklyShowTasksToggle.checked ? '1' : '0');
+        loadAndRenderWeeklyBoard();
+    });
+}
+
 async function loadAndRenderWeeklyBoard() {
-    const events = await ipcRenderer.invoke('get-events');
-    const folders = await ipcRenderer.invoke('get-folders').catch(() => []);
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const dayColumns = document.querySelectorAll('.day-column');
-    
-    if(!dayColumns.length) return;
+    if (!dayColumns.length) return;
+
+    const showTasks = !!(weeklyShowTasksToggle && weeklyShowTasksToggle.checked);
+    const [events, folders, tasks] = await Promise.all([
+        ipcRenderer.invoke('get-events'),
+        ipcRenderer.invoke('get-folders').catch(() => []),
+        showTasks ? ipcRenderer.invoke('get-tasks').catch(() => []) : Promise.resolve([])
+    ]);
+
+    const legendTask = document.getElementById('legend-task');
+    // visibility, not hidden/display: the item keeps its space either way,
+    // so toggling doesn't shift the toggle or the rest of the row.
+    if (legendTask) legendTask.style.visibility = showTasks ? 'visible' : 'hidden';
+
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    // The board is "this week", Sunday to Saturday. Each column gets its
+    // real date, so a task due on the 18th has an obvious place to go.
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - today.getDay());
 
     dayColumns.forEach((column, index) => {
-        const header = column.querySelector('.day-header');
-        column.innerHTML = ''; 
+        const colDate = new Date(weekStart);
+        colDate.setDate(weekStart.getDate() + index);
+        const isToday = colDate.getTime() === today.getTime();
+
+        column.innerHTML = '';
+        column.classList.toggle('is-today', isToday);
+
+        const header = document.createElement('div');
+        header.className = 'day-header';
+        header.innerHTML = `
+            <div class="day-header__name">${days[index]}</div>
+            <div class="day-header__date">${isToday ? 'Today · ' : ''}${colDate.getDate()}/${colDate.getMonth() + 1}</div>`;
         column.appendChild(header);
-        
-        const dayEvents = events.filter(e => e.day === days[index]);
-        
+
+        // Sorted by time - the server only ever returned them in insertion
+        // order within a day, so 18:00 could sit above 09:00.
+        const dayEvents = events
+            .filter(e => e.day === days[index])
+            .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+
         dayEvents.forEach(evt => {
             const dest = getEventLearningDestination(evt, folders);
             const taskCard = document.createElement('div');
             taskCard.className = `task-card ${weeklyClassMap[evt.type] || 'task-lesson'}`;
-            taskCard.style.position = 'relative'; 
-            
+            taskCard.style.position = 'relative';
+
             taskCard.innerHTML = `
                 <button class="btn-icon btn-icon--danger delete-weekly-btn" title="Delete from calendar" aria-label="Delete from calendar">${icon('trash')}</button>
-                <div class="task-time">${evt.time}</div>${escapeHtml(evt.title)}
+                <div class="task-time">${escapeHtml(evt.time)}</div>${escapeHtml(evt.title)}
             `;
 
-            // UX FIX: clicking a study/exam event (or one whose title names a
-            // Materials folder) previously did nothing at all. Now it jumps
-            // straight to the relevant place, same as it does for tasks.
+            // Clicking a study/exam event (or one whose title names a
+            // Materials folder) jumps straight to the relevant place.
             if (dest) {
                 taskCard.style.cursor = 'pointer';
                 taskCard.title = dest.type === 'materials' ? `Open Materials — ${dest.folderName}` : 'Open in Study';
                 taskCard.onclick = () => goToLearningDestination(dest);
             }
-            
+
             const delBtn = taskCard.querySelector('.delete-weekly-btn');
             delBtn.onmouseenter = () => delBtn.style.opacity = '1';
             delBtn.onmouseleave = () => delBtn.style.opacity = '0.5';
@@ -522,13 +553,52 @@ async function loadAndRenderWeeklyBoard() {
                 e.stopPropagation();
                 delBtn.innerText = '⏳';
                 await ipcRenderer.invoke('delete-event', evt.id);
-                await loadAndRenderEvents();
                 await loadAndRenderWeeklyBoard();
                 await loadAndRenderHome();
             };
-            
+
             column.appendChild(taskCard);
         });
+
+        if (showTasks) {
+            // Open tasks due on this column's date. Overdue ones (due before
+            // today, still open) go in TODAY's column, flagged - otherwise
+            // anything missed simply disappeared from the week.
+            const dayTasks = tasks.filter(t => {
+                if (t.status === 'completed') return false;
+                const due = parseTaskDueDate(t);
+                if (!due) return false;
+                due.setHours(0, 0, 0, 0);
+                if (isToday && due < today) return true;
+                return due.getTime() === colDate.getTime();
+            });
+
+            dayTasks.forEach(t => {
+                const due = parseTaskDueDate(t);
+                if (due) due.setHours(0, 0, 0, 0);
+                const overdue = !!(due && due < today);
+                const urgency = String(t.urgency || 'Normal').toLowerCase();
+
+                const card = document.createElement('div');
+                card.className = `board-task board-task--${urgency}${overdue ? ' is-overdue' : ''}`;
+                card.title = `${t.urgency && t.urgency !== 'Normal' ? t.urgency + ' urgency · ' : ''}Open in Tasks`;
+                card.innerHTML = `
+                    <span class="board-task__check" aria-hidden="true"></span>
+                    <span class="board-task__body">
+                        <span class="board-task__title" dir="auto">${escapeHtml(t.title)}</span>
+                        ${overdue ? `<span class="board-task__meta">Overdue · ${due.getDate()}/${due.getMonth() + 1}</span>` : ''}
+                    </span>`;
+                card.onclick = () => document.getElementById('nav-tasks').click();
+                column.appendChild(card);
+            });
+        }
+
+        if (column.children.length === 1) {
+            const empty = document.createElement('div');
+            empty.className = 'day-empty';
+            empty.textContent = 'Free';
+            column.appendChild(empty);
+        }
     });
 }
 
@@ -1379,12 +1449,14 @@ async function loadAndRenderFiles() {
             </div>
             <div class="file-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
                 <button class="btn-secondary btn-extract">${icon('brain')} Extract Tasks</button>
-                <button class="btn-primary btn-ai">${icon('sparkle')} Summarize</button>
+                <button class="btn-primary btn-ai">${icon('sparkle')} ${file.summary ? 'View summary' : 'Summarize'}</button>
                 <button class="btn-secondary delete-file-btn">${icon('trash')} Delete</button>
             </div>
         `;
 
-        fileItem.querySelector('.btn-ai').onclick = () => openAiSummary(file.content, file.sourcePath);
+        // Opens (or brings to front) a separate, resizable summary window.
+        // A saved summary shows instantly; otherwise it's generated there.
+        fileItem.querySelector('.btn-ai').onclick = () => ipcRenderer.invoke('open-summary-window', file.id, file.name);
         
         fileItem.querySelector('.delete-file-btn').onclick = async () => {
             const result = await ipcRenderer.invoke('delete-file', file.id); // Fixed: Pass ID directly without searching
@@ -1872,8 +1944,8 @@ if (navHomeBtn) {
 const sidebarHighlight = document.getElementById('sidebar-highlight');
 if (sidebarHighlight) {
     sidebarHighlight.style.cursor = 'pointer';
-    sidebarHighlight.title = 'Go to Schedule';
-    sidebarHighlight.onclick = () => document.getElementById('nav-schedule').click();
+    sidebarHighlight.title = 'Open Weekly Plan';
+    sidebarHighlight.onclick = () => document.getElementById('nav-weekly').click();
 }
 
 loadAndRenderHome();
@@ -1915,24 +1987,37 @@ const generateWeeklyAiBtn = document.getElementById('generate-weekly-ai-btn');
 if (generateWeeklyAiBtn) {
     generateWeeklyAiBtn.onclick = async () => {
         const tasks = await ipcRenderer.invoke('get-tasks') || [];
-        const events = await ipcRenderer.invoke('get-events') || [];
+        let events = await ipcRenderer.invoke('get-events') || [];
 
-        if (tasks.length === 0) {
-            toast.error("Your tasks list is empty! Nothing to plan. 🎉");
+        if (!tasks.some(t => t.status !== 'completed')) {
+            toast.info("No open tasks to plan. 🎉");
             return;
         }
 
         const originalText = generateWeeklyAiBtn.innerHTML;
-        generateWeeklyAiBtn.innerHTML = 'Analyzing load and scheduling... ⏳';
+        generateWeeklyAiBtn.innerHTML = 'Planning your week... ⏳';
         generateWeeklyAiBtn.disabled = true;
 
         try {
-            const aiResponse = await ipcRenderer.invoke('generate-weekly-plan', tasks, events);
-            const newPlan = JSON.parse(aiResponse);
+            // BUG FIX: every click used to ADD a fresh set of blocks on top of
+            // the previous plan, so planning twice duplicated everything.
+            // Blocks the planner placed last time are removed first (through
+            // delete-event, so their Google Calendar copies go too); events
+            // the user added themselves are never touched.
+            const previousPlan = events.filter(e => e.autoScheduled);
+            for (const old of previousPlan) {
+                await ipcRenderer.invoke('delete-event', old.id);
+            }
+            if (previousPlan.length) events = events.filter(e => !e.autoScheduled);
 
-            if (newPlan.error) {
-                toast.error("Oops, AI problem: " + newPlan.error);
-            } else if (Array.isArray(newPlan) && newPlan.length > 0) {
+            const aiResponse = await ipcRenderer.invoke('generate-weekly-plan', tasks, events);
+            const parsed = JSON.parse(aiResponse);
+            const newPlan = Array.isArray(parsed) ? parsed : (parsed.plan || []);
+            const unplaced = (parsed && parsed.unplaced) || [];
+
+            if (parsed.error) {
+                toast.error("Could not build a plan: " + parsed.error);
+            } else if (newPlan.length > 0) {
                 
                 const syncToGoogle = await confirmDialog("Sync to Google Calendar?", "The new study blocks will also be added to your Google Calendar.", { confirmText: "Sync", cancelText: "Skip" });
                 let syncErrors = [];
@@ -1961,10 +2046,16 @@ if (generateWeeklyAiBtn) {
                 if (syncToGoogle && syncErrors.length > 0) {
                     toast.error(`⚠️ ${syncErrors.length} out of ${newPlan.length} study blocks failed to sync to Google Calendar.\n\nReason: ${syncErrors[0]}\n\nThe blocks were still saved in MindSync itself.`);
                 } else {
-                    toast.success(`Added ${newPlan.length} study blocks to your calendar.`, 'Weekly plan ready');
+                    toast.success(`Added ${newPlan.length} blocks to your calendar${previousPlan.length ? ', replacing the previous plan' : ''}.`, 'Weekly plan ready');
+                }
+                if (unplaced.length) {
+                    toast.info(`No free slot before the deadline for: ${unplaced.join(', ')}.`, 'Some tasks didn\'t fit');
                 }
             } else {
-                toast.error("The AI read the tasks but decided not to add anything to the schedule.");
+                await loadAndRenderWeeklyBoard();
+                toast.info(unplaced.length
+                    ? `No free slot before the deadline for: ${unplaced.join(', ')}.`
+                    : 'Nothing to add - your week has no open tasks to plan.');
             }
         } catch (e) {
             toast.error("Error parsing the plan from the AI.");
@@ -2170,6 +2261,29 @@ function pickOption(title, options) {
 
 // Edit dialog for a single task. Until now the only way to fix a typo in a
 // title was to delete the task and recreate it, which also lost its checklist.
+// The Edit dialog's date box accepted any text and saved it verbatim, so
+// "20/9", "מחר" or a typo got stored in a form nothing else can read - and
+// the task quietly dropped off the Weekly Plan. This turns the common forms
+// into the DD/MM/YYYY the rest of the app uses. Returns 'Not set' for an
+// empty box, and null for something it can't understand.
+function normalizeTaskDateInput(raw) {
+    const text = String(raw || '').trim();
+    if (!text || /^not set$/i.test(text)) return 'Not set';
+    const fmt = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (text === 'היום') return fmt(today);
+    if (text === 'מחר') { const d = new Date(today); d.setDate(d.getDate() + 1); return fmt(d); }
+    if (text === 'מחרתיים') { const d = new Date(today); d.setDate(d.getDate() + 2); return fmt(d); }
+    const m = text.match(/^(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?$/);
+    if (!m) return null;
+    const dd = +m[1], mm = +m[2];
+    let yyyy = m[3] ? +m[3] : today.getFullYear();
+    if (yyyy < 100) yyyy += 2000;
+    const d = new Date(yyyy, mm - 1, dd);
+    if (d.getDate() !== dd || d.getMonth() !== mm - 1) return null; // 31/2, 40/13...
+    return fmt(d);
+}
+
 function editTaskDialog(task) {
     return new Promise((resolve) => {
         const backdrop = document.createElement('div');
@@ -2230,9 +2344,15 @@ function editTaskDialog(task) {
         function save() {
             const title = titleInput.value.trim();
             if (!title) { toast.warning('A task needs a title.'); titleInput.focus(); return; }
+            const date = normalizeTaskDateInput(dateInput.value);
+            if (date === null) {
+                toast.warning('Use a date like 20/9, 20/9/2026, היום or מחר - or leave it empty.');
+                dateInput.focus();
+                return;
+            }
             close({
                 title,
-                date: dateInput.value.trim() || 'Not set',
+                date,
                 urgency: urgencySel.value,
                 category: catInput.value.trim()
             });

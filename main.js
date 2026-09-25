@@ -193,7 +193,9 @@ ${safeText}`;
         return coerceToPlainText(rawResponse);
     } catch (error) {
         console.error("AI Error:", error);
-        return "Oops, AI problem:\n" + error.message;
+        // Returned as a structured error (not a string that looks like a
+        // summary) so the summary window never saves "Oops..." to the file.
+        return { error: error.message };
     }
 });
 
@@ -916,14 +918,94 @@ ${chunks[i]}`;
 // "חצי שעה", "2 hours") so the weekly planner can size a block correctly
 // instead of assuming every task takes exactly one hour. Returns minutes,
 // or null when nothing is mentioned.
+// Finds the weekday a Hebrew phrase refers to. Shared by add-smart-task and
+// parse-smart-event so both understand the same phrasings.
+//
+// BUG FIX: "בשבת" ("on Saturday") was never recognised. The only standalone
+// check was (?<![א-ת])שבת - "no Hebrew letter before it" - and the prefix ב
+// IS a Hebrew letter, so the most common way to say it failed silently and
+// the event landed on today instead. The add-smart-task copy was worse still,
+// using \bשבת\b, which never matches Hebrew at all.
+//
+// Order still matters: the unambiguous "יום X" / "ביום X" form is checked
+// first, then ב + day ("בשבת", "בחמישי"). A bare ordinal without ב
+// ("מבחן שני" = "second exam") is deliberately NOT treated as a day, except
+// "שבת", which has no ordinal meaning.
+function detectHebrewDay(text) {
+    const DAYS = 'ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת';
+    let m = text.match(new RegExp(`(?:ב?יום)\\s+(${DAYS})(?![א-ת])`));
+    if (m) return m[1];
+    m = text.match(new RegExp(`(?<![א-ת])ב(${DAYS})(?![א-ת])`));
+    if (m) return m[1];
+    if (/(?<![א-ת])שבת(?![א-ת])/.test(text)) return 'שבת';
+    return null;
+}
+
+// Finds a date phrase OTHER than a weekday name (weekdays go through
+// detectHebrewDay above). Returns { date, strip } - the resolved date, and
+// the regexes that remove the phrase from the title - or null.
+//
+// Added because tasks now default to TODAY when no date is written, and
+// that default is only safe if every real date phrase is recognised first.
+// Before this, "מחרתיים" was read as "מחר" (it contains it), and "בעוד
+// שבוע" / "ב-20/9" weren't recognised at all - harmless while the fallback
+// was "Not set", but with a today-default they'd silently land on the
+// wrong day.
+function resolveRelativeDate(text, now) {
+    const base = new Date(now);
+    base.setHours(0, 0, 0, 0);
+    const plusDays = (n) => { const d = new Date(base); d.setDate(base.getDate() + n); return d; };
+    const H = (w) => `(?<![א-ת])${w}(?![א-ת])`;
+
+    // 1. Explicit date: 20/9, 20.9, 20/9/2026, 20.09.26. Not "1.5 שעות".
+    const explicit = text.match(/(?<![\d:])(?:ב[\s-]?|עד\s+ה?-?)?(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?(?![\d:])(?!\s*(?:שע|hour))/);
+    if (explicit) {
+        const dd = parseInt(explicit[1], 10);
+        const mm = parseInt(explicit[2], 10);
+        if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) {
+            let yyyy = explicit[3] ? parseInt(explicit[3], 10) : base.getFullYear();
+            if (yyyy < 100) yyyy += 2000;
+            let d = new Date(yyyy, mm - 1, dd);
+            // No year given and the date already passed more than a week ago:
+            // they almost certainly mean next year ("הגשה ב-5/1" in December).
+            if (!explicit[3] && (base - d) > 7 * 86400000) d = new Date(yyyy + 1, mm - 1, dd);
+            if (d.getDate() === dd) { // rejects 31/2 and similar
+                return { date: d, strip: [new RegExp(explicit[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')] };
+            }
+        }
+    }
+
+    // 2. מחרתיים before מחר - it contains it.
+    if (new RegExp(H('מחרתיים')).test(text)) return { date: plusDays(2), strip: [new RegExp(H('מחרתיים'), 'g')] };
+
+    // 3. "בעוד 3 ימים", "בעוד יומיים", "בעוד שבוע", "(ב)שבוע הבא"
+    let m = text.match(/בעוד\s+(\d{1,2})\s+ימים/);
+    if (m) return { date: plusDays(parseInt(m[1], 10)), strip: [/בעוד\s+\d{1,2}\s+ימים/g] };
+    if (/בעוד\s+יומיים/.test(text)) return { date: plusDays(2), strip: [/בעוד\s+יומיים/g] };
+    if (/בעוד\s+שבוע|ב?שבוע\s+הבא/.test(text)) return { date: plusDays(7), strip: [/בעוד\s+שבוע|ב?שבוע\s+הבא/g] };
+
+    // 4. מחר
+    if (new RegExp(H('מחר')).test(text)) return { date: plusDays(1), strip: [new RegExp(H('מחר'), 'g')] };
+
+    // 5. היום - but not "כל היום" ("all day"), which isn't a date.
+    if (new RegExp(`(?<!כל\\s)${H('היום')}`).test(text)) {
+        return { date: plusDays(0), strip: [new RegExp(`(?<!כל\\s)${H('היום')}`, 'g')] };
+    }
+    return null;
+}
+
 function parseDurationMinutes(text) {
     if (/חצי\s*שעה/.test(text)) return 30;
+    if (/רבע\s*שעה/.test(text)) return 15;
     if (/שעה\s*וחצי/.test(text)) return 90;
     if (/שעתיים/.test(text)) return 120;
-    let m = text.match(/(\d+)\s*שעות?/);
-    if (m) return parseInt(m[1], 10) * 60;
-    m = text.match(/(\d+)\s*(?:hours?|hrs?)/i);
-    if (m) return parseInt(m[1], 10) * 60;
+    // BUG FIX: (\d+) alone read "1.5 שעות" as "5 שעות" - five hours instead
+    // of an hour and a half. Decimals (1.5 / 1,5) are now part of the number.
+    let m = text.match(/(\d+(?:[.,]\d+)?)\s*(?:שעות|שעה|hours?|hrs?)(?![א-ת])/i);
+    if (m) return Math.round(parseFloat(m[1].replace(',', '.')) * 60);
+    m = text.match(/(\d+)\s*(?:דקות|דק'|דק|minutes?|mins?)(?![א-ת])/i);
+    if (m) return parseInt(m[1], 10);
+    if (/(?<![א-ת])שעה(?![א-ת])/.test(text)) return 60;
     return null;
 }
 
@@ -944,7 +1026,10 @@ ipcMain.handle('add-smart-task', async (event, freeText, category = '') => {
         // How long this will actually take, if the text says - the weekly
         // planner uses this to size the calendar block instead of always
         // assuming one hour (see generate-weekly-plan below).
-        const durationMinutes = parseDurationMinutes(freeText);
+        // Clamped to the server's allowed range (Task.estimatedMinutes is
+        // 5-600) - "ללמוד 12 שעות" used to fail the whole save on validation.
+        const parsedDuration = parseDurationMinutes(freeText);
+        const durationMinutes = parsedDuration ? Math.min(600, Math.max(5, parsedDuration)) : null;
 
         // ---- Date resolution ----
         // BUG FIX: this used to build the date with toLocaleDateString('en-US'),
@@ -965,16 +1050,13 @@ ipcMain.handle('add-smart-task', async (event, freeText, category = '') => {
         };
         const toDDMMYYYY = (d) => d.toLocaleDateString('en-GB'); // matches resolveDueDate()
 
-        let targetDate = "Not set";
+        let targetDate;
         let matchedHebrewDayWord = null;
-        let matchedRelativeWord = null;
+        let matchedRelativeWord = null; // kept for the cleanup below; now always null
+        let relativeStrip = [];
 
-        const dayWithPrefix = freeText.match(/(?:ב?יום)\s+(ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)/);
-        if (dayWithPrefix) {
-            matchedHebrewDayWord = dayWithPrefix[1];
-        } else if (/\bשבת\b/.test(freeText)) {
-            matchedHebrewDayWord = 'שבת';
-        }
+        matchedHebrewDayWord = detectHebrewDay(freeText);
+        const relative = matchedHebrewDayWord ? null : resolveRelativeDate(freeText, now);
 
         if (matchedHebrewDayWord) {
             const targetDow = hebrewDayMap[matchedHebrewDayWord];
@@ -982,13 +1064,14 @@ ipcMain.handle('add-smart-task', async (event, freeText, category = '') => {
             const d = new Date(now);
             d.setDate(now.getDate() + daysToAdd);
             targetDate = toDDMMYYYY(d);
-        } else if (freeText.includes("מחר")) {
-            matchedRelativeWord = 'מחר';
-            const d = new Date(now);
-            d.setDate(now.getDate() + 1);
-            targetDate = toDDMMYYYY(d);
-        } else if (freeText.includes("היום")) {
-            matchedRelativeWord = 'היום';
+        } else if (relative) {
+            targetDate = toDDMMYYYY(relative.date);
+            relativeStrip = relative.strip;
+        } else {
+            // No date written at all -> today. It used to be "Not set", and a
+            // task with no date has nowhere to appear on the Weekly Plan, so a
+            // quick "בדיקה" simply vanished from the week. Safe only because
+            // resolveRelativeDate catches every real date phrase first.
             targetDate = toDDMMYYYY(now);
         }
 
@@ -1000,10 +1083,12 @@ ipcMain.handle('add-smart-task', async (event, freeText, category = '') => {
         // "מחר ב-9" left the stray fragment "ב-9" sitting in the title. We
         // now strip explicit times and time-of-day words too, the same way
         // parse-smart-event already does for events.
-        let cleanTitle = freeText
+        let cleanTitle = freeText;
+        relativeStrip.forEach(re => { cleanTitle = cleanTitle.replace(re, ''); });
+        cleanTitle = cleanTitle
             .replace(/(?:ב\s*|ב-|בשעה\s*)?([0-1]?[0-9]|2[0-3]):([0-5][0-9])/g, '') // "9:00" / "ב-9:00"
-            .replace(/(?:בשעה\s*|(?<![א-ת])ב[\s-]?)([0-1]?[0-9]|2[0-3])(?!:)\b(\s*(?:וחצי|ורבע))?/g, '')   // bare "ב9" / "ב 9" / "ב-9" / "בשעה 9", incl. "וחצי"/"ורבע"
-            .replace(/חצי\s*שעה|שעה\s*וחצי|שעתיים|\d+\s*שעות?|\d+\s*(?:hours?|hrs?)/gi, ''); // duration phrase, now captured in estimatedMinutes instead
+            .replace(/(?:בשעה\s*|(?<![א-ת])ב[\s-]?)([0-1]?[0-9]|2[0-3])(?!:)(?![./]\d)\b(\s*(?:וחצי|ורבע))?/g, '')   // bare "ב9" / "ב 9" / "ב-9" / "בשעה 9", incl. "וחצי"/"ורבע" - but not the "20" of "ב-20/9"
+            .replace(/חצי\s*שעה|רבע\s*שעה|שעה\s*וחצי|שעתיים|\d+(?:[.,]\d+)?\s*(?:שעות|שעה|hours?|hrs?)(?![א-ת])|\d+\s*(?:דקות|דק'|דק|minutes?|mins?)(?![א-ת])|(?<![א-ת])שעה(?![א-ת])/gi, ''); // duration phrase, now captured in estimatedMinutes instead
 
         // BUG FIX: \b (word boundary) is defined in JS over [A-Za-z0-9_] and
         // does not recognise Hebrew letters as "word characters" at all - so
@@ -1167,22 +1252,21 @@ ipcMain.handle('parse-smart-event', async (event, freeText) => {
         //
         // So we look for the unambiguous "יום X" / "ביום X" form FIRST. Only
         // "שבת" is safe to match on its own, since it has no ordinal meaning.
-        const dayWithPrefix = freeText.match(/(?:ב?יום)\s+(ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)/);
-        if (dayWithPrefix) {
-            matchedHebrewDayWord = dayWithPrefix[1];
+        matchedHebrewDayWord = detectHebrewDay(freeText);
+        if (matchedHebrewDayWord) {
             targetDayName = dayNames[hebrewDayMap[matchedHebrewDayWord]];
-        } else if (/(?<![א-ת])שבת(?![א-ת])/.test(freeText)) {
-            matchedHebrewDayWord = 'שבת';
-            targetDayName = dayNames[6];
         }
 
+        // Everything that isn't a weekday name: explicit dates ("ב-20/9"),
+        // מחרתיים, "בעוד שבוע", מחר, היום - resolved to a date, and the event
+        // goes on that date's weekday. freeText.includes("מחר") used to also
+        // catch "מחרתיים" and put it on the wrong day.
+        let relativeStrip = [];
         if (!matchedHebrewDayWord) {
-            if (freeText.includes("מחר")) {
-                const tomorrow = new Date(now);
-                tomorrow.setDate(tomorrow.getDate() + 1);
-                targetDayName = dayNames[tomorrow.getDay()];
-            } else if (freeText.includes("היום")) {
-                targetDayName = dayNames[now.getDay()];
+            const relative = resolveRelativeDate(freeText, now);
+            if (relative) {
+                targetDayName = dayNames[relative.date.getDay()];
+                relativeStrip = relative.strip;
             }
         }
 
@@ -1209,7 +1293,8 @@ ipcMain.handle('parse-smart-event', async (event, freeText) => {
         // quarter) right after the hour - "ב 9 וחצי" means 9:30, not 9:00,
         // and without this the word was left dangling, unrecognised, in the
         // title ("...וחצי את האפליקציה").
-        const bareHourRegex = /(?:בשעה\s*|(?<![א-ת])ב[\s-]?)([0-1]?[0-9]|2[0-3])(?!:)\b(\s*(?:וחצי|ורבע))?/;
+        // (?![./]\d): the "20" in "ב-20/9" is a date, not 20:00.
+        const bareHourRegex = /(?:בשעה\s*|(?<![א-ת])ב[\s-]?)([0-1]?[0-9]|2[0-3])(?!:)(?![./]\d)\b(\s*(?:וחצי|ורבע))?/;
         const bareHourMatch = !timeMatch ? freeText.match(bareHourRegex) : null;
         const bareHourSuffix = bareHourMatch && bareHourMatch[2] ? bareHourMatch[2].trim() : null;
 
@@ -1257,7 +1342,9 @@ ipcMain.handle('parse-smart-event', async (event, freeText) => {
         // decision #6 "מלכודת"). Replaced with an explicit lookaround.
         const noHebrewNeighbor = (word) => new RegExp(`(?<![א-ת])${word}(?![א-ת])`, 'g');
 
-        let cleanTitle = freeText
+        let cleanTitle = freeText;
+        relativeStrip.forEach(re => { cleanTitle = cleanTitle.replace(re, ''); });
+        cleanTitle = cleanTitle
             .replace(/(?:ב\s*|ב-|בשעה\s*)?([0-1]?[0-9]|2[0-3]):([0-5][0-9])/g, '');
 
         if (bareHourMatch) {
@@ -1376,17 +1463,39 @@ Return ONLY this JSON, with no other text: {"type": "one_of_the_four"}`;
 // whether that slot was actually free.
 ipcMain.handle('generate-weekly-plan', async (event, currentTasks, currentEvents) => {
     try {
-        const openTasks = currentTasks.filter(t => t.date === "Not set" || !t.date);
-        if (openTasks.length === 0) return JSON.stringify([]);
-
         const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         const DAY_START = 9 * 60;   // don't schedule before 09:00
         const DAY_END = 21 * 60;    // or after 21:00
+        const HORIZON_DAYS = 7;     // the board shows one week
         const now = new Date();
+        const today = new Date(now); today.setHours(0, 0, 0, 0);
 
-        // Real availability, seeded from what's already on the calendar -
-        // this is the currentEvents parameter that used to be accepted and
-        // then never read.
+        const parseDue = (t) => {
+            if (t.dueDate) { const d = new Date(t.dueDate); if (!isNaN(d)) { d.setHours(0, 0, 0, 0); return d; } }
+            const parts = String(t.date || '').split('/').map(Number);
+            if (parts.length !== 3 || parts.some(isNaN)) return null;
+            const d = new Date(parts[2], parts[1] - 1, parts[0]);
+            return isNaN(d) ? null : d;
+        };
+
+        // BUG FIX: this used to take only tasks with NO date ("Not set") - so
+        // a task due Thursday never got study time, and now that new tasks
+        // default to today it would have found nothing to plan at all. It
+        // also never checked status, and happily scheduled finished tasks.
+        // Now: every open task, earliest deadline first, then most urgent.
+        const URGENCY_RANK = { Urgent: 0, High: 1, Medium: 2, Normal: 3 };
+        const openTasks = (currentTasks || [])
+            .filter(t => t.status !== 'completed')
+            .map(t => ({ task: t, due: parseDue(t) }))
+            .sort((a, b) => {
+                const ad = a.due ? a.due.getTime() : Infinity;
+                const bd = b.due ? b.due.getTime() : Infinity;
+                if (ad !== bd) return ad - bd;
+                return (URGENCY_RANK[a.task.urgency] ?? 3) - (URGENCY_RANK[b.task.urgency] ?? 3);
+            });
+        if (openTasks.length === 0) return JSON.stringify({ plan: [], unplaced: [] });
+
+        // Real availability, seeded from what's already on the calendar.
         const occupied = {};
         dayNames.forEach(d => occupied[d] = []);
         (currentEvents || []).forEach(evt => {
@@ -1397,11 +1506,11 @@ ipcMain.handle('generate-weekly-plan', async (event, currentTasks, currentEvents
             occupied[evt.day].push([start, start + dur]);
         });
 
-        // First open slot today (or a later day) at least `neededMinutes`
-        // long, scanning past whatever's already booked.
-        function findSlot(day, neededMinutes) {
+        // First open slot on `day` at least neededMinutes long, not before
+        // `earliest` (used for today, so nothing lands in the past).
+        function findSlot(day, neededMinutes, earliest) {
             const slots = occupied[day].slice().sort((a, b) => a[0] - b[0]);
-            let cursor = DAY_START;
+            let cursor = Math.max(DAY_START, earliest || 0);
             for (const [start, end] of slots) {
                 if (start - cursor >= neededMinutes) return cursor;
                 cursor = Math.max(cursor, end);
@@ -1409,30 +1518,47 @@ ipcMain.handle('generate-weekly-plan', async (event, currentTasks, currentEvents
             return (DAY_END - cursor >= neededMinutes) ? cursor : null;
         }
 
+        // Today's blocks start after "now", rounded up to the next quarter hour.
+        const nowMinutes = now.getHours() * 60 + now.getMinutes();
+        const todayEarliest = Math.ceil((nowMinutes + 1) / 15) * 15;
+
         const plannedEvents = [];
+        const unplaced = [];
 
-        openTasks.forEach((task, i) => {
-            // A task that actually says how long it needs gets that long a
-            // block, capped at 3 hours - a single continuous block is what
-            // "study 3 hours for the exam" means, not three disconnected
-            // one-hour appointments two hours apart (the old behaviour).
+        // Without these, everything went into today back to back - seven
+        // straight hours with no gap. A short break after each planned block,
+        // and a soft daily cap: once a day holds DAILY_CAP minutes of planned
+        // work, later tasks spill to the next days - unless that day is the
+        // task's deadline, where fitting it in beats respecting the cap.
+        const BREAK_MINUTES = 15;
+        const DAILY_CAP = 4 * 60;
+        const plannedPerDay = {};
+        dayNames.forEach(d => plannedPerDay[d] = 0);
+
+        openTasks.forEach(({ task, due }) => {
+            // Capped at 3 hours - one continuous block is what "study 3 hours
+            // for the exam" means, not several disconnected ones.
             const blockMinutes = Math.min(task.estimatedMinutes || 60, 180);
-
-            // Real classification instead of a hardcoded "study" for every
-            // task. "personal" (not "study") is the fallback for anything
-            // that matches no keyword at all - "להכין כלים" (prepare
-            // equipment) isn't academic work just because it has no
-            // deadline, and defaulting it to "study" is exactly what made
-            // every block look the same regardless of the task.
             const type = classifyEventByKeywords(task.title) || 'personal';
 
+            // BUG FIX: the search used to start TOMORROW, so a task due today
+            // could only ever be scheduled after its own deadline. It now runs
+            // from today up to the due date (overdue / undated: the whole week).
+            let lastOffset = HORIZON_DAYS - 1;
+            if (due && due >= today) {
+                lastOffset = Math.min(lastOffset, Math.round((due - today) / 86400000));
+            }
+
             let placed = false;
-            for (let dayOffset = 1; dayOffset <= 7 && !placed; dayOffset++) {
-                const targetDate = new Date(now);
-                targetDate.setDate(now.getDate() + dayOffset);
+            for (let dayOffset = 0; dayOffset <= lastOffset && !placed; dayOffset++) {
+                const targetDate = new Date(today);
+                targetDate.setDate(today.getDate() + dayOffset);
                 const day = dayNames[targetDate.getDay()];
 
-                const startMinutes = findSlot(day, blockMinutes);
+                const isLastChance = dayOffset === lastOffset;
+                if (!isLastChance && plannedPerDay[day] + blockMinutes > DAILY_CAP) continue;
+
+                const startMinutes = findSlot(day, blockMinutes, dayOffset === 0 ? todayEarliest : 0);
                 if (startMinutes === null) continue;
 
                 const h = String(Math.floor(startMinutes / 60)).padStart(2, '0');
@@ -1447,16 +1573,17 @@ ipcMain.handle('generate-weekly-plan', async (event, currentTasks, currentEvents
                     autoScheduled: true,
                     task: task._id || task.id || null
                 });
-                occupied[day].push([startMinutes, startMinutes + blockMinutes]);
+                occupied[day].push([startMinutes, startMinutes + blockMinutes + BREAK_MINUTES]);
+                plannedPerDay[day] += blockMinutes;
                 placed = true;
             }
 
-            if (!placed) {
-                console.warn(`⚠️ Weekly planner: no free ${blockMinutes}-minute slot for "${task.title}" in the next 7 days.`);
-            }
+            if (!placed) unplaced.push(task.title);
         });
 
-        return JSON.stringify(plannedEvents);
+        // An object now, not a bare array, so the renderer can say which
+        // tasks didn't fit instead of them silently disappearing.
+        return JSON.stringify({ plan: plannedEvents, unplaced });
     } catch (error) {
         console.error("Weekly Planner Error:", error);
         return JSON.stringify({ error: error.message });
@@ -1620,15 +1747,42 @@ ipcMain.handle('save-task', async (event, newTask) => {
   } catch (err) { return { error: err.message }; }
 });
 
+// BUG FIX: finishing or deleting a task left the study blocks the weekly
+// planner had placed for it on the calendar (and in Google Calendar)
+// forever - nothing ever cleared them. The server even had a by-task delete
+// route that nothing called. Only planner-placed blocks are removed; an
+// event the user added by hand is theirs to delete.
+async function clearPlannedBlocksForTask(taskId) {
+  try {
+    const events = await api.getEvents();
+    const blocks = (events || []).filter(e =>
+      e.autoScheduled && e.task && String(e.task) === String(taskId));
+    for (const b of blocks) await deleteEventEverywhere(b.id || b._id, b);
+    if (blocks.length) {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) w.webContents.send('events-changed');
+      });
+    }
+  } catch (err) {
+    // Never let cleanup fail the task action itself.
+    console.warn('⚠️ Could not clear planned blocks for task', taskId, err.message);
+  }
+}
+
 ipcMain.handle('delete-task', async (event, id) => {
   try {
     await api.deleteTask(id);
+    await clearPlannedBlocksForTask(id);
     return true;
   } catch (err) { return { error: err.message }; }
 });
 
 ipcMain.handle('update-task', async (event, id, updates) => {
-  try { return await api.updateTask(id, updates); } catch (err) { return { error: err.message }; }
+  try {
+    const updated = await api.updateTask(id, updates);
+    if (updates && updates.status === 'completed') await clearPlannedBlocksForTask(id);
+    return updated;
+  } catch (err) { return { error: err.message }; }
 });
 
 // =====================================
@@ -2606,29 +2760,36 @@ ipcMain.handle('add-to-google-calendar', async (event, evtData) => {
     return await syncToGoogleCalendar(evtData);
 });
 
-ipcMain.handle('delete-event', async (event, id) => {
-  try {
-    let evt = await api.getEvent(id);
-    
+// Deletes one event from Google Calendar (if it was mirrored there) and
+// then from our database. Shared by delete-event and by the task handlers
+// below, which clean up a task's planned blocks.
+async function deleteEventEverywhere(id, knownEvent = null) {
+    const evt = knownEvent || await api.getEvent(id);
+
     // מנגנון מחיקה מגוגל שעובד יחד עם מסד הנתונים
     if (evt && evt.googleEventId) {
-      try {
-        await callGoogleWithReauth(async (auth) => {
-          const calendar = google.calendar({ version: 'v3', auth });
-          // Same timeout fix as the insert call above.
-          await calendar.events.delete({ calendarId: 'primary', eventId: evt.googleEventId }, { timeout: 15000 });
-        });
-        console.log("Deleted from Google Calendar.");
-      } catch (err) {
-        // Google Calendar may have already had this event deleted manually -
-        // that's a 404/410 from Google, not a real failure. Anything else,
-        // log it so it's visible instead of silently vanishing.
-        console.error("Google Calendar delete error:", err.message);
-      }
+        try {
+            await callGoogleWithReauth(async (auth) => {
+                const calendar = google.calendar({ version: 'v3', auth });
+                // Same timeout fix as the insert call above.
+                await calendar.events.delete({ calendarId: 'primary', eventId: evt.googleEventId }, { timeout: 15000 });
+            });
+            console.log("Deleted from Google Calendar.");
+        } catch (err) {
+            // Google Calendar may have already had this event deleted manually -
+            // that's a 404/410 from Google, not a real failure. Anything else,
+            // log it so it's visible instead of silently vanishing.
+            console.error("Google Calendar delete error:", err.message);
+        }
     }
-    
+
     // מחיקה מקומית לאחר המחיקה מגוגל
     await api.deleteEvent(id);
+}
+
+ipcMain.handle('delete-event', async (event, id) => {
+  try {
+    await deleteEventEverywhere(id);
     return true;
   } catch (err) { return { error: err.message }; }
 });
@@ -2645,6 +2806,65 @@ ipcMain.handle('save-folder', async (event, newFolder) => {
 ipcMain.handle('delete-folder', async (event, id) => {
   try { return await api.deleteFolder(id); } catch (err) { return { error: err.message }; }
 });
+// =====================================
+// Summary window
+// =====================================
+// The summary used to live in a small fixed modal inside the main window:
+// too cramped to read, impossible to keep next to a study session, and gone
+// the moment it closed. It now opens in its own resizable window (one per
+// file - clicking Summarize again just brings it to the front), and the
+// summary itself is saved on the file on the server.
+const summaryWindows = new Map(); // fileId -> BrowserWindow
+
+ipcMain.handle('open-summary-window', async (event, fileId, fileName) => {
+    const existing = summaryWindows.get(fileId);
+    if (existing && !existing.isDestroyed()) {
+        if (existing.isMinimized()) existing.restore();
+        existing.focus();
+        return true;
+    }
+    const win = new BrowserWindow({
+        width: 900,
+        height: 820,
+        minWidth: 420,
+        minHeight: 360,
+        title: `Summary - ${fileName || 'document'}`,
+        autoHideMenuBar: true,
+        webPreferences: { nodeIntegration: true, contextIsolation: false }
+    });
+    win.loadFile('summary.html', { query: { fileId: String(fileId) } });
+    summaryWindows.set(fileId, win);
+    win.on('closed', () => summaryWindows.delete(fileId));
+    return true;
+});
+
+ipcMain.handle('get-file', async (event, id) => {
+    try { return await api.getFile(id); }
+    catch (err) { return { error: err.message }; }
+});
+
+ipcMain.handle('save-file-summary', async (event, id, summary) => {
+    try {
+        const updated = await api.updateFile(id, { summary });
+        // Tell every open window, so the main window's Materials list can
+        // flip "Summarize" to "View summary" without a manual refresh.
+        BrowserWindow.getAllWindows().forEach(w => {
+            if (!w.isDestroyed()) w.webContents.send('files-changed');
+        });
+        return updated;
+    } catch (err) {
+        return { error: err.message };
+    }
+});
+
+// Keeps the summary visible on top of the main window while answering
+// questions in Study - the whole reason to open it separately.
+ipcMain.handle('set-window-pinned', (event, pinned) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) win.setAlwaysOnTop(!!pinned);
+    return !!pinned;
+});
+
 ipcMain.handle('get-files', async () => {
   try { return await api.getFiles(); } catch (err) { return []; }
 });
