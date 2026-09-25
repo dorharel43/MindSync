@@ -762,10 +762,14 @@ body.dark-mode .day-column {
    crowded. Keep "Done" (the action people actually take most) always
    visible; the rest fade in on hover/keyboard focus, same pattern as
    Gmail/Notion-style row actions. */
+/* BUG FIX: these were opacity 0 until the mouse was over the card, so
+   people couldn't find edit / add a step / delete at all ("they're
+   invisible"). Always visible now, just quieter than "Done"; full strength
+   on hover or keyboard focus. Opacity only - nothing moves. */
 .task-actions-col .edit-task-btn,
 .task-actions-col .toggle-checklist-btn,
 .task-actions-col .delete-task-btn {
-    opacity: 0;
+    opacity: 0.6;
 }
 .task-card-full:hover .edit-task-btn,
 .task-card-full:hover .toggle-checklist-btn,
@@ -2864,3 +2868,100 @@ body.auth-pending #auth-screen {
     border: 1px solid var(--status-danger);
 }
 #focus-btn.is-focus-on:hover { background: var(--status-danger); color: #fff; }
+
+/* ==========================================
+   Week navigation (Weekly Plan)
+   ========================================== */
+.week-nav {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+    flex-wrap: wrap;
+}
+.week-nav__arrow {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+}
+.week-nav__arrow:hover { background: var(--hover-bg); }
+.week-nav__label {
+    font-weight: 600;
+    color: var(--text-primary);
+    /* fixed width so the arrows don't jump as the label changes length */
+    min-width: 190px;
+    text-align: center;
+}
+.week-nav__today { margin-left: var(--space-2); }
+.task-repeat {
+    opacity: 0.6;
+    font-size: 0.85em;
+}
+
+/* "Coming up" dropdown next to the week arrows */
+.week-upcoming {
+    position: relative;
+    margin-left: auto;
+}
+.week-upcoming__panel {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 50;
+    width: min(420px, 90vw);
+    max-height: 360px;
+    overflow-y: auto;
+    background: var(--bg-card, var(--surface, #fff));
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md, 10px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+    padding: var(--space-1);
+}
+.week-upcoming__panel[hidden] { display: none; }
+.week-upcoming__row {
+    display: grid;
+    grid-template-columns: 110px 1fr auto;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    padding: var(--space-2) var(--space-3);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+}
+.week-upcoming__row:hover { background: var(--hover-bg); }
+.week-upcoming__date { color: var(--text-secondary); font-size: var(--text-sm); white-space: nowrap; }
+.week-upcoming__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.week-upcoming__kind {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.week-upcoming__kind--exam { color: var(--event-exam); border-color: var(--event-exam); }
+.week-upcoming__kind--class { color: var(--event-lesson); border-color: var(--event-lesson); }
+.week-upcoming__kind--study-block { color: var(--event-study); border-color: var(--event-study); }
+.week-upcoming__kind--personal { color: var(--event-personal); border-color: var(--event-personal); }
+.week-upcoming__empty { padding: var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); }
+
+/* The card you jumped to flashes once */
+@keyframes ms-flash {
+    0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    30% { box-shadow: 0 0 0 3px var(--accent-purple); }
+}
+.is-flash { animation: ms-flash 0.8s ease-out 2; }

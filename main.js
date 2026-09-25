@@ -953,6 +953,12 @@ function detectHebrewDay(text) {
 // שבוע" / "ב-20/9" weren't recognised at all - harmless while the fallback
 // was "Not set", but with a today-default they'd silently land on the
 // wrong day.
+// Local calendar date as YYYY-MM-DD. Not toISOString(): that's UTC, and
+// in Israel (UTC+2/+3) local midnight is still "yesterday" in UTC.
+function toLocalIsoDate(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function resolveRelativeDate(text, now) {
     const base = new Date(now);
     base.setHours(0, 0, 0, 0);
@@ -968,7 +974,7 @@ function resolveRelativeDate(text, now) {
     // 2.3-2.5", "תרגיל 3.2 ו-3.4") is never a date. "מבחן 20.10" still is.
     // matchAll, so a rejected "3.2" doesn't hide a real date later in the
     // text ("תרגיל 3.2 עד 30/9").
-    const DATE_RE = /(?<![\d:.])(ב[\s-]?|עד\s+ה?-?)?(\d{1,2})([./])(\d{1,2})(?:[./](\d{2,4}))?(?![\d:])(?!\s*(?:שע|hour))/g;
+    const DATE_RE = /(?<![\d:.])(ב[\s-]?|עד\s+ה?-?|(?<![א-ת])ה-)?(\d{1,2})([./])(\d{1,2})(?:[./](\d{2,4}))?(?![\d:])(?!\s*(?:שע|hour))/g;
     const SECTION_WORD = /(?:פרק|פרקים|תרגיל|תרגילים|סעיף|סעיפים|שאלה|שאלות|עמוד|עמודים|עמ'|יחידה|הרצאה|מטלה|גרסה|chapter|section|exercise|ex\.?|page|p\.)\s*(?:[\d./,\-–\s]|ו)*$/i;
     for (const explicit of text.matchAll(DATE_RE)) {
         const [, prefix, ddStr, , mmStr, yyStr] = explicit;
@@ -1061,8 +1067,9 @@ ipcMain.handle('create-confirmed-task', async (event, task) => {
             urgency: ['Normal', 'Medium', 'High', 'Urgent'].includes(task.urgency) ? task.urgency : 'Normal',
             estimatedMinutes: task.estimatedMinutes ? Math.min(600, Math.max(5, Number(task.estimatedMinutes))) : undefined
         };
-        await createTaskWithBackgroundUrgency(clean, event.sender);
-        return { success: true };
+        const created = await createTaskWithBackgroundUrgency(clean, event.sender);
+        // The id lets the "Added: ..." toast's Undo delete exactly this task.
+        return { success: true, id: created && (created._id || created.id) };
     } catch (err) {
         console.error('❌ create-confirmed-task failed:', err.message);
         return { error: err.message };
@@ -1306,14 +1313,34 @@ ipcMain.handle('parse-smart-event', async (event, freeText) => {
         // מחרתיים, "בעוד שבוע", מחר, היום - resolved to a date, and the event
         // goes on that date's weekday. freeText.includes("מחר") used to also
         // catch "מחרתיים" and put it on the wrong day.
+        // DATES: an event now keeps its real date unless it repeats weekly.
+        // BUG FIX: a day word used to switch date reading off completely, and
+        // the result was only ever a weekday - "להגיש מטלה ב-26.10" became
+        // "Monday", shown on THIS week's Monday and repeating every week.
         let relativeStrip = [];
-        if (!matchedHebrewDayWord) {
-            const relative = resolveRelativeDate(freeText, now);
-            if (relative) {
-                targetDayName = dayNames[relative.date.getDay()];
-                relativeStrip = relative.strip;
-            }
+        let targetDate = null; // Date for one-time events, null = weekly
+        const relative = resolveRelativeDate(freeText, now);
+        const nextWeekWithDay = matchedHebrewDayWord && /ב?שבוע\s+הבא/.test(freeText);
+        if (nextWeekWithDay) {
+            // "ביום שני בשבוע הבא" = Monday of next week, not today + 7.
+            const d = new Date(now); d.setHours(0, 0, 0, 0);
+            d.setDate(d.getDate() - d.getDay() + 7 + hebrewDayMap[matchedHebrewDayWord]);
+            targetDate = d;
+            relativeStrip = [/ב?שבוע\s+הבא/g];
+        } else if (relative && (!matchedHebrewDayWord || /\d/.test(relative.strip[0].source))) {
+            // A written date (26.10) wins over a day word; a relative word
+            // like "מחר" next to a day word is ambiguous, so the day word wins.
+            targetDate = relative.date;
+            relativeStrip = relative.strip;
         }
+        if (targetDate) targetDayName = dayNames[targetDate.getDay()];
+
+        // Weekly only when it's said ("כל יום שני", "every Monday"), or it's
+        // a class given by weekday with no date. Everything else - an exam
+        // on Thursday, the gym on Tuesday - is a one-time thing.
+        const DAY_WORDS = 'ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת';
+        const everyRe = new RegExp(`(?<![א-ת])ב?כל\\s+(?:(?:ה)?שבוע|(?:יום\\s+)?(?:${DAY_WORDS}))(?![א-ת])`);
+        const saidEvery = everyRe.test(freeText) || /\bevery\b|\bweekly\b/i.test(freeText);
 
         // ---- Time resolution ----
         // The old fallback was "now + 1 hour", which has two problems: the
@@ -1394,6 +1421,13 @@ ipcMain.handle('parse-smart-event', async (event, freeText) => {
 
         if (bareHourMatch) {
             cleanTitle = cleanTitle.replace(bareHourMatch[0], '');
+        }
+
+        if (saidEvery) {
+            cleanTitle = cleanTitle
+                .replace(new RegExp(`(?<![א-ת])ב?כל\\s+(?:ה)?שבוע(?![א-ת])`, 'g'), '')
+                .replace(new RegExp(`(?<![א-ת])ב?כל\\s+(?=(?:ב?יום\\s+)?(?:${DAY_WORDS}))`, 'g'), '')
+                .replace(/\bevery\b|\bweekly\b/gi, '');
         }
 
         if (matchedHebrewDayWord) {
@@ -1480,9 +1514,23 @@ Return ONLY this JSON, with no other text: {"type": "one_of_the_four"}`;
         if (!dayNames.includes(targetDayName)) targetDayName = dayNames[now.getDay()];
         if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(targetTime)) targetTime = '09:00';
 
+        const weekly = !targetDate && (saidEvery || (eventType === 'lesson' && !!matchedHebrewDayWord));
+        if (!weekly && !targetDate) {
+            // No date written: the next time that weekday comes round (today
+            // counts only if the time hasn't passed yet).
+            const d = new Date(now); d.setHours(0, 0, 0, 0);
+            let add = (dayNames.indexOf(targetDayName) - d.getDay() + 7) % 7;
+            const [hh, mm] = targetTime.split(':').map(Number);
+            if (add === 0 && hh * 60 + mm <= now.getHours() * 60 + now.getMinutes()) add = matchedHebrewDayWord ? 7 : 1;
+            d.setDate(d.getDate() + add);
+            targetDate = d;
+            targetDayName = dayNames[d.getDay()];
+        }
+
         const events = [{
             title: cleanTitle,
             day: targetDayName,
+            date: weekly ? null : toLocalIsoDate(targetDate),
             time: targetTime,
             type: eventType
         }];
@@ -1543,7 +1591,15 @@ ipcMain.handle('generate-weekly-plan', async (event, currentTasks, currentEvents
         // Real availability, seeded from what's already on the calendar.
         const occupied = {};
         dayNames.forEach(d => occupied[d] = []);
+        // Dated events only take up time if they fall inside the 7 days
+        // being planned; weekly ones take up their weekday every week.
+        const horizonDates = {};
+        for (let i = 0; i < HORIZON_DAYS; i++) {
+            const d = new Date(today); d.setDate(today.getDate() + i);
+            horizonDates[toLocalIsoDate(d)] = dayNames[d.getDay()];
+        }
         (currentEvents || []).forEach(evt => {
+            if (evt.date && !horizonDates[evt.date]) return;
             if (!occupied[evt.day]) return;
             const [h, m] = String(evt.time || '00:00').split(':').map(Number);
             const start = h * 60 + (m || 0);
@@ -1617,6 +1673,9 @@ ipcMain.handle('generate-weekly-plan', async (event, currentTasks, currentEvents
                 plannedEvents.push({
                     title: task.title,
                     day,
+                    // A real date: a block planned for next Monday used to show
+                    // on THIS week's (already past) Monday, and every Monday after.
+                    date: toLocalIsoDate(targetDate),
                     time: `${h}:${m}`,
                     type,
                     durationMinutes: blockMinutes,
@@ -2802,8 +2861,14 @@ async function syncToGoogleCalendar(evtData) {
             const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
             const targetDayIndex = dayNames.indexOf(evtData.day);
 
+            // One-time events go on their own date. Weekly ones (no date)
+            // start at the next occurrence of their day and repeat weekly in
+            // Google too, the same as they do on the board.
             let startDate = new Date(now);
-            if (targetDayIndex !== -1) {
+            const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(evtData.date || '');
+            if (dateMatch) {
+                startDate = new Date(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3]));
+            } else if (targetDayIndex !== -1) {
                 let currentDayIndex = now.getDay();
                 let daysToAdd = targetDayIndex - currentDayIndex;
                 if (daysToAdd < 0) daysToAdd += 7;
@@ -2811,8 +2876,10 @@ async function syncToGoogleCalendar(evtData) {
             }
 
             const [hours, minutes] = evtData.time.split(':');
-            startDate.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0);
-            const endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+            startDate.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0);
+            // BUG FIX: every event was exactly one hour in Google, even a
+            // 3-hour planned study block.
+            const endDate = new Date(startDate.getTime() + (Number(evtData.durationMinutes) || 60) * 60 * 1000);
             console.log(`📅 Inserting into Google Calendar: "${evtData.title}" at ${startDate.toString()}`);
 
             // BUG FIX: same class of bug already fixed for Gemini and the
@@ -2825,7 +2892,8 @@ async function syncToGoogleCalendar(evtData) {
                     summary: evtData.title,
                     description: 'Created via MindSync AI 🧠',
                     start: { dateTime: startDate.toISOString(), timeZone: 'Asia/Jerusalem' },
-                    end: { dateTime: endDate.toISOString(), timeZone: 'Asia/Jerusalem' }
+                    end: { dateTime: endDate.toISOString(), timeZone: 'Asia/Jerusalem' },
+                    ...(dateMatch ? {} : { recurrence: ['RRULE:FREQ=WEEKLY'] })
                 },
             }, { timeout: 15000 });
 

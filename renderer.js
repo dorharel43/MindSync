@@ -345,7 +345,8 @@ const scheduleList = document.querySelector('.daily-schedule-list');
 
 function openAddEventModal() {
     addEventModal.style.display = 'flex';
-    showEventStage('write');
+    const t = document.getElementById('smart-event-input');
+    if (t) t.focus();
 }
 if(addEventBtn) addEventBtn.addEventListener('click', openAddEventModal);
 if(triggerAddEventWeekly) triggerAddEventWeekly.addEventListener('click', openAddEventModal);
@@ -486,8 +487,34 @@ async function loadAndRenderEvents() {
     }
 }
 
-// Tasks carry a real date (DD/MM/YYYY string, or a dueDate), unlike events,
-// which repeat weekly by day name. Returns null for "Not set" / unparseable.
+// ---- Dates on events ----
+// An event WITH a date happens once, on that date. An event without one
+// repeats every week on its day (classes). Before dates existed, every
+// event repeated - an exam, or "submit on 26/10", landed on this week's
+// weekday and came back every week. One helper decides "does this event
+// happen on this day?" so the board, Home and reminders can't disagree.
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// Local YYYY-MM-DD (toISOString is UTC - in Israel that's "yesterday"
+// for the first hours of every day).
+function localIsoDate(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function eventOccursOn(evt, date) {
+    return evt.date ? evt.date === localIsoDate(date) : evt.day === WEEKDAY_NAMES[date.getDay()];
+}
+
+// Sunday of the week `offset` weeks away from this one (0 = this week).
+function weekStartFor(offset) {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - d.getDay() + offset * 7);
+    return d;
+}
+
+// Tasks carry a real date (DD/MM/YYYY string, or a dueDate). Returns null
+// for "Not set" / unparseable.
 function parseTaskDueDate(task) {
     if (task.dueDate) {
         const d = new Date(task.dueDate);
@@ -507,20 +534,182 @@ if (weeklyShowTasksToggle) {
     weeklyShowTasksToggle.checked = localStorage.getItem(WEEKLY_SHOW_TASKS_KEY) === '1';
     weeklyShowTasksToggle.addEventListener('change', () => {
         localStorage.setItem(WEEKLY_SHOW_TASKS_KEY, weeklyShowTasksToggle.checked ? '1' : '0');
-        loadAndRenderWeeklyBoard();
+        // Tasks are already downloaded - just redraw.
+        if (weeklyData) renderWeeklyBoard(); else loadAndRenderWeeklyBoard();
     });
 }
 
-async function loadAndRenderWeeklyBoard() {
-    const dayColumns = document.querySelectorAll('.day-column');
-    if (!dayColumns.length) return;
+// BUG FIX: when two refreshes overlap (a delete finishing while another
+// refresh is still waiting for the server - more likely with Google sync,
+// where each action takes longer), the one that ASKED first could ANSWER
+// last and draw the older data over the newer. The board then showed a
+// deleted event, or missed an added one, until a manual refresh. Each call
+// now takes a ticket; a call whose ticket isn't the latest one any more
+// throws its (stale) data away instead of drawing it.
+let weeklyRenderTicket = 0;
 
-    const showTasks = !!(weeklyShowTasksToggle && weeklyShowTasksToggle.checked);
+// Which week the board shows: 0 = this week, 1 = next, -1 = last.
+// BUG FIX: the board could only ever show this week, so a task due 27/10
+// (or anything dated) had nowhere to appear.
+let weeklyWeekOffset = 0;
+
+// PERFORMANCE: moving between weeks used to re-download every event, task
+// and folder from the server on each click - a visible lag per click (more
+// on a Render cold start). The data doesn't change when you change weeks,
+// only the part of it on screen does. So the last download is kept here and
+// the arrows redraw from it instantly; a real download happens only when
+// something changed (add / delete / plan / arriving on this screen).
+let weeklyData = null; // { events, folders, tasks }
+
+// Jumps the board to the week containing `date`. Optional `highlightId`
+// makes that card flash once it's drawn, so the eye finds it.
+function showWeekOf(date, highlightId = null) {
+    const start = weekStartFor(0);
+    const target = new Date(date); target.setHours(0, 0, 0, 0);
+    weeklyWeekOffset = Math.floor(Math.round((target - start) / 86400000) / 7);
+    weeklyHighlightId = highlightId;
+    if (!weeklyData) return loadAndRenderWeeklyBoard();
+    renderWeeklyBoard();
+    return Promise.resolve();
+}
+let weeklyHighlightId = null;
+
+const weekPrevBtn = document.getElementById('week-prev');
+const weekNextBtn = document.getElementById('week-next');
+const weekTodayBtn = document.getElementById('week-today');
+function changeWeek(to) {
+    weeklyWeekOffset = to;
+    if (weeklyData) renderWeeklyBoard(); else loadAndRenderWeeklyBoard();
+}
+if (weekPrevBtn) weekPrevBtn.onclick = () => changeWeek(weeklyWeekOffset - 1);
+if (weekNextBtn) weekNextBtn.onclick = () => changeWeek(weeklyWeekOffset + 1);
+if (weekTodayBtn) weekTodayBtn.onclick = () => changeWeek(0);
+
+const shortDate = (d) => `${d.getDate()}/${d.getMonth() + 1}`;
+
+function renderWeekNav(weekStart, weekEnd) {
+    const label = document.getElementById('week-label');
+    if (label) {
+        const name = weeklyWeekOffset === 0 ? 'This week' : weeklyWeekOffset === 1 ? 'Next week' : weeklyWeekOffset === -1 ? 'Last week' : '';
+        label.textContent = `${name ? name + ' · ' : ''}${shortDate(weekStart)} – ${shortDate(weekEnd)}`;
+    }
+    // visibility, not display: nothing in the row moves when these appear.
+    if (weekTodayBtn) weekTodayBtn.style.visibility = weeklyWeekOffset === 0 ? 'hidden' : 'visible';
+
+    renderUpcoming();
+}
+
+// ---- "Coming up": a quick way to reach what you've added ----
+// Paging week by week to find something a month away is slow. This list
+// shows the next one-time items (exams, deadlines, dated events) and open
+// tasks with a due date, soonest first; clicking one jumps straight to its
+// week and flashes the card. Weekly items (↻) are everywhere already, and
+// blocks the planner placed are its own, so neither is listed.
+const upcomingBtn = document.getElementById('week-upcoming-btn');
+const upcomingPanel = document.getElementById('week-upcoming-panel');
+const UPCOMING_LIMIT = 15;
+
+function collectUpcoming() {
+    if (!weeklyData) return [];
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const items = [];
+    weeklyData.events.forEach(e => {
+        if (!e.date || e.autoScheduled) return;
+        const [y, m, d] = e.date.split('-').map(Number);
+        const date = new Date(y, m - 1, d);
+        if (date < today) return;
+        items.push({ id: e.id, date, time: e.time || '', title: e.title, kind: EVENT_TYPE_LABELS[e.type] || 'Personal', isTask: false });
+    });
+    weeklyData.tasks.forEach(t => {
+        if (t.status === 'completed') return;
+        const due = parseTaskDueDate(t);
+        if (!due) return;
+        due.setHours(0, 0, 0, 0);
+        if (due < today) return; // overdue ones already sit in today's column
+        items.push({ id: t.id, date: due, time: '', title: t.title, kind: 'Task', isTask: true });
+    });
+    return items
+        .sort((a, b) => (a.date - b.date) || a.time.localeCompare(b.time))
+        .slice(0, UPCOMING_LIMIT);
+}
+
+function renderUpcoming() {
+    if (!upcomingBtn) return;
+    const items = collectUpcoming();
+    upcomingBtn.textContent = items.length ? `Coming up (${items.length}${items.length === UPCOMING_LIMIT ? '+' : ''}) ▾` : 'Coming up ▾';
+    if (!upcomingPanel || upcomingPanel.hidden) return;
+
+    upcomingPanel.innerHTML = '';
+    if (!items.length) {
+        upcomingPanel.innerHTML = '<div class="week-upcoming__empty">Nothing dated coming up. Exams, deadlines and tasks with a date will show here.</div>';
+        return;
+    }
+    items.forEach(it => {
+        const row = document.createElement('button');
+        row.className = 'week-upcoming__row';
+        const day = WEEKDAY_NAMES[it.date.getDay()].slice(0, 3);
+        row.innerHTML = `
+            <span class="week-upcoming__date">${day} ${shortDate(it.date)}${it.time ? ' · ' + escapeHtml(it.time) : ''}</span>
+            <span class="week-upcoming__title" dir="auto">${escapeHtml(it.title)}</span>
+            <span class="week-upcoming__kind week-upcoming__kind--${it.isTask ? 'task' : it.kind.toLowerCase().replace(/\s+/g, '-')}">${it.kind}</span>`;
+        row.onclick = () => {
+            closeUpcoming();
+            // A task is only on the board with "Show tasks" on - turn it on
+            // rather than jump to a week where the task isn't drawn.
+            if (it.isTask && weeklyShowTasksToggle && !weeklyShowTasksToggle.checked) {
+                weeklyShowTasksToggle.checked = true;
+                localStorage.setItem(WEEKLY_SHOW_TASKS_KEY, '1');
+            }
+            showWeekOf(it.date, it.id);
+        };
+        upcomingPanel.appendChild(row);
+    });
+}
+
+function closeUpcoming() {
+    if (upcomingPanel) upcomingPanel.hidden = true;
+    if (upcomingBtn) upcomingBtn.setAttribute('aria-expanded', 'false');
+}
+if (upcomingBtn && upcomingPanel) {
+    upcomingBtn.setAttribute('aria-expanded', 'false');
+    upcomingBtn.onclick = (e) => {
+        e.stopPropagation();
+        const opening = upcomingPanel.hidden;
+        upcomingPanel.hidden = !opening;
+        upcomingBtn.setAttribute('aria-expanded', String(opening));
+        if (opening) renderUpcoming();
+    };
+    upcomingPanel.addEventListener('click', (e) => e.stopPropagation());
+    document.addEventListener('click', closeUpcoming);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeUpcoming(); });
+}
+
+// Downloads fresh data, then draws. Every existing caller (after an add,
+// a delete, a plan, arriving on the screen) keeps using this one.
+async function loadAndRenderWeeklyBoard() {
+    if (!document.querySelectorAll('.day-column').length) return;
+
+    const myTicket = ++weeklyRenderTicket;
+    // Tasks are always fetched now (cheap), so "Show tasks" and the Coming
+    // up list work instantly without another trip to the server.
     const [events, folders, tasks] = await Promise.all([
         ipcRenderer.invoke('get-events'),
         ipcRenderer.invoke('get-folders').catch(() => []),
-        showTasks ? ipcRenderer.invoke('get-tasks').catch(() => []) : Promise.resolve([])
+        ipcRenderer.invoke('get-tasks').catch(() => [])
     ]);
+    if (myTicket !== weeklyRenderTicket) return; // a newer refresh is on its way
+    weeklyData = { events: events || [], folders: folders || [], tasks: tasks || [] };
+    renderWeeklyBoard();
+}
+
+// Draws the viewed week from the last download. No server call - this is
+// what the week arrows use, so they're instant.
+function renderWeeklyBoard() {
+    const dayColumns = document.querySelectorAll('.day-column');
+    if (!dayColumns.length || !weeklyData) return;
+    const showTasks = !!(weeklyShowTasksToggle && weeklyShowTasksToggle.checked);
+    const { events, folders } = weeklyData;
+    const tasks = showTasks ? weeklyData.tasks : [];
 
     const legendTask = document.getElementById('legend-task');
     // visibility, not hidden/display: the item keeps its space either way,
@@ -529,12 +718,13 @@ async function loadAndRenderWeeklyBoard() {
 
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-    // The board is "this week", Sunday to Saturday. Each column gets its
+    // Sunday to Saturday of the week being viewed. Each column gets its
     // real date, so a task due on the 18th has an obvious place to go.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const weekStart = new Date(today);
-    weekStart.setDate(today.getDate() - today.getDay());
+    const weekStart = weekStartFor(weeklyWeekOffset);
+    const weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate() + 6);
+    renderWeekNav(weekStart, weekEnd);
 
     dayColumns.forEach((column, index) => {
         const colDate = new Date(weekStart);
@@ -554,7 +744,7 @@ async function loadAndRenderWeeklyBoard() {
         // Sorted by time - the server only ever returned them in insertion
         // order within a day, so 18:00 could sit above 09:00.
         const dayEvents = events
-            .filter(e => e.day === days[index])
+            .filter(e => eventOccursOn(e, colDate))
             .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
 
         dayEvents.forEach(evt => {
@@ -562,10 +752,14 @@ async function loadAndRenderWeeklyBoard() {
             const taskCard = document.createElement('div');
             taskCard.className = `task-card ${weeklyClassMap[evt.type] || 'task-lesson'}`;
             taskCard.style.position = 'relative';
+            taskCard.dataset.id = evt.id;
 
+            // ↻ marks the weekly ones, so it's obvious which cards are "every
+            // Monday" and which are "this Monday only".
+            const weekly = !evt.date;
             taskCard.innerHTML = `
-                <button class="btn-icon btn-icon--danger delete-weekly-btn" title="Delete from calendar" aria-label="Delete from calendar">${icon('trash')}</button>
-                <div class="task-time">${escapeHtml(evt.time)}</div>${escapeHtml(evt.title)}
+                <button class="btn-icon btn-icon--danger delete-weekly-btn" title="${weekly ? 'Delete - removes it from every week' : 'Delete from calendar'}" aria-label="Delete from calendar">${icon('trash')}</button>
+                <div class="task-time">${escapeHtml(evt.time)}${weekly ? ' <span class="task-repeat" title="Every week">↻</span>' : ''}</div>${escapeHtml(evt.title)}
             `;
 
             // Clicking a study/exam event (or one whose title names a
@@ -611,6 +805,7 @@ async function loadAndRenderWeeklyBoard() {
 
                 const card = document.createElement('div');
                 card.className = `board-task board-task--${urgency}${overdue ? ' is-overdue' : ''}`;
+                card.dataset.id = t.id;
                 card.title = `${t.urgency && t.urgency !== 'Normal' ? t.urgency + ' urgency · ' : ''}Open in Tasks`;
                 card.innerHTML = `
                     <span class="board-task__check" aria-hidden="true"></span>
@@ -630,72 +825,44 @@ async function loadAndRenderWeeklyBoard() {
             column.appendChild(empty);
         }
     });
+
+    // Arrived here from "Coming up" (or right after adding): flash the card.
+    if (weeklyHighlightId) {
+        const wanted = String(weeklyHighlightId);
+        const target = [...document.querySelectorAll('.weekly-board [data-id]')].find(el => el.dataset.id === wanted);
+        weeklyHighlightId = null;
+        if (target) {
+            if (target.scrollIntoView) target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            target.classList.add('is-flash');
+            setTimeout(() => target.classList.remove('is-flash'), 1600);
+        }
+    }
 }
 
-// ---- Add to calendar: write it, then confirm what was understood ----
-// Same two-step pattern as Add Task. "Continue" only parses; each parsed
-// event appears as a row of editable fields (name, day, time, type), and
-// only "Add to my week" saves. A misread day is now caught before it's saved.
-const eventStageWrite = document.getElementById('event-stage-write');
-const eventStageConfirm = document.getElementById('event-stage-confirm');
-const eventConfirmList = document.getElementById('event-confirm-list');
-const eventConfirmSave = document.getElementById('event-confirm-save');
+// ---- Add to calendar: AI only ----
+// Write it the way you'd say it; it's read and saved in one go. There used
+// to be a second step with editable name/day/time/type fields - removed on
+// purpose: the point of the app is "say it and it's handled", and a form
+// after every sentence undoes that. The safety net is the toast instead: it
+// spells out exactly what was understood, and Undo takes it all back
+// (including the Google Calendar copy).
 const EVENT_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const EVENT_TYPES = [['lesson', 'Class'], ['exam', 'Exam'], ['study', 'Study block'], ['personal', 'Personal']];
-
-function showEventStage(stage) {
-    eventStageWrite.hidden = stage !== 'write';
-    eventStageConfirm.hidden = stage !== 'confirm';
-    if (stage === 'write') { const t = document.getElementById('smart-event-input'); if (t) t.focus(); }
-}
+const EVENT_TYPE_LABELS = { lesson: 'Class', exam: 'Exam', study: 'Study block', personal: 'Personal' };
 
 function closeAddEventModal() {
     addEventModal.style.display = 'none';
     const t = document.getElementById('smart-event-input');
     if (t) t.value = '';
-    eventConfirmList.innerHTML = '';
-    showEventStage('write');
 }
 
-const eventConfirmBack = document.getElementById('event-confirm-back');
-if (eventConfirmBack) eventConfirmBack.onclick = () => showEventStage('write');
-
-// One row of editable fields per parsed event. Built with DOM nodes (not an
-// HTML string) since the title is user text.
-function buildEventConfirmRow(evt) {
-    const row = document.createElement('div');
-    row.className = 'smart-fields event-confirm-row';
-
-    const field = (label, input, wide) => {
-        const wrap = document.createElement('label');
-        wrap.className = 'smart-field' + (wide ? ' smart-field--wide' : '');
-        const span = document.createElement('span');
-        span.textContent = label;
-        wrap.append(span, input);
-        return wrap;
-    };
-
-    const title = document.createElement('input');
-    title.type = 'text'; title.className = 'input-field'; title.dir = 'auto';
-    title.value = evt.title || ''; title.dataset.field = 'title';
-
-    const day = document.createElement('select');
-    day.className = 'input-field'; day.dataset.field = 'day';
-    EVENT_DAYS.forEach(d => day.appendChild(new Option(d, d)));
-    day.value = EVENT_DAYS.includes(evt.day) ? evt.day : EVENT_DAYS[new Date().getDay()];
-
-    const time = document.createElement('input');
-    time.type = 'time'; time.className = 'input-field'; time.dataset.field = 'time';
-    time.value = /^\d{2}:\d{2}$/.test(evt.time || '') ? evt.time : '10:00';
-
-    const type = document.createElement('select');
-    type.className = 'input-field'; type.dataset.field = 'type';
-    EVENT_TYPES.forEach(([v, l]) => type.appendChild(new Option(l, v)));
-    type.value = EVENT_TYPES.some(([v]) => v === evt.type) ? evt.type : 'personal';
-
-    row.append(field('Name', title, true), field('Day', day), field('Time', time), field('Type', type));
-    row._extra = evt; // keep anything else the parser returned (e.g. duration)
-    return row;
+function describeEvent(evt) {
+    // Says plainly whether it's once (with the date) or every week.
+    let when = `every ${evt.day}`;
+    if (evt.date) {
+        const [y, m, d] = evt.date.split('-').map(Number);
+        when = `${evt.day} ${shortDate(new Date(y, m - 1, d))}`;
+    }
+    return `${evt.title} · ${when} ${evt.time} · ${EVENT_TYPE_LABELS[evt.type] || 'Personal'}`;
 }
 
 if (saveEventBtn) {
@@ -704,72 +871,83 @@ if (saveEventBtn) {
         const text = textInput ? textInput.value.trim() : '';
         if (!text) { toast.warning('Write what you have planned first.'); return; }
 
+        const syncCheck = document.getElementById('sync-google-check');
+        const syncToGoogle = !!(syncCheck && syncCheck.checked);
+
         const originalText = saveEventBtn.innerText;
         saveEventBtn.innerText = 'Reading…';
         saveEventBtn.disabled = true;
+
+        const saved = [];
+        const saveErrors = [];
+        const syncErrors = [];
         try {
             const response = await ipcRenderer.invoke('parse-smart-event', text);
             let parsed = JSON.parse(response);
             if (parsed && parsed.error) { toast.error(parsed.error); return; }
             if (!Array.isArray(parsed)) parsed = [parsed];
-            if (!parsed.length) { toast.error('Could not read that. Try writing it a bit differently.'); return; }
 
-            eventConfirmList.innerHTML = '';
-            parsed.forEach(evt => eventConfirmList.appendChild(buildEventConfirmRow(evt)));
-            eventConfirmSave.textContent = parsed.length > 1 ? `Add ${parsed.length} to my week` : 'Add to my week';
-            showEventStage('confirm');
-        } catch (e) {
-            toast.error('Something went wrong reading that. Please try again.');
-            console.error(e);
-        } finally {
-            saveEventBtn.innerText = originalText;
-            saveEventBtn.disabled = false;
-        }
-    });
-}
+            // Only rows the parser actually filled in; the server would
+            // reject the rest anyway.
+            const events = parsed
+                .filter(e => e && String(e.title || '').trim() && EVENT_DAYS.includes(e.day) && /^\d{2}:\d{2}$/.test(e.time || ''))
+                .map(e => ({ ...e, title: String(e.title).trim(), type: EVENT_TYPE_LABELS[e.type] ? e.type : 'personal' }));
+            if (!events.length) {
+                toast.error('Could not tell what or when. Try including the day and the time, e.g. "ביום שלישי ב-18:00".');
+                return;
+            }
 
-if (eventConfirmSave) {
-    eventConfirmSave.addEventListener('click', async () => {
-        const rows = Array.from(eventConfirmList.querySelectorAll('.event-confirm-row'));
-        const events = rows.map(row => {
-            const get = (f) => row.querySelector(`[data-field="${f}"]`).value;
-            return { ...row._extra, title: get('title').trim(), day: get('day'), time: get('time'), type: get('type') };
-        });
-        if (events.some(e => !e.title)) { toast.warning('Every item needs a name.'); return; }
-        if (events.some(e => !/^\d{2}:\d{2}$/.test(e.time))) { toast.warning('Please set a time.'); return; }
-
-        const syncToGoogle = document.getElementById('sync-google-check').checked;
-        const originalText = eventConfirmSave.textContent;
-        eventConfirmSave.disabled = true;
-        eventConfirmSave.textContent = syncToGoogle ? 'Saving and syncing…' : 'Saving…';
-
-        const saveErrors = [];
-        const syncErrors = [];
-        try {
+            saveEventBtn.innerText = syncToGoogle ? 'Saving and syncing…' : 'Saving…';
             for (const evt of events) {
                 if (syncToGoogle) {
                     const result = await ipcRenderer.invoke('add-to-google-calendar', evt);
                     if (result && result.success) evt.googleEventId = result.eventId;
                     else syncErrors.push(result ? result.error : 'unknown error');
                 }
-                const saveRes = await ipcRenderer.invoke('save-event', evt);
-                if (saveRes && saveRes.error) saveErrors.push(saveRes.error);
+                const res = await ipcRenderer.invoke('save-event', evt);
+                if (res && res.error) saveErrors.push(res.error);
+                else saved.push({ ...evt, id: res && (res.id || res._id) });
             }
+        } catch (e) {
+            toast.error('Something went wrong reading that. Please try again.');
+            console.error(e);
+            return;
         } finally {
-            eventConfirmSave.disabled = false;
-            eventConfirmSave.textContent = originalText;
+            saveEventBtn.innerText = originalText;
+            saveEventBtn.disabled = false;
         }
 
-        if (saveErrors.length) { toast.error(saveErrors[0], `Could not save ${saveErrors.length} item(s)`); return; }
+        if (!saved.length) {
+            toast.error(saveErrors[0] || 'Please try again.', 'Nothing was added');
+            return;
+        }
+
         closeAddEventModal();
-        await loadAndRenderWeeklyBoard();
+        // Show the week it landed in - "26/10" added while looking at
+        // September should be seen, not just announced.
+        if (saved[0].date) {
+            const [y, m, d] = saved[0].date.split('-').map(Number);
+            const dt = new Date(y, m - 1, d);
+            const start = weekStartFor(0);
+            weeklyWeekOffset = Math.floor(Math.round((dt - start) / 86400000) / 7);
+        }
+        weeklyHighlightId = saved[0].id;
+        await loadAndRenderWeeklyBoard(); // fresh data - the new item has to be in it
         await loadAndRenderHome();
         if (typeof refreshOnboarding === 'function') refreshOnboarding();
-        if (syncToGoogle && syncErrors.length) {
-            toast.warning(`Saved in MindSync, but not in Google Calendar: ${syncErrors[0]}`);
-        } else {
-            toast.success(events.length > 1 ? `${events.length} items added to your week.` : `"${events[0].title}" added to your week.`);
-        }
+
+        const summary = saved.length === 1
+            ? `Added: ${describeEvent(saved[0])}`
+            : `Added ${saved.length}: ${saved.map(describeEvent).join('  |  ')}`;
+        showUndoToast(summary, async () => {
+            // delete-event removes the Google copy too (googleEventId is on the saved record).
+            for (const evt of saved) if (evt.id) await ipcRenderer.invoke('delete-event', evt.id);
+            await loadAndRenderWeeklyBoard();
+            await loadAndRenderHome();
+        });
+
+        if (saveErrors.length) toast.error(saveErrors[0], `${saveErrors.length} item(s) could not be saved`);
+        if (syncToGoogle && syncErrors.length) toast.warning(`Saved in MindSync, but not in Google Calendar: ${syncErrors[0]}`);
     });
 }
 
@@ -787,7 +965,7 @@ const smartTaskInput = document.getElementById('smart-task-input');
 
 if (triggerAddTaskBtn) triggerAddTaskBtn.onclick = async () => {
     addTaskModal.style.display = 'flex';
-    showTaskStage('write');
+    smartTaskInput.focus();
     // Populate the datalist so you can reuse an existing category instead of
     // retyping it (and accidentally creating "Exam" vs "exam" duplicates).
     const datalist = document.getElementById('existing-categories');
@@ -796,47 +974,34 @@ if (triggerAddTaskBtn) triggerAddTaskBtn.onclick = async () => {
         datalist.innerHTML = (cats || []).map(c => `<option value="${escapeHtml(c)}"></option>`).join('');
     }
 };
-// ---- Add task: write it, then confirm what was understood ----
-// The text used to be parsed AND saved in one step, so a misread date just
-// appeared in the list. Now "Continue" only parses; the confirm step shows
-// the result in editable fields, and "Add task" saves it.
-const taskStageWrite = document.getElementById('task-stage-write');
-const taskStageConfirm = document.getElementById('task-stage-confirm');
-const taskConfirmTitle = document.getElementById('task-confirm-title');
-const taskConfirmDate = document.getElementById('task-confirm-date');
-const taskConfirmDuration = document.getElementById('task-confirm-duration');
-const taskConfirmCategory = document.getElementById('task-confirm-category');
-const taskConfirmSave = document.getElementById('task-confirm-save');
-let taskPreview = null;
-
-// DD/MM/YYYY (how tasks store dates) <-> YYYY-MM-DD (what a date input uses)
-function ddmmyyyyToIso(str) {
-    const m = String(str || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : '';
-}
-function isoToDdmmyyyy(str) {
-    const m = String(str || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    return m ? `${m[3]}/${m[2]}/${m[1]}` : 'Not set';
-}
-
-function showTaskStage(stage) {
-    taskStageWrite.hidden = stage !== 'write';
-    taskStageConfirm.hidden = stage !== 'confirm';
-    (stage === 'write' ? smartTaskInput : taskConfirmTitle).focus();
-}
-
+// ---- Add task: AI only ----
+// Same idea as Add to calendar: one step. The AI reads the sentence, the
+// task is saved, and the toast says what was understood (name, due date,
+// length) with Undo. The old confirm step with a date picker and a length
+// menu is gone on purpose. Editing an existing task (the pencil on its
+// card) is unchanged.
 function closeAddTaskModal() {
     addTaskModal.style.display = 'none';
     smartTaskInput.value = '';
     const categoryInput = document.getElementById('smart-task-category');
     if (categoryInput) categoryInput.value = '';
-    taskPreview = null;
-    showTaskStage('write');
 }
 
 if (cancelTaskBtn) cancelTaskBtn.onclick = closeAddTaskModal;
-const taskConfirmBack = document.getElementById('task-confirm-back');
-if (taskConfirmBack) taskConfirmBack.onclick = () => showTaskStage('write');
+
+function describeTask(t) {
+    const parts = [t.title];
+    if (t.date && t.date !== 'Not set') {
+        const [dd, mm] = String(t.date).split('/');
+        parts.push(`due ${Number(dd)}/${Number(mm)}`);
+    }
+    if (t.estimatedMinutes) {
+        const m = Number(t.estimatedMinutes);
+        parts.push(m % 60 === 0 ? `~${m / 60}h` : m > 60 ? `~${Math.floor(m / 60)}h ${m % 60}m` : `~${m} min`);
+    }
+    if (t.category) parts.push(t.category);
+    return parts.join(' · ');
+}
 
 if (saveSmartTaskBtn) {
     saveSmartTaskBtn.onclick = async () => {
@@ -850,59 +1015,45 @@ if (saveSmartTaskBtn) {
         const category = categoryInput ? categoryInput.value.trim() : '';
 
         const originalText = saveSmartTaskBtn.innerText;
-        saveSmartTaskBtn.innerText = 'Reading…';
+        saveSmartTaskBtn.innerText = 'Adding…';
         saveSmartTaskBtn.disabled = true;
 
+        let preview;
+        let created;
         try {
+            // Still two calls under the hood (read, then save) so the toast
+            // can say exactly what was saved - but no stop for the user.
             const response = await ipcRenderer.invoke('add-smart-task', text, category, { previewOnly: true });
             const result = JSON.parse(response);
-            if (result.error || !result.preview) {
+            if (result.error || !result.preview || !String(result.preview.title || '').trim()) {
                 toast.error(result.error || 'Could not read that. Try writing it a bit differently.');
                 return;
             }
-            taskPreview = result.preview;
-            taskConfirmTitle.value = taskPreview.title || '';
-            taskConfirmDate.value = ddmmyyyyToIso(taskPreview.date);
-            const dur = taskPreview.estimatedMinutes ? String(taskPreview.estimatedMinutes) : '';
-            // A parsed duration that isn't one of the menu's options still
-            // gets shown, rather than silently snapping to "Not sure".
-            if (dur && !Array.from(taskConfirmDuration.options).some(o => o.value === dur)) {
-                taskConfirmDuration.appendChild(new Option(`${dur} min`, dur));
-            }
-            taskConfirmDuration.value = dur;
-            taskConfirmCategory.value = taskPreview.category || '';
-            showTaskStage('confirm');
+            preview = result.preview;
+            created = await ipcRenderer.invoke('create-confirmed-task', {
+                title: String(preview.title).trim(),
+                date: preview.date || 'Not set',
+                estimatedMinutes: preview.estimatedMinutes || null,
+                category: preview.category || category,
+                urgency: 'Normal'
+            });
+            if (created && created.error) { toast.error(created.error, 'Could not add the task'); return; }
         } catch (e) {
             toast.error('Something went wrong reading that. Please try again.');
             console.error(e);
+            return;
         } finally {
             saveSmartTaskBtn.innerText = originalText;
             saveSmartTaskBtn.disabled = false;
         }
-    };
-}
 
-if (taskConfirmSave) {
-    taskConfirmSave.onclick = async () => {
-        const title = taskConfirmTitle.value.trim();
-        if (!title) { toast.warning('The task needs a name.'); taskConfirmTitle.focus(); return; }
-        taskConfirmSave.disabled = true;
-        try {
-            const res = await ipcRenderer.invoke('create-confirmed-task', {
-                title,
-                date: isoToDdmmyyyy(taskConfirmDate.value),
-                estimatedMinutes: taskConfirmDuration.value ? Number(taskConfirmDuration.value) : null,
-                category: taskConfirmCategory.value.trim(),
-                urgency: 'Normal'
-            });
-            if (res && res.error) { toast.error(res.error, 'Could not add the task'); return; }
-            closeAddTaskModal();
-            await refreshTasksData();
-            await loadAndRenderHome();
-            toast.success(`"${title}" added.`);
-        } finally {
-            taskConfirmSave.disabled = false;
-        }
+        closeAddTaskModal();
+        await refreshTasksData();
+        await loadAndRenderHome();
+        showUndoToast(`Added: ${describeTask({ ...preview, category: preview.category || category })}`, async () => {
+            if (created && created.id) await ipcRenderer.invoke('delete-task', created.id);
+            await refreshTaskViews();
+        });
     };
 }
 
@@ -2185,7 +2336,11 @@ if (settingsEditBtn) {
 // ==========================================
 // 12. Dynamic Home & Hard Reset
 // ==========================================
+// Same "latest refresh wins" ticket as the weekly board above.
+let homeRenderTicket = 0;
+
 async function loadAndRenderHome() {
+    const myTicket = ++homeRenderTicket;
     // BUG FIX: completed tasks are archived (status 'completed'), not
     // deleted - so counting every task made the sidebar say "1 open task"
     // and Home's "Open Tasks" stat stay at 1 after the task was done.
@@ -2193,21 +2348,29 @@ async function loadAndRenderHome() {
     const allTasks = await ipcRenderer.invoke('get-tasks') || [];
     const tasks = allTasks.filter(t => t.status !== 'completed');
     const events = await ipcRenderer.invoke('get-events') || [];
+    if (myTicket !== homeRenderTicket) return;
     
     const statTasks = document.getElementById('home-stat-tasks');
     const statExams = document.getElementById('home-stat-exams');
     const statEvents = document.getElementById('home-stat-events');
     const statLessons = document.getElementById('home-stat-lessons');
 
-    if (statTasks) statTasks.innerText = tasks.length;
-    if (statExams) statExams.innerText = events.filter(e => e.type === 'exam').length;
-    if (statEvents) statEvents.innerText = events.length;
-    if (statLessons) statLessons.innerText = events.filter(e => e.type === 'lesson').length;
+    // Dated events only count where they belong: an exam that's over isn't
+    // "upcoming", and 26/10 isn't "this week".
+    const todayIso = localIsoDate(new Date());
+    const wkStart = localIsoDate(weekStartFor(0));
+    const wkEndDate = weekStartFor(0); wkEndDate.setDate(wkEndDate.getDate() + 6);
+    const wkEnd = localIsoDate(wkEndDate);
+    const inThisWeek = (e) => !e.date || (e.date >= wkStart && e.date <= wkEnd);
 
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const todayName = days[new Date().getDay()]; 
+    if (statTasks) statTasks.innerText = tasks.length;
+    if (statExams) statExams.innerText = events.filter(e => e.type === 'exam' && (!e.date || e.date >= todayIso)).length;
+    if (statEvents) statEvents.innerText = events.filter(inThisWeek).length;
+    if (statLessons) statLessons.innerText = events.filter(e => e.type === 'lesson' && inThisWeek(e)).length;
+
+    const todayName = WEEKDAY_NAMES[new Date().getDay()];
     
-    const todayEvents = events.filter(e => e.day === todayName).sort((a, b) => a.time.localeCompare(b.time));
+    const todayEvents = events.filter(e => eventOccursOn(e, new Date())).sort((a, b) => a.time.localeCompare(b.time));
     
     const timelineList = document.getElementById('home-timeline-list');
     const nextTitle = document.getElementById('home-next-title');
@@ -2284,7 +2447,7 @@ if (navHomeBtn) {
 const sidebarHighlight = document.getElementById('sidebar-highlight');
 if (sidebarHighlight) {
     sidebarHighlight.style.cursor = 'pointer';
-    sidebarHighlight.title = 'Open Weekly Plan';
+    sidebarHighlight.title = 'Open Planner';
     sidebarHighlight.onclick = () => document.getElementById('nav-weekly').click();
 }
 
@@ -2386,7 +2549,7 @@ const ONBOARDING_STEPS = [
         title: 'Add your classes and exams',
         text: 'Just write it the way you\'d say it, e.g. "מבחן בסטטיסטיקה ביום חמישי ב-9".',
         isDone: (st) => st.calendarItems > 0,
-        actions: [{ label: 'Add to my week', primary: true, run: () => goAndClick('nav-weekly', 'trigger-add-event') }]
+        actions: [{ label: 'Add to calendar', primary: true, run: () => goAndClick('nav-weekly', 'trigger-add-event') }]
     }
 ];
 
@@ -2520,7 +2683,7 @@ if (generateWeeklyAiBtn) {
         }
 
         const originalText = generateWeeklyAiBtn.innerHTML;
-        generateWeeklyAiBtn.innerHTML = 'Planning your week... ⏳';
+        generateWeeklyAiBtn.innerHTML = 'Planning your study time... ⏳';
         generateWeeklyAiBtn.disabled = true;
 
         try {
@@ -2571,7 +2734,7 @@ if (generateWeeklyAiBtn) {
                 if (syncToGoogle && syncErrors.length > 0) {
                     toast.error(`⚠️ ${syncErrors.length} out of ${newPlan.length} study blocks failed to sync to Google Calendar.\n\nReason: ${syncErrors[0]}\n\nThe blocks were still saved in MindSync itself.`);
                 } else {
-                    toast.success(`Added ${newPlan.length} blocks to your calendar${previousPlan.length ? ', replacing the previous plan' : ''}.`, 'Weekly plan ready');
+                    toast.success(`Added ${newPlan.length} blocks to your calendar${previousPlan.length ? ', replacing the previous plan' : ''}.`, 'Study plan ready');
                 }
                 if (unplaced.length) {
                     toast.info(`No free slot before the deadline for: ${unplaced.join(', ')}.`, 'Some tasks didn\'t fit');
@@ -2637,12 +2800,10 @@ setInterval(async () => {
     if (events.length === 0) return;
 
     const now = new Date();
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const todayName = days[now.getDay()];
 
     events.forEach(evt => {
-        // בודקים רק אירועים של היום
-        if (evt.day === todayName) {
+        // בודקים רק אירועים של היום (weekly ones by day, dated ones by date)
+        if (eventOccursOn(evt, now)) {
             // ממירים את שעת האירוע לאובייקט זמן של ג'אווה-סקריפט
             const [evtHour, evtMin] = evt.time.split(':').map(Number);
             const eventTime = new Date();
