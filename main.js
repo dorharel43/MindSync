@@ -149,6 +149,7 @@ ipcMain.handle('summarize-text', async (event, textToSummarize, sourcePath) => {
                 const sizeMb = buffer.length / (1024 * 1024);
                 if (sizeMb <= 18) { // inline request body cap, same limit as generate-study-items-pdf
                     const visionPrompt = `You are a smart learning assistant for a student. Summarize this document clearly, in short and concise bullet points. Highlight important concepts, and preserve any formulas/equations exactly as shown rather than describing them.
+Write every formula in LaTeX: inline formulas between single dollar signs ($\\bar{x}$), and standalone formulas on their own line between double dollar signs ($$...$$). The summary window renders these as real notation.
 IMPORTANT: Write the summary in the same language as the document.`;
                     const raw = await aiProvider.generateFromPdf(buffer, visionPrompt, {
                         maxTokens: SUMMARY_MAX_OUTPUT_TOKENS,
@@ -185,6 +186,7 @@ IMPORTANT: Write the summary in the same language as the document.`;
             : (textToSummarize || '');
 
         const prompt = `You are a smart learning assistant for a student. Summarize the following study material clearly, in short and concise bullet points. Highlight important concepts. 
+Write every formula in LaTeX: inline between single dollar signs, standalone formulas on their own line between double dollar signs ($$...$$).
 IMPORTANT: Write the summary in the same language as the original text:
 
 ${safeText}`;
@@ -2855,14 +2857,6 @@ ipcMain.handle('save-file-summary', async (event, id, summary) => {
     } catch (err) {
         return { error: err.message };
     }
-});
-
-// Keeps the summary visible on top of the main window while answering
-// questions in Study - the whole reason to open it separately.
-ipcMain.handle('set-window-pinned', (event, pinned) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (win) win.setAlwaysOnTop(!!pinned);
-    return !!pinned;
 });
 
 ipcMain.handle('get-files', async () => {

@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="tokens.css">
     <link rel="stylesheet" href="themes.css">
     <link rel="stylesheet" href="ui-kit.css">
+    <!-- Formula rendering (KaTeX, installed via npm - see summary.js) -->
+    <link rel="stylesheet" href="node_modules/katex/dist/katex.min.css">
     <style>
         html, body { height: 100%; margin: 0; }
         body {
@@ -51,7 +53,6 @@
         }
         .sum-btn:hover:not(:disabled) { border-color: var(--accent-purple); color: var(--accent-purple); }
         .sum-btn:disabled { opacity: 0.5; cursor: default; }
-        .sum-btn.is-on { background: var(--accent-purple); border-color: var(--accent-purple); color: #fff; }
 
         .sum-body { flex: 1; overflow-y: auto; }
         .sum-content {
@@ -75,6 +76,20 @@
             font-size: 0.92em;
         }
 
+        .sum-content hr { border: none; border-top: 1px solid var(--border-color); margin: 1.4em 0; }
+
+        /* Formulas: isolated left-to-right inside Hebrew text, and wide
+           display formulas scroll sideways instead of overflowing. */
+        .math-inline { unicode-bidi: isolate; white-space: nowrap; }
+        .math-display {
+            text-align: center;
+            margin: 0.6em 0 1em;
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding: 0.3em 0;
+        }
+        .sum-content .katex { font-size: 1.08em; }
+
         .sum-state { text-align: center; padding: var(--space-8) var(--space-5); color: var(--text-secondary); }
         .sum-spinner {
             width: 30px; height: 30px; margin: 0 auto var(--space-4);
@@ -96,7 +111,6 @@
         <div class="sum-actions">
             <button class="sum-btn" id="sum-smaller" title="Smaller text">A−</button>
             <button class="sum-btn" id="sum-larger" title="Larger text">A+</button>
-            <button class="sum-btn" id="sum-pin" title="Keep this window above the app, e.g. while answering questions">Keep on top</button>
             <button class="sum-btn" id="sum-copy" disabled>Copy</button>
             <button class="sum-btn" id="sum-regenerate" disabled>Summarize again</button>
         </div>

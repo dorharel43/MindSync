@@ -10,7 +10,6 @@ const metaEl = document.getElementById('sum-meta');
 const contentEl = document.getElementById('sum-content');
 const copyBtn = document.getElementById('sum-copy');
 const regenBtn = document.getElementById('sum-regenerate');
-const pinBtn = document.getElementById('sum-pin');
 
 let file = null;
 let currentSummary = '';
@@ -46,14 +45,53 @@ function escapeHtml(str) {
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function inline(text) {
+// Formulas: the model writes maths as LaTeX ($\sigma^2$, $$\frac{a}{b}$$),
+// which used to show up as raw code. KaTeX draws it as real notation -
+// fractions, roots, subscripts - offline. It's an npm dependency; if it's
+// missing for any reason the formula is still shown, as code, rather than
+// breaking the window. KaTeX escapes its own input and, with the default
+// trust:false, refuses \href and friends, so its output is safe to insert.
+let katex = null;
+try { katex = require('katex'); } catch (e) { console.warn('KaTeX not installed - formulas will show as code.'); }
+
+function renderMath(tex, displayMode) {
+    if (katex) {
+        try {
+            return katex.renderToString(tex, { throwOnError: false, displayMode, output: 'html' });
+        } catch (e) { /* fall through to the plain version */ }
+    }
+    return `<code>${escapeHtml(tex)}</code>`;
+}
+
+// Formulas are pulled out into placeholders BEFORE escaping and markdown, so
+// neither can mangle them (a "*" in a formula isn't bold, a "_" isn't
+// anything), then put back as rendered HTML at the very end.
+const MATH_TOKEN = /\u0000M(\d+)\u0000/g;
+function extractMath(text) {
+    const math = [];
+    const keep = (tex, display) => { math.push({ tex: tex.trim(), display }); return `\u0000M${math.length - 1}\u0000`; };
+    let out = String(text || '')
+        .replace(/\\\[([\s\S]+?)\\\]/g, (_, t) => `\n${keep(t, true)}\n`)
+        .replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => `\n${keep(t, true)}\n`)
+        .replace(/\\\(([\s\S]+?)\\\)/g, (_, t) => keep(t, false))
+        // Inline $...$ on one line. Not "$5 and $10": the content can't start
+        // or end with a space, the usual rule for telling maths from prices.
+        .replace(/\$(?!\s)([^$\n]+?)(?<!\s)\$/g, (_, t) => keep(t, false));
+    return { text: out, math };
+}
+
+function inline(text, math) {
     return escapeHtml(text)
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/`([^`]+)`/g, '<code>$1</code>');
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        // dir="ltr" isolates each formula, so inside a Hebrew sentence it
+        // doesn't get reversed or scramble the words around it.
+        .replace(MATH_TOKEN, (_, i) => `<span class="math-inline" dir="ltr">${renderMath(math[i].tex, false)}</span>`);
 }
 
 function renderSummary(text) {
-    const lines = String(text || '').split(/\r?\n/);
+    const { text: body, math } = extractMath(text);
+    const lines = body.split(/\r?\n/);
     let html = '';
     let listType = null; // 'ul' | 'ol' | null
 
@@ -66,12 +104,18 @@ function renderSummary(text) {
         const line = raw.trim();
         let m;
         if (!line) { closeList(); continue; }
-        if ((m = line.match(/^#{1,2}\s+(.*)$/))) { closeList(); html += `<h2 dir="auto">${inline(m[1])}</h2>`; continue; }
-        if ((m = line.match(/^#{3,6}\s+(.*)$/))) { closeList(); html += `<h3 dir="auto">${inline(m[1])}</h3>`; continue; }
-        if ((m = line.match(/^[-*•]\s+(.*)$/))) { openList('ul'); html += `<li dir="auto">${inline(m[1])}</li>`; continue; }
-        if ((m = line.match(/^\d+[.)]\s+(.*)$/))) { openList('ol'); html += `<li dir="auto">${inline(m[1])}</li>`; continue; }
+        if ((m = line.match(/^\u0000M(\d+)\u0000$/)) && math[m[1]].display) {
+            closeList();
+            html += `<div class="math-display" dir="ltr">${renderMath(math[m[1]].tex, true)}</div>`;
+            continue;
+        }
+        if (/^(-{3,}|\*{3,}|_{3,})$/.test(line)) { closeList(); html += '<hr>'; continue; }
+        if ((m = line.match(/^#{1,2}\s+(.*)$/))) { closeList(); html += `<h2 dir="auto">${inline(m[1], math)}</h2>`; continue; }
+        if ((m = line.match(/^#{3,6}\s+(.*)$/))) { closeList(); html += `<h3 dir="auto">${inline(m[1], math)}</h3>`; continue; }
+        if ((m = line.match(/^[-*•]\s+(.*)$/))) { openList('ul'); html += `<li dir="auto">${inline(m[1], math)}</li>`; continue; }
+        if ((m = line.match(/^\d+[.)]\s+(.*)$/))) { openList('ol'); html += `<li dir="auto">${inline(m[1], math)}</li>`; continue; }
         closeList();
-        html += `<p dir="auto">${inline(line)}</p>`;
+        html += `<p dir="auto">${inline(line, math)}</p>`;
     }
     closeList();
     return html;
@@ -141,12 +185,6 @@ copyBtn.onclick = () => {
     const original = copyBtn.textContent;
     copyBtn.textContent = 'Copied';
     setTimeout(() => { copyBtn.textContent = original; }, 1500);
-};
-
-let pinned = false;
-pinBtn.onclick = async () => {
-    pinned = await ipcRenderer.invoke('set-window-pinned', !pinned);
-    pinBtn.classList.toggle('is-on', pinned);
 };
 
 // ---- Boot ----
