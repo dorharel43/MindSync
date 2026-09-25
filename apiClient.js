@@ -19,7 +19,10 @@ const authClient = require('./authClient');
 // with no AbortController at all - so a stuck/overloaded server left the
 // whole modal frozen on "Processing..." forever, with no error and no log.
 // Same class of bug as the missing Gemini timeout.
-const REQUEST_TIMEOUT_MS = 30000; // Render free tier cold-starts after idle (30-50s) - too short a timeout misreads that as "stuck"
+// BUG FIX: was 30000 - shorter than the 30-50s this very comment says a
+// cold start takes, so the first request after the server slept could fail
+// even though nothing was wrong.
+const REQUEST_TIMEOUT_MS = 60000; // Render free tier cold-starts after idle (30-50s) - too short a timeout misreads that as "stuck"
 
 // A predictable error for IPC handlers to catch: has a clear .message and,
 // when the server responded with structured JSON, .status and .details.
@@ -68,7 +71,22 @@ async function request(method, path, body, { skipAuth = false } = {}) {
   }
 
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  // BUG FIX: while Render is deploying or restarting it answers with an HTML
+  // error page, not JSON. JSON.parse threw, and the user saw
+  // "Unexpected token '<', "<!DOCTYPE"..." instead of a real explanation.
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new ApiClientError(
+        response.ok
+          ? 'The server sent back something unexpected. Try again in a moment.'
+          : `The server is not available right now (${response.status}). It may be restarting - try again in a minute.`,
+        response.status
+      );
+    }
+  }
 
   if (!response.ok) {
     const message = data?.error?.message || `Server responded with ${response.status}`;
@@ -129,6 +147,9 @@ module.exports = {
 
   // ---- Files ----
   getFiles: async () => withIdAliases(await request('GET', '/files')),
+  // Names/folders only - the server's ?light=1 leaves out each file's full
+  // extracted text, which the duplicate check before an upload doesn't need.
+  getFilesLight: async () => withIdAliases(await request('GET', '/files?light=1')),
   createFile: (file) => request('POST', '/files', file).then(withIdAlias),
   getFile: (id) => request('GET', `/files/${id}`).then(withIdAlias),
   updateFile: (id, updates) => request('PUT', `/files/${id}`, updates).then(withIdAlias),

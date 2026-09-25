@@ -134,6 +134,22 @@
                 </div>
             </div>
 
+            <!-- Getting started: shown to new users until the first steps are
+                 done (or they hide it). Testers landed on a Home full of zeros
+                 with nothing telling them what to do first - this does. The
+                 steps are filled in by renderer.js (renderOnboarding). -->
+            <div class="card onboarding" id="onboarding" hidden>
+                <div class="onboarding__head">
+                    <div>
+                        <h3 class="onboarding__title">Getting started</h3>
+                        <p class="onboarding__intro">MindSync turns your course files into practice questions, and shows you what you really know. A few steps to get going:</p>
+                    </div>
+                    <button class="onboarding__hide" id="onboarding-hide" title="Hide this - you can bring it back from Settings">Hide</button>
+                </div>
+                <div class="onboarding__progress"><div class="onboarding__bar" id="onboarding-bar"></div></div>
+                <ol class="onboarding__steps" id="onboarding-steps"></ol>
+            </div>
+
             <div class="focus-section">
                 <div class="next-up-card">
                     <div class="next-up-title">Up Next Today</div>
@@ -144,7 +160,7 @@
                          their own text ("To Schedule >" vs "Start Focus Mode") and
                          sat unevenly. .home-focus-actions makes them equal width. -->
                     <div class="home-focus-actions">
-                        <button class="btn-primary" onclick="document.getElementById('nav-weekly').click()">To Weekly Plan ></button>
+                        <button class="btn-primary" onclick="document.getElementById('nav-weekly').click()">See my week</button>
                         <button id="focus-btn" class="btn-primary">
                             <span data-icon="checkCircle"></span> Start Focus Mode 
                         </button>
@@ -154,7 +170,7 @@
 
             <div class="dashboard-grid">
                 <div class="card">
-                    <div class="card-header">Current Status</div>
+                    <div class="card-header">This week</div>
                     <div class="stats-grid">
                         <div class="stat-item"><div><span data-icon="file"></span></div><div class="stat-value" id="home-stat-tasks">0</div><div class="stat-label">Open Tasks</div></div>
                         <div class="stat-item"><div><span data-icon="graduation"></span></div><div class="stat-value" id="home-stat-exams">0</div><div class="stat-label">Upcoming Exams</div></div>
@@ -192,7 +208,7 @@
                 <div class="weekly-toolbar__actions">
                     <button id="trigger-add-event" class="btn-primary">+ Add to calendar</button>
                     <button id="generate-weekly-ai-btn" class="btn-secondary">
-                        <span data-icon="brain"></span> Generate smart plan
+                        <span data-icon="brain"></span> Plan study time for my tasks
                     </button>
                 </div>
 
@@ -231,7 +247,7 @@
             <div class="page-header">
                 <div>
                     <h2 class="page-title">My Tasks</h2>
-                    <div class="page-subtitle">Everything you need to do. Tick the checklist inside a task to track partial progress, or select several to act on them at once.</div>
+                    <div class="page-subtitle">Everything you need to do, and when it's due.</div>
                 </div>
             </div>
 
@@ -269,10 +285,13 @@
         <div id="view-materials" class="view-section" style="display: none; width: 100%; max-width: 1000px;">
             <div class="page-header flex-header">
                 <div>
-                    <h2 class="page-title">Study Materials</h2>
-                    <div class="page-subtitle">Upload course files to summarize them or pull tasks out of them automatically. Use folders to keep each course separate.</div>
+                    <h2 class="page-title">Materials</h2>
+                    <div class="page-subtitle">Your course files. Summarize them or find the deadlines in them. One folder per course keeps things tidy.</div>
                 </div>
-                <button class="btn-primary btn-upload"><span data-icon="cloud"></span> Upload File</button>
+                <div class="upload-buttons">
+                    <button class="btn-primary btn-upload" data-upload-mode="files"><span data-icon="cloud"></span> Upload files</button>
+                    <button class="btn-secondary btn-upload" data-upload-mode="folder"><span data-icon="folder"></span> Upload a folder</button>
+                </div>
             </div>
 
             <h3 class="section-title">My Folders</h3>
@@ -290,7 +309,7 @@
             <div class="page-header">
                 <div>
                     <h2 class="page-title">Study</h2>
-                    <div class="page-subtitle">Questions from your own material, scheduled so you revisit them right before you'd forget. You state how sure you are <em>before</em> seeing the answer — that gap is what reveals what you only think you know.</div>
+                    <div class="page-subtitle">Practice questions from your files. Before each answer you say how sure you are - that's what shows what you really know.</div>
                 </div>
             </div>
 
@@ -298,15 +317,15 @@
             <div id="study-home">
                 <div class="metric-grid">
                     <div class="card metric">
-                        <div class="metric__label">Due now</div>
+                        <div class="metric__label">Ready to practice</div>
                         <div class="metric__value ms-tabular" id="study-due-count">0</div>
                     </div>
                     <div class="card metric">
-                        <div class="metric__label">Total questions</div>
+                        <div class="metric__label">Questions</div>
                         <div class="metric__value ms-tabular" id="study-total-count">0</div>
                     </div>
                     <div class="card metric">
-                        <div class="metric__label">Reviews all time</div>
+                        <div class="metric__label">Answered so far</div>
                         <div class="metric__value ms-tabular" id="study-reviews-count">0</div>
                     </div>
                 </div>
@@ -325,13 +344,13 @@
 
                 <div class="study-start-row">
                     <button class="btn-primary btn-lg" id="start-study-btn">
-                        <span data-icon="sparkle" data-icon-size="18"></span> Start session
+                        <span data-icon="sparkle" data-icon-size="18"></span> Start practicing
                     </button>
                     <button class="btn-secondary" id="generate-study-btn">
-                        <span data-icon="file" data-icon-size="16"></span> Create questions from a file
+                        <span data-icon="file" data-icon-size="16"></span> Make questions from a file
                     </button>
                     <button class="btn-secondary" id="manage-study-btn">
-                        <span data-icon="list" data-icon-size="16"></span> Manage questions
+                        <span data-icon="list" data-icon-size="16"></span> My questions
                     </button>
                 </div>
 
@@ -341,24 +360,23 @@
                      review count - and stay empty otherwise, which read as
                      "broken" without this. -->
                 <p class="settings-hint" style="margin-bottom: var(--space-4);">
-                    The four panels below build up as you answer the <em>same</em> question more than once — a single guess
-                    doesn't prove much, but a pattern across several reviews does.
+                    These fill in as you answer the same questions more than once.
                 </p>
 
                 <div class="progress-columns">
                     <!-- The calibration panel: the differentiating feature -->
                     <div class="card">
                         <div class="card-header">
-                            <h3 class="section-title">How well you judge yourself</h3>
+                            <h3 class="section-title">How accurate is your "I'm sure"?</h3>
                         </div>
                         <div id="calibration-panel"></div>
                     </div>
 
                     <div class="card">
                         <div class="card-header">
-                            <h3 class="section-title">You think you know these</h3>
+                            <h3 class="section-title">Sure, but wrong</h3>
                         </div>
-                        <p class="settings-hint">Answered wrong while marked "I'm sure". These are the dangerous ones.</p>
+                        <p class="settings-hint">You said "I'm sure" and got these wrong. Review them first.</p>
                         <div id="confidently-wrong-panel"></div>
                     </div>
 
@@ -367,16 +385,16 @@
                         <div class="card-header">
                             <h3 class="section-title">You know these better than you think</h3>
                         </div>
-                        <p class="settings-hint">Answered correctly while marked "think so" or "guessing", again and again. Trust yourself more here.</p>
+                        <p class="settings-hint">You keep getting these right, even when you're not sure.</p>
                         <div id="underconfident-panel"></div>
                     </div>
 
                     <!-- Genuine difficulty - no miscalibration here, just hard material. -->
                     <div class="card">
                         <div class="card-header">
-                            <h3 class="section-title">Genuinely hard, not a confidence problem</h3>
+                            <h3 class="section-title">Hard for you</h3>
                         </div>
-                        <p class="settings-hint">You never claimed to know these, and you're right not to - more reps alone won't fix it. Worth going back to the source material.</p>
+                        <p class="settings-hint">You keep missing these. Go back to the material for them.</p>
                         <div id="genuine-difficulty-panel"></div>
                     </div>
                 </div>
@@ -388,13 +406,8 @@
                     <div>
                         <h3 class="section-title" id="review-title">Review these questions</h3>
                         <p class="settings-hint" id="review-hint">
-                            The AI drafts these from your material. It gets most of them right, but not all —
-                            a definition can come out cut off, or a question can miss the point. Untick anything
-                            that looks wrong and it won't be added, and you can fix the wording here.
-                            Answers stay hidden by default — judge a question by the question, and only open
-                            the answer if something looks off, so you don't spend your first attempt at
-                            recalling it on this screen. Solutions the AI worked out itself are marked and
-                            shown open: those are the ones worth reading before you accept them.
+                            The AI wrote these from your file. Untick anything that looks wrong, or fix the wording.
+                            Answers stay hidden so you can test yourself on them later.
                         </p>
                     </div>
                 </div>
@@ -411,7 +424,7 @@
 
                 <div class="review-footer">
                     <button class="btn-secondary" id="review-cancel-btn">Discard all</button>
-                    <button class="btn-primary" id="review-confirm-btn">Add selected to deck</button>
+                    <button class="btn-primary" id="review-confirm-btn">Add selected questions</button>
                 </div>
             </div>
 
@@ -441,7 +454,7 @@
                 </div>
                 <div class="study-session-meta">
                     <span id="study-position">1 / 10</span>
-                    <button class="btn-secondary btn-sm" id="end-study-btn">End session</button>
+                    <button class="btn-secondary btn-sm" id="end-study-btn">Stop</button>
                 </div>
 
                 <div class="card study-card">
@@ -455,6 +468,13 @@
                     <!-- Step 1: state confidence BEFORE the answer is shown -->
                     <div id="study-confidence-step">
                         <div class="study-prompt" id="study-confidence-prompt">Think of your answer. How sure are you?</div>
+                        <!-- Shown only for a user's first few answers: the "say how
+                             sure you are BEFORE you see it" step is unfamiliar, and
+                             testers didn't know why they were being asked. -->
+                        <p class="confidence-hint" id="study-confidence-hint" hidden>
+                            Answer in your head first, then pick one - before you see the answer.
+                            Later, MindSync shows you where "I'm sure" was right and where it wasn't.
+                        </p>
                         <div class="confidence-row">
                             <button class="confidence-btn confidence-btn--sure" data-confidence="sure">
                                 <strong>I'm sure</strong><span>I know this</span>
@@ -505,7 +525,7 @@
                             <div class="metric__value ms-tabular" id="summary-correct">0</div>
                         </div>
                         <div class="card metric">
-                            <div class="metric__label">Overconfident</div>
+                            <div class="metric__label">Sure but wrong</div>
                             <div class="metric__value ms-tabular" id="summary-overconfident">0</div>
                         </div>
                     </div>
@@ -575,24 +595,21 @@
             </div>
 
             <div class="card settings-card">
-                <h3 class="settings-title">AI engine</h3>
+                <h3 class="settings-title">AI connection</h3>
                 <p class="settings-hint">
-                    Sending the PDF straight to a cloud model, instead of extracting its text first, is what makes
-                    formulas, matrices, code and Hebrew come through correctly — extraction flattens a page and
-                    loses exactly those things. Your key stays on this machine and each person uses their own
-                    free quota.
+                    The AI reads your files and writes your questions. Your key stays on this computer.
                 </p>
 
                 <div class="settings-row">
                     <div>
-                        <div class="settings-row__title">Currently using</div>
+                        <div class="settings-row__title">Status</div>
                         <div class="settings-hint settings-hint--inline" id="ai-active-label">—</div>
                     </div>
                 </div>
 
                 <div class="settings-row settings-row--stacked">
                     <div class="ms-grow">
-                        <div class="settings-row__title">Gemini API key</div>
+                        <div class="settings-row__title">Your Google AI key</div>
                         <div class="settings-hint settings-hint--inline" id="ai-key-status">No key saved.</div>
                         <div class="input-with-action ai-key-row">
                             <input type="password" id="gemini-key-input" class="input-field" placeholder="Paste your key here" autocomplete="off">
@@ -600,9 +617,7 @@
                             <button class="btn-primary" id="save-key-btn">Save</button>
                         </div>
                         <div class="settings-hint settings-hint--footnote">
-                            Get a free key at <strong>aistudio.google.com/apikey</strong> — a Google account is
-                            enough, no card required. Without a key the app falls back to the local model,
-                            which handles text well but struggles with formulas and code.
+                            Free at <strong>aistudio.google.com/apikey</strong> - just a Google account, no credit card.
                         </div>
                     </div>
                 </div>
@@ -639,14 +654,21 @@
             </div>
 
             <div class="card settings-card">
-                <h3 class="settings-title">Diagnostics</h3>
+                <h3 class="settings-title">Getting started guide</h3>
+                <p class="settings-hint">Show the step-by-step guide on the Home screen again.</p>
+                <div class="settings-actions">
+                    <button id="settings-show-onboarding-btn" class="btn-secondary">Show guide</button>
+                </div>
+            </div>
+
+            <div class="card settings-card">
+                <h3 class="settings-title">Report a problem</h3>
                 <p class="settings-hint">
-                    If something breaks, this copies the recent error log so you can send it -
-                    there's no terminal to read it from once the app is installed normally.
+                    Something not working? Copy the error log and send it to us.
                 </p>
                 <div class="settings-actions">
                     <button id="settings-copy-log-btn" class="btn-secondary">
-                        <span data-icon="file" data-icon-size="16"></span> Copy diagnostic log
+                        <span data-icon="file" data-icon-size="16"></span> Copy error log
                     </button>
                 </div>
             </div>
@@ -654,8 +676,7 @@
             <div class="card settings-card settings-card--danger">
                 <h3 class="settings-title">Reset all data</h3>
                 <p class="settings-hint">
-                    Deletes every task, event, folder and file. Your profile is kept.
-                    Intended for starting a new semester. This cannot be undone.
+                    Deletes all your tasks, calendar items, files and questions - for starting a new semester. Can't be undone.
                 </p>
                 <div class="settings-actions">
                     <button id="settings-hard-reset-btn" class="btn-danger">
@@ -665,9 +686,9 @@
             </div>
 
             <div class="card settings-card">
-                <h3 class="settings-title">Focus Mode (App Blocker)</h3>
+                <h3 class="settings-title">Focus mode</h3>
                 <p class="settings-hint">
-                    Apps listed here are closed automatically while Focus Mode is on.
+                    While focus mode is on, the apps below are closed automatically so you can't get distracted.
                 </p>
                 <div class="blocker-actions">
                     <button class="btn-primary" id="browse-app-btn">
@@ -679,7 +700,7 @@
                 </div>
 
                 <details class="blocker-manual">
-                    <summary>Or type the process name manually</summary>
+                    <summary>Or type the app's file name (e.g. discord.exe)</summary>
                     <div class="input-with-action">
                         <input type="text" id="blocked-app-input" placeholder="e.g. chrome.exe" class="input-field" onkeypress="if(event.key === 'Enter') window.addNewAppBlocker()">
                         <button class="btn-secondary" onclick="window.addNewAppBlocker()">Add</button>
@@ -740,21 +761,45 @@
     <!-- ================= Modals ================= -->
     
     <!-- 1. Smart Task Modal -->
+    <!-- Two steps: write it the way you'd say it, then check what was
+         understood (and fix it) before anything is saved. Before, the text
+         went straight in - a misread day just appeared, with no chance to
+         catch it. -->
     <div id="add-task-modal" class="modal-overlay" style="display: none;">
-        <div class="modal-content card">
-            <h3><span data-icon="sparkle"></span> Create Smart Task</h3>
-            <p>
-                Write freely what needs to be done and when, and the AI will schedule it.
-            </p>
-            <div>
-                <textarea id="smart-task-input" placeholder="e.g.: Study for Data Structures exam by tomorrow morning (very urgent)" class="input-field" maxlength="500"></textarea>
+        <div class="modal-content card smart-modal">
+            <h3>New task</h3>
 
-                <input type="text" id="smart-task-category" class="input-field" placeholder="Category (optional) - e.g. Database Exam" list="existing-categories" />
+            <div class="smart-stage" id="task-stage-write">
+                <p class="smart-help">Write what needs to be done and when - the way you'd say it.</p>
+                <textarea id="smart-task-input" placeholder='לדוגמה: "להגיש עבודה בסטטיסטיקה ביום חמישי"' class="input-field" maxlength="500" dir="auto"></textarea>
+                <input type="text" id="smart-task-category" class="input-field" placeholder="Course (optional) - e.g. Statistics" list="existing-categories" dir="auto" />
                 <datalist id="existing-categories"></datalist>
-
-                <div>
-                    <button id="save-smart-task-btn" class="btn-primary">Add Task</button>
+                <div class="smart-actions">
+                    <button id="save-smart-task-btn" class="btn-primary">Continue</button>
                     <button id="cancel-task-btn" class="btn-secondary">Cancel</button>
+                </div>
+            </div>
+
+            <div class="smart-stage" id="task-stage-confirm" hidden>
+                <p class="smart-help">Here's what we understood. Fix anything that's off.</p>
+                <div class="smart-fields">
+                    <label class="smart-field smart-field--wide"><span>Task</span>
+                        <input type="text" id="task-confirm-title" class="input-field" dir="auto"></label>
+                    <label class="smart-field"><span>Due</span>
+                        <input type="date" id="task-confirm-date" class="input-field"></label>
+                    <label class="smart-field"><span>How long</span>
+                        <select id="task-confirm-duration" class="input-field">
+                            <option value="">Not sure</option>
+                            <option value="15">15 min</option><option value="30">30 min</option><option value="45">45 min</option>
+                            <option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option>
+                            <option value="180">3 hours</option><option value="240">4 hours</option>
+                        </select></label>
+                    <label class="smart-field"><span>Course</span>
+                        <input type="text" id="task-confirm-category" class="input-field" list="existing-categories" dir="auto"></label>
+                </div>
+                <div class="smart-actions">
+                    <button id="task-confirm-save" class="btn-primary">Add task</button>
+                    <button id="task-confirm-back" class="btn-secondary">Back</button>
                 </div>
             </div>
         </div>
@@ -762,42 +807,52 @@
 
     <!-- 3. Add Event Modal -->
     <div id="add-event-modal" class="modal-overlay" style="display: none;">
-        <div class="modal-content card">
-            <h3><span data-icon="sparkle"></span> Create Smart Event</h3>
-            <p>
-                Write freely what you have planned, and the AI will schedule it for you.
-            </p>
-            <div>
-                <textarea id="smart-event-input" placeholder="e.g.: Database exam on Tuesday at 09:00" class="input-field" maxlength="500"></textarea>
-                
+        <div class="modal-content card smart-modal">
+            <h3>Add to your week</h3>
+
+            <div class="smart-stage" id="event-stage-write">
+                <p class="smart-help">A class, an exam, anything at a set time - write it the way you'd say it.</p>
+                <textarea id="smart-event-input" placeholder='לדוגמה: "מבחן בסטטיסטיקה ביום חמישי ב-9"' class="input-field" maxlength="500" dir="auto"></textarea>
+                <div class="smart-actions">
+                    <button id="save-event-btn" class="btn-primary">Continue</button>
+                    <button id="cancel-event-btn" class="btn-secondary">Cancel</button>
+                </div>
+            </div>
+
+            <div class="smart-stage" id="event-stage-confirm" hidden>
+                <p class="smart-help">Here's what we understood. Fix anything that's off.</p>
+                <div id="event-confirm-list"></div>
+
                 <label class="checkbox-field" for="sync-google-check">
                     <input type="checkbox" id="sync-google-check" checked>
                     <span class="checkbox-field__text">
-                        <span class="checkbox-field__label">Sync to Google Calendar</span>
-                        <span class="checkbox-field__hint">Also creates this event in your connected Google account.</span>
+                        <span class="checkbox-field__label">Also add to Google Calendar</span>
                     </span>
                 </label>
-                
-                <div>
-                    <button id="save-event-btn" class="btn-primary">Add Event</button>
-                    <button id="cancel-event-btn" class="btn-secondary">Cancel</button>
+
+                <div class="smart-actions">
+                    <button id="event-confirm-save" class="btn-primary">Add to my week</button>
+                    <button id="event-confirm-back" class="btn-secondary">Back</button>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- 4. Upload File Modal -->
+    <!-- Upload: one file, many files, or a whole folder. The list shows each
+         file's status as it uploads, so a big batch never looks frozen. -->
     <div id="upload-file-modal" class="modal-overlay" style="display: none;">
-        <div class="modal-content card">
-            <h3>Save File to Folder</h3>
-            <div>
-                <div id="upload-file-name-display"></div>
-                <p>Which folder should this file belong to?</p>
-                <select id="upload-folder-select" class="input-field"></select>
-                <div>
-                    <button id="confirm-upload-btn" class="btn-primary">Save File</button>
-                    <button id="cancel-upload-btn" class="btn-secondary">Cancel</button>
-                </div>
+        <div class="modal-content card upload-modal">
+            <h3 id="upload-title">Upload files</h3>
+            <div class="upload-summary" id="upload-summary"></div>
+            <div class="upload-list" id="upload-file-list"></div>
+
+            <label class="form-label" for="upload-folder-select">Save them in</label>
+            <select id="upload-folder-select" class="input-field"></select>
+
+            <div class="upload-actions">
+                <button id="confirm-upload-btn" class="btn-primary">Upload</button>
+                <button id="cancel-upload-btn" class="btn-secondary">Cancel</button>
             </div>
         </div>
     </div>

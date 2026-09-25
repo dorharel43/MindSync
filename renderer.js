@@ -88,8 +88,12 @@ if (authToggleLink) {
 // Called once, either immediately (a saved session was still valid) or
 // after a successful login/register. Reveals the app and re-runs the loads
 // that may have fired with empty/401 results while the login screen was up.
+let currentUserId = null; // used to keep per-user UI preferences apart on a shared machine
+
 function bootApp(user) {
     document.body.classList.remove('auth-pending');
+    currentUserId = user && (user.id || user._id) ? String(user.id || user._id) : null;
+    if (typeof refreshOnboarding === 'function') refreshOnboarding();
 
     // Full profile fields (including the Settings page ones) come from
     // loadProfile() - it's one IPC round-trip, now safe since we're
@@ -276,20 +280,42 @@ applyDarkMode(localStorage.getItem(DARK_KEY) === '1');
 const focusBtn = document.getElementById('focus-btn');
 let isFocusMode = false;
 
+// Focus mode CLOSES apps (Discord, Steam...) - testers pressed it without
+// knowing that, and a program vanishing unasked breaks trust in everything
+// else. Starting it now asks first and names exactly which apps will close.
+function setFocusButtonState(on) {
+    focusBtn.classList.toggle('is-focus-on', on);
+    focusBtn.innerHTML = icon('shield') + (on ? ' Stop focus mode' : ' Start focus mode');
+    focusBtn.title = on ? 'Focus mode is on - listed apps are being closed' : 'Closes distracting apps while you study';
+}
+
 if (focusBtn) {
-    focusBtn.addEventListener('click', () => {
-        isFocusMode = !isFocusMode;
-        ipcRenderer.send('toggle-blocking', isFocusMode);
-        
+    focusBtn.title = 'Closes distracting apps while you study';
+    focusBtn.addEventListener('click', async () => {
         if (isFocusMode) {
-            focusBtn.innerHTML = icon('shield') + ' Stop Focus Mode';
-            focusBtn.style.borderColor = '#f44336';
-            focusBtn.style.color = '#f44336';
-        } else {
-            focusBtn.innerHTML = icon('shield') + ' Start Focus Mode';
-            focusBtn.style.borderColor = '#4caf50';
-            focusBtn.style.color = '#4caf50';
+            isFocusMode = false;
+            ipcRenderer.send('toggle-blocking', false);
+            setFocusButtonState(false);
+            toast.info('Focus mode is off.');
+            return;
         }
+
+        const apps = (await ipcRenderer.invoke('get-blocked-apps').catch(() => [])) || [];
+        if (!apps.length) {
+            toast.info('No apps are on the focus list yet. Add some in Settings → Focus mode.');
+            return;
+        }
+        const names = apps.map(a => String(a).replace(/\.exe$/i, '')).join(', ');
+        const ok = await confirmDialog(
+            'Start focus mode?',
+            `While it's on, these apps will be closed if you open them: ${names}.\n\nSave anything open in them first. You can change the list in Settings.`,
+            { confirmText: 'Start focus mode' }
+        );
+        if (!ok) return;
+
+        isFocusMode = true;
+        ipcRenderer.send('toggle-blocking', true);
+        setFocusButtonState(true);
     });
 }
 
@@ -317,9 +343,13 @@ const cancelEventBtn = document.getElementById('cancel-event-btn');
 const saveEventBtn = document.getElementById('save-event-btn');
 const scheduleList = document.querySelector('.daily-schedule-list');
 
-if(addEventBtn) addEventBtn.addEventListener('click', () => addEventModal.style.display = 'flex');
-if(triggerAddEventWeekly) triggerAddEventWeekly.addEventListener('click', () => addEventModal.style.display = 'flex');
-if(cancelEventBtn) cancelEventBtn.addEventListener('click', () => addEventModal.style.display = 'none');
+function openAddEventModal() {
+    addEventModal.style.display = 'flex';
+    showEventStage('write');
+}
+if(addEventBtn) addEventBtn.addEventListener('click', openAddEventModal);
+if(triggerAddEventWeekly) triggerAddEventWeekly.addEventListener('click', openAddEventModal);
+if(cancelEventBtn) cancelEventBtn.addEventListener('click', closeAddEventModal);
 
 const typeStyles = {
     // Reference the shared tokens so these can't drift from the legend.
@@ -602,77 +632,143 @@ async function loadAndRenderWeeklyBoard() {
     });
 }
 
-if(saveEventBtn) {
+// ---- Add to calendar: write it, then confirm what was understood ----
+// Same two-step pattern as Add Task. "Continue" only parses; each parsed
+// event appears as a row of editable fields (name, day, time, type), and
+// only "Add to my week" saves. A misread day is now caught before it's saved.
+const eventStageWrite = document.getElementById('event-stage-write');
+const eventStageConfirm = document.getElementById('event-stage-confirm');
+const eventConfirmList = document.getElementById('event-confirm-list');
+const eventConfirmSave = document.getElementById('event-confirm-save');
+const EVENT_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const EVENT_TYPES = [['lesson', 'Class'], ['exam', 'Exam'], ['study', 'Study block'], ['personal', 'Personal']];
+
+function showEventStage(stage) {
+    eventStageWrite.hidden = stage !== 'write';
+    eventStageConfirm.hidden = stage !== 'confirm';
+    if (stage === 'write') { const t = document.getElementById('smart-event-input'); if (t) t.focus(); }
+}
+
+function closeAddEventModal() {
+    addEventModal.style.display = 'none';
+    const t = document.getElementById('smart-event-input');
+    if (t) t.value = '';
+    eventConfirmList.innerHTML = '';
+    showEventStage('write');
+}
+
+const eventConfirmBack = document.getElementById('event-confirm-back');
+if (eventConfirmBack) eventConfirmBack.onclick = () => showEventStage('write');
+
+// One row of editable fields per parsed event. Built with DOM nodes (not an
+// HTML string) since the title is user text.
+function buildEventConfirmRow(evt) {
+    const row = document.createElement('div');
+    row.className = 'smart-fields event-confirm-row';
+
+    const field = (label, input, wide) => {
+        const wrap = document.createElement('label');
+        wrap.className = 'smart-field' + (wide ? ' smart-field--wide' : '');
+        const span = document.createElement('span');
+        span.textContent = label;
+        wrap.append(span, input);
+        return wrap;
+    };
+
+    const title = document.createElement('input');
+    title.type = 'text'; title.className = 'input-field'; title.dir = 'auto';
+    title.value = evt.title || ''; title.dataset.field = 'title';
+
+    const day = document.createElement('select');
+    day.className = 'input-field'; day.dataset.field = 'day';
+    EVENT_DAYS.forEach(d => day.appendChild(new Option(d, d)));
+    day.value = EVENT_DAYS.includes(evt.day) ? evt.day : EVENT_DAYS[new Date().getDay()];
+
+    const time = document.createElement('input');
+    time.type = 'time'; time.className = 'input-field'; time.dataset.field = 'time';
+    time.value = /^\d{2}:\d{2}$/.test(evt.time || '') ? evt.time : '10:00';
+
+    const type = document.createElement('select');
+    type.className = 'input-field'; type.dataset.field = 'type';
+    EVENT_TYPES.forEach(([v, l]) => type.appendChild(new Option(l, v)));
+    type.value = EVENT_TYPES.some(([v]) => v === evt.type) ? evt.type : 'personal';
+
+    row.append(field('Name', title, true), field('Day', day), field('Time', time), field('Type', type));
+    row._extra = evt; // keep anything else the parser returned (e.g. duration)
+    return row;
+}
+
+if (saveEventBtn) {
     saveEventBtn.addEventListener('click', async () => {
         const textInput = document.getElementById('smart-event-input');
-        const text = textInput ? textInput.value.trim() : "";
-        const syncToGoogle = document.getElementById('sync-google-check').checked;
-
-        if (!text) {
-            toast.error("You must write something!");
-            return;
-        }
+        const text = textInput ? textInput.value.trim() : '';
+        if (!text) { toast.warning('Write what you have planned first.'); return; }
 
         const originalText = saveEventBtn.innerText;
-        saveEventBtn.innerText = 'Processing...';
+        saveEventBtn.innerText = 'Reading…';
         saveEventBtn.disabled = true;
-
         try {
             const response = await ipcRenderer.invoke('parse-smart-event', text);
-            let parsedEvents = JSON.parse(response);
+            let parsed = JSON.parse(response);
+            if (parsed && parsed.error) { toast.error(parsed.error); return; }
+            if (!Array.isArray(parsed)) parsed = [parsed];
+            if (!parsed.length) { toast.error('Could not read that. Try writing it a bit differently.'); return; }
 
-            if (parsedEvents.error) {
-                toast.error("Oops: " + parsedEvents.error);
-            } else {
-                if (!Array.isArray(parsedEvents)) {
-                    parsedEvents = [parsedEvents];
-                }
-
-                if (syncToGoogle) saveEventBtn.innerText = 'Syncing to Google...';
-                const saveErrors = [];
-                let syncErrors = [];
-
-                for (const parsedEvent of parsedEvents) {
-                    if (syncToGoogle) {
-                        const result = await ipcRenderer.invoke('add-to-google-calendar', parsedEvent);
-                        if (result.success) {
-                            parsedEvent.googleEventId = result.eventId; 
-                        } else {
-                            console.error("Google Sync Error:", result.error);
-                            syncErrors.push(result.error);
-                        }
-                    }
-                    // The return value was being discarded, so a server-side
-                    // rejection showed up only in the terminal and the event
-                    // just silently never appeared.
-                    const saveRes = await ipcRenderer.invoke('save-event', parsedEvent);
-                    if (saveRes && saveRes.error) {
-                        saveErrors.push(saveRes.error);
-                        console.error('Save event failed:', saveRes.error, parsedEvent);
-                    }
-                }
-
-                if (saveErrors.length > 0) {
-                    toast.error(saveErrors[0], `Could not save ${saveErrors.length} event(s)`);
-                }
-
-                textInput.value = '';
-                addEventModal.style.display = 'none';
-
-                await loadAndRenderEvents();
-                await loadAndRenderWeeklyBoard();
-                await loadAndRenderHome();
-
-                if (syncToGoogle && syncErrors.length > 0) {
-                    toast.error(`⚠️ Could not sync to Google Calendar.\n\nReason: ${syncErrors[0]}\n\nThe event was still saved in MindSync itself.`);
-                }
-            }
+            eventConfirmList.innerHTML = '';
+            parsed.forEach(evt => eventConfirmList.appendChild(buildEventConfirmRow(evt)));
+            eventConfirmSave.textContent = parsed.length > 1 ? `Add ${parsed.length} to my week` : 'Add to my week';
+            showEventStage('confirm');
         } catch (e) {
-            toast.error("Communication error with AI.");
+            toast.error('Something went wrong reading that. Please try again.');
             console.error(e);
         } finally {
             saveEventBtn.innerText = originalText;
             saveEventBtn.disabled = false;
+        }
+    });
+}
+
+if (eventConfirmSave) {
+    eventConfirmSave.addEventListener('click', async () => {
+        const rows = Array.from(eventConfirmList.querySelectorAll('.event-confirm-row'));
+        const events = rows.map(row => {
+            const get = (f) => row.querySelector(`[data-field="${f}"]`).value;
+            return { ...row._extra, title: get('title').trim(), day: get('day'), time: get('time'), type: get('type') };
+        });
+        if (events.some(e => !e.title)) { toast.warning('Every item needs a name.'); return; }
+        if (events.some(e => !/^\d{2}:\d{2}$/.test(e.time))) { toast.warning('Please set a time.'); return; }
+
+        const syncToGoogle = document.getElementById('sync-google-check').checked;
+        const originalText = eventConfirmSave.textContent;
+        eventConfirmSave.disabled = true;
+        eventConfirmSave.textContent = syncToGoogle ? 'Saving and syncing…' : 'Saving…';
+
+        const saveErrors = [];
+        const syncErrors = [];
+        try {
+            for (const evt of events) {
+                if (syncToGoogle) {
+                    const result = await ipcRenderer.invoke('add-to-google-calendar', evt);
+                    if (result && result.success) evt.googleEventId = result.eventId;
+                    else syncErrors.push(result ? result.error : 'unknown error');
+                }
+                const saveRes = await ipcRenderer.invoke('save-event', evt);
+                if (saveRes && saveRes.error) saveErrors.push(saveRes.error);
+            }
+        } finally {
+            eventConfirmSave.disabled = false;
+            eventConfirmSave.textContent = originalText;
+        }
+
+        if (saveErrors.length) { toast.error(saveErrors[0], `Could not save ${saveErrors.length} item(s)`); return; }
+        closeAddEventModal();
+        await loadAndRenderWeeklyBoard();
+        await loadAndRenderHome();
+        if (typeof refreshOnboarding === 'function') refreshOnboarding();
+        if (syncToGoogle && syncErrors.length) {
+            toast.warning(`Saved in MindSync, but not in Google Calendar: ${syncErrors[0]}`);
+        } else {
+            toast.success(events.length > 1 ? `${events.length} items added to your week.` : `"${events[0].title}" added to your week.`);
         }
     });
 }
@@ -691,6 +787,7 @@ const smartTaskInput = document.getElementById('smart-task-input');
 
 if (triggerAddTaskBtn) triggerAddTaskBtn.onclick = async () => {
     addTaskModal.style.display = 'flex';
+    showTaskStage('write');
     // Populate the datalist so you can reuse an existing category instead of
     // retyping it (and accidentally creating "Exam" vs "exam" duplicates).
     const datalist = document.getElementById('existing-categories');
@@ -699,13 +796,53 @@ if (triggerAddTaskBtn) triggerAddTaskBtn.onclick = async () => {
         datalist.innerHTML = (cats || []).map(c => `<option value="${escapeHtml(c)}"></option>`).join('');
     }
 };
-if (cancelTaskBtn) cancelTaskBtn.onclick = () => addTaskModal.style.display = 'none';
+// ---- Add task: write it, then confirm what was understood ----
+// The text used to be parsed AND saved in one step, so a misread date just
+// appeared in the list. Now "Continue" only parses; the confirm step shows
+// the result in editable fields, and "Add task" saves it.
+const taskStageWrite = document.getElementById('task-stage-write');
+const taskStageConfirm = document.getElementById('task-stage-confirm');
+const taskConfirmTitle = document.getElementById('task-confirm-title');
+const taskConfirmDate = document.getElementById('task-confirm-date');
+const taskConfirmDuration = document.getElementById('task-confirm-duration');
+const taskConfirmCategory = document.getElementById('task-confirm-category');
+const taskConfirmSave = document.getElementById('task-confirm-save');
+let taskPreview = null;
+
+// DD/MM/YYYY (how tasks store dates) <-> YYYY-MM-DD (what a date input uses)
+function ddmmyyyyToIso(str) {
+    const m = String(str || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : '';
+}
+function isoToDdmmyyyy(str) {
+    const m = String(str || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return m ? `${m[3]}/${m[2]}/${m[1]}` : 'Not set';
+}
+
+function showTaskStage(stage) {
+    taskStageWrite.hidden = stage !== 'write';
+    taskStageConfirm.hidden = stage !== 'confirm';
+    (stage === 'write' ? smartTaskInput : taskConfirmTitle).focus();
+}
+
+function closeAddTaskModal() {
+    addTaskModal.style.display = 'none';
+    smartTaskInput.value = '';
+    const categoryInput = document.getElementById('smart-task-category');
+    if (categoryInput) categoryInput.value = '';
+    taskPreview = null;
+    showTaskStage('write');
+}
+
+if (cancelTaskBtn) cancelTaskBtn.onclick = closeAddTaskModal;
+const taskConfirmBack = document.getElementById('task-confirm-back');
+if (taskConfirmBack) taskConfirmBack.onclick = () => showTaskStage('write');
 
 if (saveSmartTaskBtn) {
     saveSmartTaskBtn.onclick = async () => {
         const text = smartTaskInput.value.trim();
         if (!text) {
-            toast.error("You must write something!");
+            toast.warning('Write what needs to be done first.');
             return;
         }
 
@@ -713,28 +850,58 @@ if (saveSmartTaskBtn) {
         const category = categoryInput ? categoryInput.value.trim() : '';
 
         const originalText = saveSmartTaskBtn.innerText;
-        saveSmartTaskBtn.innerText = 'Processing...';
+        saveSmartTaskBtn.innerText = 'Reading…';
         saveSmartTaskBtn.disabled = true;
 
         try {
-            const response = await ipcRenderer.invoke('add-smart-task', text, category);
+            const response = await ipcRenderer.invoke('add-smart-task', text, category, { previewOnly: true });
             const result = JSON.parse(response);
-
-            if (result.error) {
-                toast.error("Oops: " + result.error);
-            } else {
-                smartTaskInput.value = '';
-                if (categoryInput) categoryInput.value = '';
-                addTaskModal.style.display = 'none';
-                await refreshTasksData();
-                await loadAndRenderHome();
+            if (result.error || !result.preview) {
+                toast.error(result.error || 'Could not read that. Try writing it a bit differently.');
+                return;
             }
+            taskPreview = result.preview;
+            taskConfirmTitle.value = taskPreview.title || '';
+            taskConfirmDate.value = ddmmyyyyToIso(taskPreview.date);
+            const dur = taskPreview.estimatedMinutes ? String(taskPreview.estimatedMinutes) : '';
+            // A parsed duration that isn't one of the menu's options still
+            // gets shown, rather than silently snapping to "Not sure".
+            if (dur && !Array.from(taskConfirmDuration.options).some(o => o.value === dur)) {
+                taskConfirmDuration.appendChild(new Option(`${dur} min`, dur));
+            }
+            taskConfirmDuration.value = dur;
+            taskConfirmCategory.value = taskPreview.category || '';
+            showTaskStage('confirm');
         } catch (e) {
-            toast.error("Communication error with AI.");
+            toast.error('Something went wrong reading that. Please try again.');
             console.error(e);
         } finally {
             saveSmartTaskBtn.innerText = originalText;
             saveSmartTaskBtn.disabled = false;
+        }
+    };
+}
+
+if (taskConfirmSave) {
+    taskConfirmSave.onclick = async () => {
+        const title = taskConfirmTitle.value.trim();
+        if (!title) { toast.warning('The task needs a name.'); taskConfirmTitle.focus(); return; }
+        taskConfirmSave.disabled = true;
+        try {
+            const res = await ipcRenderer.invoke('create-confirmed-task', {
+                title,
+                date: isoToDdmmyyyy(taskConfirmDate.value),
+                estimatedMinutes: taskConfirmDuration.value ? Number(taskConfirmDuration.value) : null,
+                category: taskConfirmCategory.value.trim(),
+                urgency: 'Normal'
+            });
+            if (res && res.error) { toast.error(res.error, 'Could not add the task'); return; }
+            closeAddTaskModal();
+            await refreshTasksData();
+            await loadAndRenderHome();
+            toast.success(`"${title}" added.`);
+        } finally {
+            taskConfirmSave.disabled = false;
         }
     };
 }
@@ -1150,8 +1317,7 @@ function renderTasksList() {
                         e.target.checked = !newValue; // revert the checkbox, the server rejected it
                         return;
                     }
-                    task.subtasks = updated.subtasks;
-                    task.status = updated.status;
+                    if (await applySubtaskResult(updated)) return;
                     refreshProgressUI();
                     renderChecklist();
                 };
@@ -1159,14 +1325,30 @@ function renderTasksList() {
                 row.querySelector('.delete-subtask-btn').onclick = async () => {
                     const updated = await ipcRenderer.invoke('delete-subtask', task.id, sub._id);
                     if (updated && updated.error) { toast.error('Could not remove step: ' + updated.error); return; }
-                    task.subtasks = updated.subtasks;
-                    task.status = updated.status;
+                    if (await applySubtaskResult(updated)) return;
                     refreshProgressUI();
                     renderChecklist();
                 };
 
                 checklistItems.appendChild(row);
             });
+        }
+
+        // BUG FIX: ticking the last step makes the SERVER mark the whole
+        // task completed (and unticking one reopens it). The card, the
+        // counts on Home and the sidebar never heard about it - the card
+        // kept its "Done" button and the sidebar kept saying "1 open task".
+        // When the status flips, redraw everything; otherwise (the common
+        // case) keep the quick in-place update so the checklist stays open.
+        // Returns true when it did the full refresh.
+        async function applySubtaskResult(updated) {
+            const statusChanged = updated.status !== task.status;
+            task.subtasks = updated.subtasks;
+            task.status = updated.status;
+            if (!statusChanged) return false;
+            if (updated.status === 'completed') toast.success('All steps done - task completed.');
+            await refreshTaskViews();
+            return true;
         }
 
         // Updates the progress bar in place instead of re-rendering the whole
@@ -1258,9 +1440,14 @@ function renderTasksList() {
         deleteBtn.onclick = async () => {
             // Keep a copy so Undo can recreate it. The id will differ after
             // restore, which is fine - the content is what the user cares about.
+            // BUG FIX: dueDate and estimatedMinutes weren't copied, so an
+            // undone delete came back without them (the planner then treated
+            // it as a one-hour task).
             const snapshot = {
                 title: task.title,
                 date: task.date,
+                dueDate: task.dueDate,
+                estimatedMinutes: task.estimatedMinutes,
                 category: task.category,
                 urgency: task.urgency,
                 subtasks: (task.subtasks || []).map(st => ({ title: st.title, completed: st.completed }))
@@ -1347,12 +1534,10 @@ loadAndRenderTasks();
 // ==========================================
 const materialsGrid = document.querySelector('.materials-grid');
 const uploadModal = document.getElementById('upload-file-modal');
-const uploadFileNameDisplay = document.getElementById('upload-file-name-display');
 const uploadFolderSelect = document.getElementById('upload-folder-select');
 const addFolderModal = document.getElementById('add-folder-modal');
 
 let currentActiveFolder = 'All';
-let pendingFileToSave = null;
 
 async function loadAndRenderFolders() {
     if (!materialsGrid) return;
@@ -1411,10 +1596,11 @@ async function loadAndRenderFolders() {
     materialsGrid.appendChild(addBtn);
 
     if (uploadFolderSelect) {
-        uploadFolderSelect.innerHTML = '<option value="No Folder">No Folder</option>';
-        folders.forEach(f => {
-            uploadFolderSelect.innerHTML += `<option value="${f.name}">${f.name}</option>`;
-        });
+        // Built with DOM nodes, not an HTML string: a folder name is user text,
+        // and this used to put it into innerHTML raw - an injection point.
+        uploadFolderSelect.innerHTML = '';
+        uploadFolderSelect.appendChild(new Option('No Folder', 'No Folder'));
+        folders.forEach(f => uploadFolderSelect.appendChild(new Option(f.name, f.name)));
     }
 }
 
@@ -1531,43 +1717,192 @@ async function loadAndRenderFiles() {
     });
 }
 
-const uploadBtnElement = document.querySelector('.btn-upload');
-if (uploadBtnElement) {
-    uploadBtnElement.onclick = async () => {
-        const result = await ipcRenderer.invoke('select-and-read-file');
-        if (!result) return; // user cancelled the file picker - not an error
-        // BUG FIX: this used to silently do nothing on a read error - which
-        // is exactly "I clicked it and nothing happened" from the outside.
-        // Now it surfaces main.js's actual message (e.g. a PDF that failed
-        // to extract, or a file it couldn't read at all).
-        if (result.error) { toast.error(result.error, 'Could not read file'); return; }
-        pendingFileToSave = result;
-        uploadFileNameDisplay.textContent = result.fileName;
-        uploadFolderSelect.value = currentActiveFolder !== 'All' ? currentActiveFolder : "No Folder";
-        uploadModal.style.display = 'flex';
-    };
-}
-
+// ---- Upload: one file, many files, or a whole folder ----
+// Before, the picker took a single file and there was no way to add a folder
+// of lecture notes except one file at a time. Now: pick files (several at
+// once) or a folder, review the list, choose where they go, and they upload
+// one by one with a status next to each - so a batch of 20 PDFs visibly
+// progresses instead of looking frozen.
+const uploadTitle = document.getElementById('upload-title');
+const uploadSummary = document.getElementById('upload-summary');
+const uploadList = document.getElementById('upload-file-list');
 const confirmUploadBtn = document.getElementById('confirm-upload-btn');
-if (confirmUploadBtn) {
-    confirmUploadBtn.onclick = async () => {
-        if (!pendingFileToSave) return;
-        const result = await ipcRenderer.invoke('save-file', {
-            name: pendingFileToSave.fileName,
-            content: pendingFileToSave.fileContent,
-            sourcePath: pendingFileToSave.filePath || '',
-            folder: uploadFolderSelect.value
+const cancelUploadBtn = document.getElementById('cancel-upload-btn');
+const NEW_FOLDER_PREFIX = '__new__:';
+
+let uploadBatch = null; // { files, folderName, running, stopRequested, done }
+
+function setUploadRowStatus(index, state, text) {
+    const row = uploadList.querySelector(`[data-index="${index}"]`);
+    if (!row) return;
+    row.dataset.state = state;
+    row.querySelector('.upload-row__status').textContent = text;
+    if (state === 'working') row.scrollIntoView({ block: 'nearest' });
+}
+
+async function openUploadPicker(mode) {
+    const picked = await ipcRenderer.invoke('select-upload-files', mode);
+    if (!picked) return; // cancelled the picker - not an error
+    if (!picked.files.length) {
+        toast.warning(mode === 'folder'
+            ? `No supported files in that folder. Supported: ${picked.supported.join(', ')}.`
+            : 'None of those files are a supported type.');
+        return;
+    }
+
+    uploadBatch = { files: picked.files, folderName: picked.folderName, running: false, stopRequested: false, done: false };
+
+    uploadTitle.textContent = picked.folderName ? `Upload folder "${picked.folderName}"` : 'Upload files';
+    uploadSummary.textContent = `${picked.files.length} file${picked.files.length === 1 ? '' : 's'} ready to upload.`
+        + (picked.truncated ? ` Only the first ${picked.maxFiles} are included - upload the rest in another batch.` : '');
+
+    uploadList.innerHTML = '';
+    picked.files.forEach((f, i) => {
+        const row = document.createElement('div');
+        row.className = 'upload-row';
+        row.dataset.index = i;
+        row.dataset.state = 'pending';
+        const name = document.createElement('span');
+        name.className = 'upload-row__name';
+        name.dir = 'auto';
+        name.textContent = f.name;
+        const status = document.createElement('span');
+        status.className = 'upload-row__status';
+        row.append(name, status);
+        uploadList.appendChild(row);
+    });
+
+    // Destination: existing folders, plus - for a folder upload - an option
+    // to create a matching folder here (selected by default, since that's
+    // almost always what uploading "Statistics" means).
+    const folders = await ipcRenderer.invoke('get-folders').catch(() => []) || [];
+    uploadFolderSelect.innerHTML = '';
+    uploadFolderSelect.appendChild(new Option('No Folder', 'No Folder'));
+    folders.forEach(f => uploadFolderSelect.appendChild(new Option(f.name, f.name)));
+
+    const existingMatch = picked.folderName && folders.find(f => f.name.trim() === picked.folderName.trim());
+    if (picked.folderName && !existingMatch) {
+        const opt = new Option(`New folder: ${picked.folderName}`, NEW_FOLDER_PREFIX + picked.folderName);
+        uploadFolderSelect.insertBefore(opt, uploadFolderSelect.options[1] || null);
+        uploadFolderSelect.value = opt.value;
+    } else if (existingMatch) {
+        uploadFolderSelect.value = existingMatch.name;
+    } else {
+        uploadFolderSelect.value = currentActiveFolder !== 'All' ? currentActiveFolder : 'No Folder';
+    }
+
+    uploadFolderSelect.disabled = false;
+    confirmUploadBtn.disabled = false;
+    confirmUploadBtn.textContent = picked.files.length === 1 ? 'Upload' : `Upload ${picked.files.length} files`;
+    cancelUploadBtn.textContent = 'Cancel';
+    uploadModal.style.display = 'flex';
+}
+
+async function runUploadBatch() {
+    const batch = uploadBatch;
+    if (!batch || batch.running) return;
+    batch.running = true;
+    uploadFolderSelect.disabled = true;
+    confirmUploadBtn.disabled = true;
+    cancelUploadBtn.textContent = 'Stop';
+
+    // Resolve the destination, creating the folder first if asked to.
+    let folder = uploadFolderSelect.value;
+    if (folder.startsWith(NEW_FOLDER_PREFIX)) {
+        folder = folder.slice(NEW_FOLDER_PREFIX.length);
+        const created = await ipcRenderer.invoke('save-folder', { name: folder });
+        if (created && created.error && !/duplicate|exists|E11000/i.test(created.error)) {
+            toast.error(`Could not create the folder "${folder}": ${created.error}`);
+            batch.running = false;
+            uploadFolderSelect.disabled = false;
+            confirmUploadBtn.disabled = false;
+            cancelUploadBtn.textContent = 'Cancel';
+            return;
+        }
+    }
+
+    // Uploading the same folder twice shouldn't duplicate it: a file whose
+    // name already exists in the destination is skipped, not re-added.
+    const existing = await ipcRenderer.invoke('get-files-light').catch(() => []) || [];
+    const alreadyThere = new Set(existing.filter(f => (f.folder || 'No Folder') === folder).map(f => f.name));
+
+    let uploaded = 0, skipped = 0, failed = 0;
+    for (let i = 0; i < batch.files.length; i++) {
+        if (batch.stopRequested) {
+            for (let j = i; j < batch.files.length; j++) setUploadRowStatus(j, 'skipped', 'Not uploaded');
+            break;
+        }
+        const f = batch.files[i];
+        uploadSummary.textContent = `Uploading ${i + 1} of ${batch.files.length}…`;
+
+        if (alreadyThere.has(f.name)) {
+            skipped++;
+            setUploadRowStatus(i, 'skipped', 'Already uploaded');
+            continue;
+        }
+
+        setUploadRowStatus(i, 'working', 'Reading…');
+        const read = await ipcRenderer.invoke('read-upload-file', f.path);
+        if (!read || read.error) {
+            failed++;
+            setUploadRowStatus(i, 'failed', "Couldn't read this file");
+            continue;
+        }
+        const saved = await ipcRenderer.invoke('save-file', {
+            name: read.fileName,
+            content: read.fileContent,
+            sourcePath: read.filePath || '',
+            folder
         });
-        if (result && result.error) { toast.error('Could not save file: ' + result.error); return; }
-        uploadModal.style.display = 'none';
-        pendingFileToSave = null;
-        await loadAndRenderFiles();
+        if (saved && saved.error) {
+            failed++;
+            setUploadRowStatus(i, 'failed', /large|limit|413/i.test(saved.error) ? 'Too large' : 'Upload failed');
+            continue;
+        }
+        uploaded++;
+        alreadyThere.add(f.name);
+        setUploadRowStatus(i, 'done', 'Uploaded');
+    }
+
+    batch.running = false;
+    batch.done = true;
+    const parts = [`${uploaded} uploaded`];
+    if (skipped) parts.push(`${skipped} skipped`);
+    if (failed) parts.push(`${failed} failed`);
+    uploadSummary.textContent = parts.join(' · ') + '.';
+    cancelUploadBtn.textContent = 'Close';
+    confirmUploadBtn.textContent = 'Done';
+    confirmUploadBtn.disabled = false;
+
+    if (folder !== 'No Folder') currentActiveFolder = folder;
+    await loadAndRenderFolders();
+    await loadAndRenderFiles();
+    if (typeof refreshOnboarding === 'function') refreshOnboarding();
+}
+
+document.querySelectorAll('.btn-upload').forEach(btn => {
+    btn.onclick = () => openUploadPicker(btn.dataset.uploadMode || 'files');
+});
+
+if (confirmUploadBtn) {
+    confirmUploadBtn.onclick = () => {
+        if (uploadBatch && uploadBatch.done) { uploadModal.style.display = 'none'; uploadBatch = null; return; }
+        runUploadBatch();
     };
 }
 
-const cancelUploadBtn = document.getElementById('cancel-upload-btn');
 if (cancelUploadBtn) {
-    cancelUploadBtn.onclick = () => uploadModal.style.display = 'none';
+    cancelUploadBtn.onclick = () => {
+        // Mid-upload, "Stop" finishes the current file and stops - closing
+        // the window outright would hide a batch that's still running.
+        if (uploadBatch && uploadBatch.running) {
+            uploadBatch.stopRequested = true;
+            cancelUploadBtn.textContent = 'Stopping…';
+            return;
+        }
+        uploadModal.style.display = 'none';
+        uploadBatch = null;
+    };
 }
 
 const saveFolderBtnFinal = document.getElementById('save-folder-btn');
@@ -1851,7 +2186,12 @@ if (settingsEditBtn) {
 // 12. Dynamic Home & Hard Reset
 // ==========================================
 async function loadAndRenderHome() {
-    const tasks = await ipcRenderer.invoke('get-tasks') || [];
+    // BUG FIX: completed tasks are archived (status 'completed'), not
+    // deleted - so counting every task made the sidebar say "1 open task"
+    // and Home's "Open Tasks" stat stay at 1 after the task was done.
+    // Everything below only ever wants the open ones.
+    const allTasks = await ipcRenderer.invoke('get-tasks') || [];
+    const tasks = allTasks.filter(t => t.status !== 'completed');
     const events = await ipcRenderer.invoke('get-events') || [];
     
     const statTasks = document.getElementById('home-stat-tasks');
@@ -1949,6 +2289,191 @@ if (sidebarHighlight) {
 }
 
 loadAndRenderHome();
+
+// ==========================================
+// Getting started (Home)
+// ==========================================
+// Testers landed on a Home full of zeros with nothing telling them where to
+// begin, and the setup the app most depends on (the AI key) was buried in
+// Settings. This checklist walks a new user through the core loop one step
+// at a time: only the current step is open, with one short sentence and a
+// button that goes straight to the right place and opens the right dialog.
+const onboardingEl = document.getElementById('onboarding');
+const onboardingStepsEl = document.getElementById('onboarding-steps');
+const onboardingBarEl = document.getElementById('onboarding-bar');
+const onboardingKey = (name) => `mindsync.onboarding.${name}.${currentUserId || 'anon'}`;
+
+// Switches screen, then clicks a button on it once it's visible.
+function goAndClick(navId, buttonId) {
+    document.getElementById(navId).click();
+    if (buttonId) setTimeout(() => { const b = document.getElementById(buttonId); if (b) b.click(); }, 60);
+}
+
+const ONBOARDING_STEPS = [
+    {
+        id: 'ai',
+        title: 'Connect the AI',
+        text: 'The AI reads your files and writes your practice questions. It needs a free Google key - about a minute, no credit card.',
+        isDone: (st) => st.hasKey || localStorage.getItem(onboardingKey('skipAi')) === '1',
+        render: (body) => {
+            body.innerHTML = `
+                <div class="onboarding__key-row">
+                    <button class="btn-secondary" data-act="get-key">1. Get a free key</button>
+                    <input type="password" class="input-field onboarding__key-input" placeholder="2. Paste the key here" autocomplete="off">
+                    <button class="btn-primary" data-act="save-key">Connect</button>
+                </div>
+                <div class="onboarding__note" data-role="msg"></div>
+                <button class="onboarding__skip" data-act="skip-ai">Skip for now</button>`;
+            const input = body.querySelector('.onboarding__key-input');
+            const msg = body.querySelector('[data-role="msg"]');
+            body.querySelector('[data-act="get-key"]').onclick = () =>
+                require('electron').shell.openExternal('https://aistudio.google.com/apikey');
+            const saveBtn = body.querySelector('[data-act="save-key"]');
+            const save = async () => {
+                const key = input.value.trim();
+                if (!key) { msg.textContent = 'Paste the key into the box first.'; msg.className = 'onboarding__note is-error'; return; }
+                saveBtn.disabled = true;
+                saveBtn.textContent = 'Checking…';
+                msg.textContent = '';
+                const test = await ipcRenderer.invoke('test-gemini-key', key);
+                if (!test || !test.ok) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = 'Connect';
+                    msg.textContent = "That key didn't work. Copy it again from the Google page and paste it here.";
+                    msg.className = 'onboarding__note is-error';
+                    return;
+                }
+                await ipcRenderer.invoke('save-ai-config', { geminiKey: key });
+                if (typeof loadAiSettings === 'function') loadAiSettings();
+                toast.success('The AI is connected.', 'All set');
+                refreshOnboarding();
+            };
+            saveBtn.onclick = save;
+            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
+            body.querySelector('[data-act="skip-ai"]').onclick = () => {
+                localStorage.setItem(onboardingKey('skipAi'), '1');
+                toast.info('You can connect it later in Settings. Until then, summaries and questions won\'t work well.');
+                refreshOnboarding();
+            };
+        }
+    },
+    {
+        id: 'upload',
+        title: 'Add your course files',
+        text: 'Lecture notes, summaries or exercises for one course - a single file or a whole folder.',
+        isDone: (st) => st.files > 0,
+        actions: [
+            { label: 'Upload files', primary: true, run: () => { document.getElementById('nav-materials').click(); setTimeout(() => openUploadPicker('files'), 60); } },
+            { label: 'Upload a folder', run: () => { document.getElementById('nav-materials').click(); setTimeout(() => openUploadPicker('folder'), 60); } }
+        ]
+    },
+    {
+        id: 'questions',
+        title: 'Make practice questions',
+        text: 'Pick a file and the AI writes questions from it. You look them over before they\'re added.',
+        isDone: (st) => st.questions > 0,
+        actions: [{ label: 'Make questions', primary: true, run: () => goAndClick('nav-study', 'generate-study-btn') }]
+    },
+    {
+        id: 'practice',
+        title: 'Answer your first questions',
+        text: 'Before each answer you say how sure you are. That\'s how MindSync learns what you really know - and what you only think you know.',
+        isDone: (st) => st.reviews > 0,
+        actions: [{ label: 'Start practicing', primary: true, run: () => goAndClick('nav-study', 'start-study-btn') }]
+    },
+    {
+        id: 'week',
+        title: 'Add your classes and exams',
+        text: 'Just write it the way you\'d say it, e.g. "מבחן בסטטיסטיקה ביום חמישי ב-9".',
+        isDone: (st) => st.calendarItems > 0,
+        actions: [{ label: 'Add to my week', primary: true, run: () => goAndClick('nav-weekly', 'trigger-add-event') }]
+    }
+];
+
+function renderOnboarding(status) {
+    const hidden = localStorage.getItem(onboardingKey('hidden')) === '1';
+    const doneFlags = ONBOARDING_STEPS.map(step => step.isDone(status));
+    const doneCount = doneFlags.filter(Boolean).length;
+
+    // Nothing left to do, or the user hid it: stay out of the way.
+    if (hidden || doneCount === ONBOARDING_STEPS.length) { onboardingEl.hidden = true; return; }
+    onboardingEl.hidden = false;
+    onboardingBarEl.style.width = `${Math.round((doneCount / ONBOARDING_STEPS.length) * 100)}%`;
+
+    const currentIndex = doneFlags.indexOf(false);
+    onboardingStepsEl.innerHTML = '';
+    ONBOARDING_STEPS.forEach((step, i) => {
+        const state = doneFlags[i] ? 'done' : (i === currentIndex ? 'current' : 'todo');
+        const li = document.createElement('li');
+        li.className = `onboarding__step is-${state}`;
+        li.innerHTML = `
+            <span class="onboarding__marker">${state === 'done' ? '✓' : i + 1}</span>
+            <div class="onboarding__content">
+                <div class="onboarding__step-title"></div>
+                <div class="onboarding__body"></div>
+            </div>`;
+        li.querySelector('.onboarding__step-title').textContent = step.title;
+
+        // Only the current step is expanded - one thing to do at a time.
+        if (state === 'current') {
+            const body = li.querySelector('.onboarding__body');
+            const text = document.createElement('p');
+            text.className = 'onboarding__text';
+            text.dir = 'auto';
+            text.textContent = step.text;
+            body.appendChild(text);
+            if (step.render) {
+                const custom = document.createElement('div');
+                body.appendChild(custom);
+                step.render(custom);
+            } else if (step.actions) {
+                const row = document.createElement('div');
+                row.className = 'onboarding__actions';
+                step.actions.forEach(a => {
+                    const btn = document.createElement('button');
+                    btn.className = a.primary ? 'btn-primary' : 'btn-secondary';
+                    btn.textContent = a.label;
+                    btn.onclick = a.run;
+                    row.appendChild(btn);
+                });
+                body.appendChild(row);
+            }
+        }
+        onboardingStepsEl.appendChild(li);
+    });
+}
+
+async function refreshOnboarding() {
+    if (!onboardingEl || !currentUserId) return;
+    const status = await ipcRenderer.invoke('get-onboarding-status').catch(() => null);
+    if (!status || status.error) return; // couldn't check - leave it as it was
+    renderOnboarding(status);
+}
+
+const onboardingHideBtn = document.getElementById('onboarding-hide');
+if (onboardingHideBtn) {
+    onboardingHideBtn.onclick = () => {
+        localStorage.setItem(onboardingKey('hidden'), '1');
+        onboardingEl.hidden = true;
+        toast.info('Hidden. You can bring it back from Settings.');
+    };
+}
+
+const showOnboardingBtn = document.getElementById('settings-show-onboarding-btn');
+if (showOnboardingBtn) {
+    showOnboardingBtn.onclick = async () => {
+        localStorage.removeItem(onboardingKey('hidden'));
+        localStorage.removeItem(onboardingKey('skipAi'));
+        document.getElementById('nav-home').click();
+        await refreshOnboarding();
+        if (onboardingEl.hidden) toast.success("You've already done every step - nothing left in the guide.");
+    };
+}
+
+// Coming back to Home re-checks progress, so a step done elsewhere (a file
+// uploaded, a session finished) is ticked off without a restart.
+const navHomeForOnboarding = document.getElementById('nav-home');
+if (navHomeForOnboarding) navHomeForOnboarding.addEventListener('click', refreshOnboarding);
 
 const copyLogBtn = document.getElementById('settings-copy-log-btn');
 if (copyLogBtn) {
@@ -2088,8 +2613,26 @@ function showNotification(title, message) {    // 1. התראה פנימית - n
 // זיכרון קצר ששומר מזהים של אירועים שכבר קפצה עליהם התראה
 let notifiedEvents = new Set();
 
+// BUG FIX (two small ones in this timer):
+// - It asked the server for events every 30s even on the login screen,
+//   where every call is a guaranteed 401.
+// - An app left open past midnight kept showing yesterday as "today" (Home,
+//   sidebar, the highlighted column), and the already-notified list was
+//   never reset, so a weekly class never notified again in the same session.
+let notifierDayKey = new Date().toDateString();
+
 // בודקים כל 30 שניות כדי לא לפספס אירועים קרובים
 setInterval(async () => {
+    if (document.body.classList.contains('auth-pending')) return;
+
+    const dayKey = new Date().toDateString();
+    if (dayKey !== notifierDayKey) {
+        notifierDayKey = dayKey;
+        notifiedEvents.clear();
+        loadAndRenderHome();
+        loadAndRenderWeeklyBoard();
+    }
+
     const events = await ipcRenderer.invoke('get-events') || [];
     if (events.length === 0) return;
 
@@ -2608,7 +3151,7 @@ const OUTCOMES_BY_MODE = {
     ]
 };
 
-const MODE_LABELS = { recall: 'Recall', practice: 'Practice', explain: 'Explain' };
+const MODE_LABELS = { recall: 'Remember', practice: 'Solve', explain: 'Explain' };
 const MODE_PROMPTS = {
     recall: 'Think of your answer. How sure are you?',
     practice: 'Read the problem. How sure are you that you can solve it?',
@@ -2758,7 +3301,7 @@ async function startStudySession(resume = null) {
         items = resume.ids.map(id => byId.get(id)).filter(Boolean);
 
         if (items.length === 0) {
-            toast.info('Those questions are no longer available. Starting a new session.');
+            toast.info('Those questions are no longer available. Starting fresh.');
             clearSessionProgress();
             return startStudySession();
         }
@@ -2807,12 +3350,20 @@ function renderStudyCard() {
     document.getElementById('study-confidence-prompt').textContent = MODE_PROMPTS[item.mode] || MODE_PROMPTS.recall;
 
     document.getElementById('study-confidence-step').hidden = false;
+    // The explanation fades out by itself after a user's first few answers.
+    const hint = document.getElementById('study-confidence-hint');
+    if (hint) hint.hidden = Number(localStorage.getItem(confidenceHintKey()) || 0) >= CONFIDENCE_HINT_TIMES;
     document.getElementById('study-answer-step').hidden = true;
 }
+
+const CONFIDENCE_HINT_TIMES = 5;
+function confidenceHintKey() { return `mindsync.confidenceHintSeen.${currentUserId || 'anon'}`; }
 
 // Step 1 -> 2: confidence is locked in before anything is revealed.
 document.querySelectorAll('.confidence-btn').forEach(btn => {
     btn.addEventListener('click', () => {
+        const seen = Number(localStorage.getItem(confidenceHintKey()) || 0);
+        if (seen < CONFIDENCE_HINT_TIMES) localStorage.setItem(confidenceHintKey(), String(seen + 1));
         studyState.confidence = btn.dataset.confidence;
         revealAnswer();
     });
@@ -2910,7 +3461,7 @@ async function submitReview(outcome) {
     // screen a week later it teaches nothing.
     if (res.wasOverconfident) {
         studyState.session.overconfident += 1;
-        toast.warning('You were certain about that one. Worth another look.', 'Overconfident');
+        toast.warning('You were sure about that one. It will come back soon.', 'Sure but wrong');
     }
 
     // A same-session retry (interval 0) goes back in the queue rather than
@@ -3168,7 +3719,7 @@ async function loadManageList() {
         renderEmptyState(listEl, {
             icon: '🗂️',
             title: 'No questions yet',
-            message: 'Create questions from a file to start building your deck.'
+            message: 'Make questions from one of your files to start practicing.'
         });
         if (filtersEl) filtersEl.innerHTML = '';
         return;   // the delete button was already reset above
@@ -3420,7 +3971,7 @@ function updateReviewCount() {
     if (totEl) totEl.textContent = reviewDraft.length;
     if (confirmBtn) {
         confirmBtn.disabled = selected === 0;
-        confirmBtn.textContent = selected === 0 ? 'Nothing selected' : `Add ${selected} to deck`;
+        confirmBtn.textContent = selected === 0 ? 'Nothing selected' : `Add ${selected} question${selected === 1 ? '' : 's'}`;
     }
 }
 
@@ -3493,17 +4044,20 @@ async function loadAiSettings() {
     if (!cfg) return;
 
     if (aiActiveLabel) {
-        aiActiveLabel.textContent = cfg.active === 'gemini'
-            ? 'Gemini — pages are read as images, so formulas and code come through intact.'
-            : 'Ollama — local and offline. Handles text well; formulas and code are unreliable.';
+        // Plain status instead of engine names ("Gemini - pages are read as
+        // images...") that meant nothing to testers.
+        aiActiveLabel.textContent = cfg.hasKey
+            ? 'Connected ✓'
+            : 'Not connected - summaries and questions won\'t work well until you add a key.';
+        aiActiveLabel.classList.toggle('is-warning', !cfg.hasKey);
     }
 
     if (aiKeyStatus) {
         // Only ever show a masked form. The full key is never sent back from
         // the main process, so it can't leak through the UI.
         aiKeyStatus.innerHTML = cfg.hasKey
-            ? `Key saved (<span class="ms-tabular">${escapeHtml(cfg.keyPreview)}</span>).`
-            : 'No key saved.';
+            ? `Saved (<span class="ms-tabular">${escapeHtml(cfg.keyPreview)}</span>). Paste a new one below to replace it.`
+            : 'Not added yet.';
     }
 }
 

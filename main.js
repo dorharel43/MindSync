@@ -959,22 +959,32 @@ function resolveRelativeDate(text, now) {
     const plusDays = (n) => { const d = new Date(base); d.setDate(base.getDate() + n); return d; };
     const H = (w) => `(?<![א-ת])${w}(?![א-ת])`;
 
-    // 1. Explicit date: 20/9, 20.9, 20/9/2026, 20.09.26. Not "1.5 שעות".
-    const explicit = text.match(/(?<![\d:])(?:ב[\s-]?|עד\s+ה?-?)?(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?(?![\d:])(?!\s*(?:שע|hour))/);
-    if (explicit) {
-        const dd = parseInt(explicit[1], 10);
-        const mm = parseInt(explicit[2], 10);
-        if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) {
-            let yyyy = explicit[3] ? parseInt(explicit[3], 10) : base.getFullYear();
-            if (yyyy < 100) yyyy += 2000;
-            let d = new Date(yyyy, mm - 1, dd);
-            // No year given and the date already passed more than a week ago:
-            // they almost certainly mean next year ("הגשה ב-5/1" in December).
-            if (!explicit[3] && (base - d) > 7 * 86400000) d = new Date(yyyy + 1, mm - 1, dd);
-            if (d.getDate() === dd) { // rejects 31/2 and similar
-                return { date: d, strip: [new RegExp(explicit[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')] };
-            }
-        }
+    // 1. Explicit date: 20/9, 20/9/2026, 20.09.26, ב-20.9, עד 20.9. Not "1.5 שעות".
+    // BUG FIX: a bare "3.2" was read as the 3rd of February - so "לפתור תרגיל
+    // 3.2 בספר" became a task due next February (invisible on this week's
+    // board) and lost the "3.2" from its title. Students write section and
+    // exercise numbers like that all the time. Now a number that follows a
+    // word like פרק/תרגיל/סעיף/עמ' (including the rest of a list: "סעיפים
+    // 2.3-2.5", "תרגיל 3.2 ו-3.4") is never a date. "מבחן 20.10" still is.
+    // matchAll, so a rejected "3.2" doesn't hide a real date later in the
+    // text ("תרגיל 3.2 עד 30/9").
+    const DATE_RE = /(?<![\d:.])(ב[\s-]?|עד\s+ה?-?)?(\d{1,2})([./])(\d{1,2})(?:[./](\d{2,4}))?(?![\d:])(?!\s*(?:שע|hour))/g;
+    const SECTION_WORD = /(?:פרק|פרקים|תרגיל|תרגילים|סעיף|סעיפים|שאלה|שאלות|עמוד|עמודים|עמ'|יחידה|הרצאה|מטלה|גרסה|chapter|section|exercise|ex\.?|page|p\.)\s*(?:[\d./,\-–\s]|ו)*$/i;
+    for (const explicit of text.matchAll(DATE_RE)) {
+        const [, prefix, ddStr, , mmStr, yyStr] = explicit;
+        // "ב-"/"עד" in front means it IS a date, whatever came before it.
+        if (!prefix && SECTION_WORD.test(text.slice(0, explicit.index))) continue;
+        const dd = parseInt(ddStr, 10);
+        const mm = parseInt(mmStr, 10);
+        if (dd < 1 || dd > 31 || mm < 1 || mm > 12) continue;
+        let yyyy = yyStr ? parseInt(yyStr, 10) : base.getFullYear();
+        if (yyyy < 100) yyyy += 2000;
+        let d = new Date(yyyy, mm - 1, dd);
+        // No year given and the date already passed more than a week ago:
+        // they almost certainly mean next year ("הגשה ב-5/1" in December).
+        if (!yyStr && (base - d) > 7 * 86400000) d = new Date(yyyy + 1, mm - 1, dd);
+        if (d.getDate() !== dd) continue; // rejects 31/2 and similar
+        return { date: d, strip: [new RegExp(explicit[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')] };
     }
 
     // 2. מחרתיים before מחר - it contains it.
@@ -1011,7 +1021,55 @@ function parseDurationMinutes(text) {
     return null;
 }
 
-ipcMain.handle('add-smart-task', async (event, freeText, category = '') => {
+// Saves a task right away with a default urgency, then classifies the
+// urgency in the background and tells the window to refresh when it lands.
+// PERFORMANCE: awaiting the AI before saving meant two network round-trips
+// before the user saw anything. "Normal" is a safe default - worst case the
+// urgency briefly reads one level calmer than it should, never scarier.
+async function createTaskWithBackgroundUrgency(task, sender) {
+    const created = await api.createTask(task);
+    (async () => {
+        try {
+            const prompt = `Return ONLY a valid JSON object.
+Classify the urgency of this task: "${task.title}"
+Choose exactly one urgency: "Normal", "Medium", "High", or "Urgent".
+Format: {"urgency": "your_choice"}`;
+            let responseText = await callAIWithFallback(prompt);
+            responseText = extractJsonFromText(responseText);
+            const aiData = JSON.parse(responseText);
+            if (aiData.urgency && aiData.urgency !== 'Normal' && (!task.urgency || task.urgency === 'Normal')) {
+                await api.updateTask(created._id, { urgency: aiData.urgency });
+                if (sender && !sender.isDestroyed()) sender.send('tasks-changed');
+            }
+        } catch (err) {
+            // Non-fatal by design: the task already exists with a sane default.
+            console.warn('⚠️ Background urgency classification failed:', err.message);
+        }
+    })();
+    return created;
+}
+
+// Saves a task the user already reviewed in the Add Task preview.
+ipcMain.handle('create-confirmed-task', async (event, task) => {
+    try {
+        const title = String((task && task.title) || '').trim();
+        if (!title) return { error: 'The task needs a title.' };
+        const clean = {
+            title: title.slice(0, 300),
+            date: task.date || 'Not set',
+            category: String(task.category || '').trim(),
+            urgency: ['Normal', 'Medium', 'High', 'Urgent'].includes(task.urgency) ? task.urgency : 'Normal',
+            estimatedMinutes: task.estimatedMinutes ? Math.min(600, Math.max(5, Number(task.estimatedMinutes))) : undefined
+        };
+        await createTaskWithBackgroundUrgency(clean, event.sender);
+        return { success: true };
+    } catch (err) {
+        console.error('❌ create-confirmed-task failed:', err.message);
+        return { error: err.message };
+    }
+});
+
+ipcMain.handle('add-smart-task', async (event, freeText, category = '', options = {}) => {
     try {
         // BUG FIX: the main process is single-threaded, and this handler
         // runs a chain of several regex passes over freeText. The HTML
@@ -1138,29 +1196,14 @@ ipcMain.handle('add-smart-task', async (event, freeText, category = '') => {
             estimatedMinutes: durationMinutes || undefined
         };
 
-        const created = await api.createTask(task);
+        // Preview mode: return what was understood WITHOUT saving, so the
+        // Add Task window can show "להגיש עבודה · 30/09/2026" and let the
+        // user fix it first. Saving then goes through create-confirmed-task.
+        if (options && options.previewOnly) {
+            return JSON.stringify({ preview: task });
+        }
 
-        (async () => {
-            try {
-                const prompt = `Return ONLY a valid JSON object.
-Classify the urgency of this task: "${cleanTitle}"
-Choose exactly one urgency: "Normal", "Medium", "High", or "Urgent".
-Format: {"urgency": "your_choice"}`;
-                let responseText = await callAIWithFallback(prompt);
-                responseText = extractJsonFromText(responseText);
-                const aiData = JSON.parse(responseText);
-                if (aiData.urgency && aiData.urgency !== 'Normal') {
-                    await api.updateTask(created._id, { urgency: aiData.urgency });
-                    if (!event.sender.isDestroyed()) event.sender.send('tasks-changed');
-                }
-            } catch (err) {
-                // Non-fatal by design: the task already exists with a sane
-                // default, so a classification failure here shouldn't (and
-                // now can't) surface as "Add Task failed".
-                console.warn('⚠️ Background urgency classification failed:', err.message);
-            }
-        })();
-
+        await createTaskWithBackgroundUrgency(task, event.sender);
         return JSON.stringify({ success: true });
     } catch (error) {
         // BUG FIX: this used to swallow error.message and always return the
@@ -1541,7 +1584,12 @@ ipcMain.handle('generate-weekly-plan', async (event, currentTasks, currentEvents
             // Capped at 3 hours - one continuous block is what "study 3 hours
             // for the exam" means, not several disconnected ones.
             const blockMinutes = Math.min(task.estimatedMinutes || 60, 180);
-            const type = classifyEventByKeywords(task.title) || 'personal';
+            // BUG FIX: the block's colour came from keywords in the task's
+            // title, so time planned for "להכין שיעורי בית" or "סיכום הרצאה 3"
+            // was drawn as a Class. It's time set aside to work on a task, so
+            // it's a study block - unless the task is clearly personal.
+            const kwType = classifyEventByKeywords(task.title);
+            const type = (kwType === 'lesson' || kwType === 'exam') ? 'study' : (kwType || 'personal');
 
             // BUG FIX: the search used to start TOMORROW, so a task due today
             // could only ever be scheduled after its own deadline. It now runs
@@ -1629,32 +1677,73 @@ async function readPdf(filePath) {
     return repairHebrewPdfText(legacy);
 }
 
-ipcMain.handle('select-and-read-file', async () => {
-  const result = await dialog.showOpenDialog({
-    properties: ['openFile'],
-    filters: [{ name: 'Documents and Code', extensions: ['pdf', 'txt', 'md', 'java', 'py', 'js', 'html', 'css', 'json'] }]
-  });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  const filePath = result.filePaths[0];
-  const fileExt = path.extname(filePath).toLowerCase();
+// ---- Multi-file / folder upload ----
+// The old picker took exactly one file, and read it (PDF extraction and all)
+// before showing anything - fine for one file, a long silent wait for
+// twenty. Upload is now two steps: pick (returns the list instantly, nothing
+// read yet), then read + save one file at a time so the window can show
+// "Uploading 3 of 12". Whole folders are supported, subfolders included.
+const UPLOAD_EXTENSIONS = ['pdf', 'txt', 'md', 'java', 'py', 'js', 'html', 'css', 'json'];
+const UPLOAD_MAX_FILES = 100;
 
-  try {
-    let content = "";
-    if (fileExt === '.pdf') {
-      content = await readPdf(filePath);
-    } else {
-      content = fs.readFileSync(filePath, 'utf-8');
+function collectUploadableFiles(dir, depth = 0, found = []) {
+    if (depth > 5 || found.length > UPLOAD_MAX_FILES) return found;
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return found; }
+    // Sorted so a course folder uploads in the order it reads on disk
+    // (lecture 1, lecture 2...) rather than whatever order the OS returns.
+    entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name.startsWith('~$') || entry.name === 'node_modules') continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) collectUploadableFiles(full, depth + 1, found);
+        else if (UPLOAD_EXTENSIONS.includes(path.extname(entry.name).slice(1).toLowerCase())) found.push(full);
     }
-    // The original path is kept so the PDF can be re-rendered later for
-    // vision reading. Without it, the only record of the file is the
-    // extracted text - which is exactly the lossy version we're trying to
-    // stop relying on.
-    return { fileName: path.basename(filePath), fileContent: content, filePath };
-  } catch (err) {
-    console.error('❌ Failed to read file:', err.message);
-    return { error: "Failed to read the file: " + err.message };
-  }
+    return found;
+}
+
+// mode: 'files' (pick one or many) | 'folder' (pick a folder, take every
+// supported file inside it). Returns { files: [{ path, name }], folderName,
+// skipped, truncated } or null if the picker was cancelled.
+ipcMain.handle('select-upload-files', async (event, mode = 'files') => {
+    const isFolder = mode === 'folder';
+    const result = await dialog.showOpenDialog({
+        title: isFolder ? 'Choose a folder to upload' : 'Choose files to upload',
+        properties: isFolder ? ['openDirectory'] : ['openFile', 'multiSelections'],
+        filters: isFolder ? undefined : [{ name: 'Documents and Code', extensions: UPLOAD_EXTENSIONS }]
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+
+    let paths = [];
+    let folderName = null;
+    if (isFolder) {
+        folderName = path.basename(result.filePaths[0]);
+        paths = collectUploadableFiles(result.filePaths[0]);
+    } else {
+        paths = result.filePaths.filter(p => UPLOAD_EXTENSIONS.includes(path.extname(p).slice(1).toLowerCase()));
+    }
+    const truncated = paths.length > UPLOAD_MAX_FILES;
+    paths = paths.slice(0, UPLOAD_MAX_FILES);
+    return {
+        files: paths.map(p => ({ path: p, name: path.basename(p) })),
+        folderName,
+        truncated,
+        maxFiles: UPLOAD_MAX_FILES,
+        supported: UPLOAD_EXTENSIONS
+    };
 });
+
+ipcMain.handle('read-upload-file', async (event, filePath) => {
+    try {
+        const ext = path.extname(filePath).toLowerCase();
+        const content = ext === '.pdf' ? await readPdf(filePath) : fs.readFileSync(filePath, 'utf-8');
+        return { fileName: path.basename(filePath), fileContent: content, filePath };
+    } catch (err) {
+        console.error('❌ Failed to read file:', filePath, err.message);
+        return { error: err.message };
+    }
+});
+
 
 // =====================================
 // Stats - removed. /api/stats no longer exists server-side (XP/levels/
@@ -1798,12 +1887,24 @@ ipcMain.handle('add-subtask', async (event, taskId, title) => {
   try { return await api.addSubtask(taskId, title); } catch (err) { return { error: err.message }; }
 });
 
+// BUG FIX: the server marks a task completed by itself when its last
+// checklist step is ticked (or the last unticked step is removed). That path
+// never went through 'update-task', so the task's planned study blocks stayed
+// on the calendar after it was done. Same cleanup here.
 ipcMain.handle('toggle-subtask', async (event, taskId, subtaskId, completed) => {
-  try { return await api.toggleSubtask(taskId, subtaskId, completed); } catch (err) { return { error: err.message }; }
+  try {
+    const updated = await api.toggleSubtask(taskId, subtaskId, completed);
+    if (updated && updated.status === 'completed') await clearPlannedBlocksForTask(taskId);
+    return updated;
+  } catch (err) { return { error: err.message }; }
 });
 
 ipcMain.handle('delete-subtask', async (event, taskId, subtaskId) => {
-  try { return await api.deleteSubtask(taskId, subtaskId); } catch (err) { return { error: err.message }; }
+  try {
+    const updated = await api.deleteSubtask(taskId, subtaskId);
+    if (updated && updated.status === 'completed') await clearPlannedBlocksForTask(taskId);
+    return updated;
+  } catch (err) { return { error: err.message }; }
 });
 
 
@@ -2601,7 +2702,20 @@ ipcMain.handle('test-gemini-key', async (event, key) => {
 // =====================================
 async function authenticateGoogle(forceReauth = false) {
   const credentialsPath = path.join(__dirname, 'credentials.json');
-  const tokenPath = path.join(__dirname, 'token.json');
+  // BUG FIX: the token used to live in the app's own folder (__dirname).
+  // (1) In the packaged .exe that folder is inside app.asar, which is
+  // read-only - writing the token after a friend connects fails.
+  // (2) If token.json sits in the project folder when you run `npm run dist`,
+  // it can get packed INTO the .exe, and every friend would then be syncing
+  // into YOUR Google Calendar. userData is per-person, per-computer and
+  // writable. On your dev machine (npm start) an existing token.json is
+  // MOVED over once, so you stay connected. Never in the packaged app: a
+  // token.json found inside the .exe is somebody else's, not this user's.
+  const tokenPath = path.join(app.getPath('userData'), 'google-token.json');
+  const legacyTokenPath = path.join(__dirname, 'token.json');
+  if (!app.isPackaged && !fs.existsSync(tokenPath) && fs.existsSync(legacyTokenPath)) {
+    try { fs.renameSync(legacyTokenPath, tokenPath); } catch (e) { console.warn('⚠️ Could not move token.json:', e.message); }
+  }
   console.log(`🔑 authenticateGoogle: looking for credentials at ${credentialsPath} (exists: ${fs.existsSync(credentialsPath)}), token at ${tokenPath} (exists: ${fs.existsSync(tokenPath)}), forceReauth=${forceReauth}`);
   if (!fs.existsSync(credentialsPath)) throw new Error("credentials.json file is missing in the folder.");
 
@@ -2636,7 +2750,24 @@ async function authenticateGoogle(forceReauth = false) {
             resolve(oAuth2Client);
           }
         } catch (e) { reject(e); }
-      }).listen(3000, () => require('electron').shell.openExternal(authUrl));
+      });
+      // BUG FIX: if port 3000 is already taken (a React/Node dev server is
+      // the usual suspect on a student's machine) the 'error' event had no
+      // listener - an uncaught error in the main process, and the connect
+      // button waited forever. Now it fails with a message that says why.
+      server.on('error', (err) => {
+        reject(new Error(err.code === 'EADDRINUSE'
+          ? 'Port 3000 is in use by another program (maybe a dev server). Close it and try connecting again.'
+          : err.message));
+      });
+      // Closing the browser tab without approving used to leave this
+      // waiting forever too. Five minutes is plenty to click "Allow".
+      const giveUp = setTimeout(() => {
+        server.close();
+        reject(new Error('Google sign-in was not completed. Try connecting again.'));
+      }, 5 * 60 * 1000);
+      server.on('close', () => clearTimeout(giveUp));
+      server.listen(3000, () => require('electron').shell.openExternal(authUrl));
   });
 }
 
@@ -2859,6 +2990,35 @@ ipcMain.handle('save-file-summary', async (event, id, summary) => {
     }
 });
 
+// Getting-started checklist on Home: which of the first steps this user has
+// already done. All checks run in parallel, and each one fails soft - one
+// slow or broken call shouldn't blank the whole checklist.
+ipcMain.handle('get-onboarding-status', async () => {
+  // A failed call is NOT the same as "zero": if the server is down or still
+  // waking up, an existing user would look brand new and suddenly get the
+  // getting-started guide. Any failure -> report it, and the guide stays hidden.
+  let failed = false;
+  const safe = (p, fallback) => p.catch(() => { failed = true; return fallback; });
+  const [files, stats, events, tasks] = await Promise.all([
+    safe(api.getFilesLight(), []),
+    safe(api.getStudyStats(), null),
+    safe(api.getEvents(), []),
+    safe(api.getTasks(), [])
+  ]);
+  if (failed) return { error: 'unavailable' };
+  return {
+    hasKey: Boolean(aiProvider.readConfig().geminiKey),
+    files: (files || []).length,
+    questions: stats ? stats.totalItems || 0 : 0,
+    reviews: stats ? stats.reviewsAllTime || 0 : 0,
+    calendarItems: (events || []).length + (tasks || []).length
+  };
+});
+
+ipcMain.handle('get-files-light', async () => {
+  try { return await api.getFilesLight(); } catch (err) { return []; }
+});
+
 ipcMain.handle('get-files', async () => {
   try { return await api.getFiles(); } catch (err) { return []; }
 });
@@ -2955,6 +3115,18 @@ async function checkAndBlockApps() {
 // =====================================
 ipcMain.handle('hard-reset', async () => {
   try {
+    // BUG FIX: the server wipes the events, but their Google Calendar copies
+    // stayed behind forever with nothing left pointing at them. Remove those
+    // first (best effort - a Google failure must not block the reset).
+    try {
+      const events = await api.getEvents();
+      for (const e of (events || []).filter(ev => ev.googleEventId)) {
+        await deleteEventEverywhere(e.id || e._id, e).catch(err =>
+          console.warn('⚠️ Reset: could not remove Google copy of', e.title, err.message));
+      }
+    } catch (err) {
+      console.warn('⚠️ Reset: skipped Google cleanup:', err.message);
+    }
     await api.hardReset();
     return true;
   } catch (err) { return { error: err.message }; }

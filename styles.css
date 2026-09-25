@@ -2744,3 +2744,123 @@ body.auth-pending #auth-screen {
     color: var(--text-tertiary);
     padding-top: var(--space-4);
 }
+
+/* ==========================================================================
+   Upload (files / folder)
+   ========================================================================== */
+.upload-buttons { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+
+.upload-modal { width: min(560px, 92vw); }
+.upload-summary { font-size: var(--text-sm); color: var(--text-secondary); margin: var(--space-2) 0 var(--space-3); }
+.upload-list {
+    max-height: 280px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-4);
+}
+.upload-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: 7px var(--space-3);
+    font-size: var(--text-sm);
+    border-bottom: 1px solid var(--border-color);
+}
+.upload-row:last-child { border-bottom: none; }
+.upload-row__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Fixed width so the name column doesn't shift as statuses change length. */
+.upload-row__status { flex-shrink: 0; width: 120px; text-align: end; font-size: var(--text-xs); color: var(--text-tertiary); }
+.upload-row[data-state="working"] { background: var(--accent-subtle); }
+.upload-row[data-state="working"] .upload-row__status { color: var(--accent-purple); }
+.upload-row[data-state="done"] .upload-row__status { color: var(--status-success); }
+.upload-row[data-state="failed"] .upload-row__status { color: var(--status-danger); }
+.upload-row[data-state="skipped"] .upload-row__status { color: var(--text-secondary); }
+.upload-actions { display: flex; gap: var(--space-3); margin-top: var(--space-4); }
+
+/* ==========================================================================
+   Getting started (Home)
+   ========================================================================== */
+.onboarding { margin-bottom: var(--space-5); padding: var(--space-5) var(--space-6); }
+.onboarding__head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); }
+.onboarding__title { margin: 0 0 var(--space-1); font-size: var(--text-lg); }
+.onboarding__intro { margin: 0; color: var(--text-secondary); font-size: var(--text-sm); }
+.onboarding__hide {
+    background: none; border: none; cursor: pointer; flex-shrink: 0;
+    color: var(--text-tertiary); font-size: var(--text-sm); font-family: inherit; padding: 4px;
+}
+.onboarding__hide:hover { color: var(--text-primary); }
+
+.onboarding__progress { height: 4px; border-radius: 4px; background: var(--hover-bg); margin: var(--space-4) 0; overflow: hidden; }
+.onboarding__bar { height: 100%; width: 0; background: var(--accent-purple); transition: width 0.4s var(--ease-out); }
+
+.onboarding__steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.onboarding__step { display: flex; gap: var(--space-3); padding: var(--space-2) 0; }
+.onboarding__marker {
+    flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: var(--text-xs); font-weight: var(--font-semibold);
+    border: 1.5px solid var(--border-strong); color: var(--text-tertiary);
+}
+.onboarding__content { flex: 1; min-width: 0; padding-top: 2px; }
+.onboarding__step-title { font-weight: var(--font-medium); color: var(--text-tertiary); }
+
+.onboarding__step.is-done .onboarding__marker { background: var(--status-success); border-color: var(--status-success); color: #fff; }
+.onboarding__step.is-done .onboarding__step-title { color: var(--text-secondary); }
+
+.onboarding__step.is-current {
+    background: var(--accent-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+    margin: var(--space-1) calc(var(--space-3) * -1);
+}
+.onboarding__step.is-current .onboarding__marker { background: var(--accent-purple); border-color: var(--accent-purple); color: #fff; }
+.onboarding__step.is-current .onboarding__step-title { color: var(--text-primary); font-weight: var(--font-semibold); }
+
+.onboarding__text { margin: var(--space-1) 0 var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.55; }
+.onboarding__actions { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+.onboarding__key-row { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.onboarding__key-input { flex: 1; min-width: 200px; margin: 0; }
+.onboarding__note { font-size: var(--text-sm); margin-top: var(--space-2); min-height: 1em; }
+.onboarding__note.is-error { color: var(--status-danger); }
+.onboarding__skip {
+    background: none; border: none; padding: 0; margin-top: var(--space-2); cursor: pointer;
+    color: var(--text-tertiary); font-size: var(--text-xs); font-family: inherit; text-decoration: underline;
+}
+
+/* ==========================================================================
+   Add task / add to calendar - write, then confirm
+   ========================================================================== */
+.smart-modal { width: min(560px, 92vw); }
+.smart-help { color: var(--text-secondary); font-size: var(--text-sm); margin: 0 0 var(--space-3); }
+.smart-stage textarea { min-height: 84px; }
+.smart-stage .input-field { margin-bottom: var(--space-3); }
+.smart-actions { display: flex; gap: var(--space-3); margin-top: var(--space-2); }
+
+.smart-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+.smart-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.smart-field > span { font-size: var(--text-xs); color: var(--text-secondary); font-weight: var(--font-medium); }
+.smart-field .input-field { margin: 0; }
+.smart-field--wide { grid-column: 1 / -1; }
+.event-confirm-row { padding-bottom: var(--space-3); margin-bottom: var(--space-3); border-bottom: 1px solid var(--border-color); }
+.event-confirm-row:last-child { border-bottom: none; margin-bottom: 0; }
+
+.confidence-hint {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    background: var(--accent-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--space-2) var(--space-3);
+    margin: 0 0 var(--space-3);
+    line-height: 1.5;
+}
+#ai-active-label.is-warning { color: var(--status-warning); }
+
+/* Focus mode "on": readable (the old state put red text on the teal button). */
+#focus-btn.is-focus-on {
+    background: var(--status-danger-bg);
+    color: var(--status-danger);
+    border: 1px solid var(--status-danger);
+}
+#focus-btn.is-focus-on:hover { background: var(--status-danger); color: #fff; }
