@@ -51,7 +51,8 @@
             font-family: inherit;
             cursor: pointer;
         }
-        .sum-btn:hover:not(:disabled) { border-color: var(--accent-purple); color: var(--accent-purple); }
+        .sum-btn { height: 28px; padding: 0 10px; font-size: var(--text-xs); font-weight: 500; border-color: var(--border-strong); }
+        .sum-btn:hover:not(:disabled) { background: var(--hover-bg); }
         .sum-btn:disabled { opacity: 0.5; cursor: default; }
 
         .sum-body { flex: 1; overflow-y: auto; }
@@ -62,9 +63,10 @@
             line-height: 1.75;
             font-size: var(--sum-font-size, 16px);
         }
-        .sum-content h2, .sum-content h3 { color: var(--accent-purple); margin: 1.4em 0 0.4em; line-height: 1.3; }
-        .sum-content h2 { font-size: 1.3em; }
-        .sum-content h3 { font-size: 1.1em; }
+        .sum-content h2, .sum-content h3 { color: var(--text-primary); font-weight: 600; margin: 1.6em 0 0.4em; line-height: 1.3; letter-spacing: -0.01em; }
+        .sum-content h2 { font-size: 1.25em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border-color); }
+        .sum-content h3 { font-size: 1.05em; }
+        .sum-content > h2:first-child { margin-top: 0; }
         .sum-content p { margin: 0 0 0.8em; }
         .sum-content ul, .sum-content ol { margin: 0 0 0.9em; padding-inline-start: 1.4em; }
         .sum-content li { margin-bottom: 0.35em; }
@@ -74,6 +76,27 @@
             padding: 1px 5px;
             border-radius: 4px;
             font-size: 0.92em;
+        }
+
+        /* Multi-line code from the material. Always left-to-right (even in a
+           Hebrew summary), indentation kept, and a long line scrolls
+           sideways instead of wrapping - wrapped code is misleading. */
+        .sum-content pre.code-block {
+            direction: ltr;
+            text-align: left;
+            background: var(--hover-bg);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 0.8em 1em;
+            margin: 0.4em 0 1em;
+            overflow-x: auto;
+            line-height: 1.5;
+        }
+        .sum-content pre.code-block code {
+            background: none;
+            padding: 0;
+            white-space: pre;
+            font-size: 0.9em;
         }
 
         .sum-content hr { border: none; border-top: 1px solid var(--border-color); margin: 1.4em 0; }

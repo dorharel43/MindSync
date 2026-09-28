@@ -8,6 +8,8 @@
     <link rel="stylesheet" href="themes.css">
     <link rel="stylesheet" href="ui-kit.css">
     <link rel="stylesheet" href="styles.css">
+    <!-- Design layer (2026 refresh): loads last, so it decides how things look. -->
+    <link rel="stylesheet" href="design.css">
     <script src="icons.js" defer></script>
     <script src="ui.js" defer></script>
     <script src="renderer.js" defer></script>
@@ -21,7 +23,7 @@
          succeeds, which is harmless since none of it is visible yet. -->
     <div id="auth-screen">
         <div class="auth-card">
-            <div class="auth-logo"><span data-icon="brain"></span> MindSync AI</div>
+            <div class="auth-logo"><span class="logo-mark" aria-hidden="true">M</span> MindSync</div>
 
             <!-- UX FIX: the form used to be visible immediately while the
                  startup session check ran in the background - on a cold
@@ -81,14 +83,14 @@
              useful to look at, not just decoration. -->
         <div class="sidebar-nav-group">
             <div class="logo">
-                <span><span data-icon="brain"></span></span> MindSync AI
+                <span class="logo-mark" aria-hidden="true">M</span> MindSync
             </div>
             <div class="menu">
                 <div class="menu-item active" id="nav-home"><span data-icon="home"></span> Home</div>
                 <div class="menu-item" id="nav-weekly"><span data-icon="week"></span> Planner</div>
                 <div class="menu-item" id="nav-tasks"><span data-icon="checkCircle"></span> Tasks</div>
                 <div class="menu-item" id="nav-materials"><span data-icon="library"></span> Materials</div>
-                <div class="menu-item" id="nav-study"><span data-icon="brain"></span> Study <span class="nav-badge" id="study-due-badge" hidden>0</span></div>
+                <div class="menu-item" id="nav-study"><span data-icon="cards"></span> Study <span class="nav-badge" id="study-due-badge" hidden>0</span></div>
                 <div class="menu-item" id="nav-progress"><span data-icon="chart"></span> Progress</div>
                 <div class="menu-item" id="nav-settings"><span data-icon="settings"></span> Settings</div>
             </div>
@@ -174,7 +176,7 @@
                     <div class="stats-grid">
                         <div class="stat-item"><div><span data-icon="file"></span></div><div class="stat-value" id="home-stat-tasks">0</div><div class="stat-label">Open Tasks</div></div>
                         <div class="stat-item"><div><span data-icon="graduation"></span></div><div class="stat-value" id="home-stat-exams">0</div><div class="stat-label">Upcoming Exams</div></div>
-                        <div class="stat-item"><div>⏱️</div><div class="stat-value" id="home-stat-events">0</div><div class="stat-label">Events This Week</div></div>
+                        <div class="stat-item"><div><span data-icon="clock"></span></div><div class="stat-value" id="home-stat-events">0</div><div class="stat-label">Events This Week</div></div>
                         <div class="stat-item"><div><span data-icon="library"></span></div><div class="stat-value" id="home-stat-lessons">0</div><div class="stat-label">Classes This Week</div></div>
                     </div>
                     <a href="#" class="link-text" onclick="document.getElementById('nav-weekly').click()">To Planner ></a>
@@ -207,9 +209,9 @@
 
             <div class="weekly-toolbar">
                 <div class="weekly-toolbar__actions">
-                    <button id="trigger-add-event" class="btn-primary">+ Add to calendar</button>
+                    <button id="trigger-add-event" class="btn-primary"><span data-icon="plus"></span> Add to calendar</button>
                     <button id="generate-weekly-ai-btn" class="btn-secondary">
-                        <span data-icon="brain"></span> Plan study time for my tasks
+                        <span data-icon="clock"></span> Plan study time
                     </button>
                 </div>
 
@@ -235,12 +237,12 @@
             <!-- Which week is on the board. Events with a date show only in
                  their week; weekly ones (↻) show in every week. -->
             <div class="week-nav">
-                <button id="week-prev" class="week-nav__arrow" aria-label="Previous week" title="Previous week">‹</button>
+                <button id="week-today" class="btn-secondary week-nav__today" title="Go back to the current week">Back to today</button>
+                <button id="week-prev" class="week-nav__arrow" aria-label="Previous week" title="Previous week"><span data-icon="chevronLeft"></span></button>
                 <div class="week-nav__label" id="week-label">This week</div>
-                <button id="week-next" class="week-nav__arrow" aria-label="Next week" title="Next week">›</button>
-                <button id="week-today" class="btn-secondary week-nav__today" style="visibility: hidden;">Back to this week</button>
+                <button id="week-next" class="week-nav__arrow" aria-label="Next week" title="Next week"><span data-icon="chevronRight"></span></button>
                 <div class="week-upcoming">
-                    <button id="week-upcoming-btn" class="btn-secondary" aria-haspopup="true">Coming up ▾</button>
+                    <button id="week-upcoming-btn" class="btn-secondary btn-sm" aria-haspopup="true">Coming up</button>
                     <div id="week-upcoming-panel" class="week-upcoming__panel" hidden></div>
                 </div>
             </div>
@@ -260,7 +262,7 @@
         <div id="view-tasks" class="view-section" style="display: none; width: 100%; max-width: 1000px;">
             <div class="page-header">
                 <div>
-                    <h2 class="page-title">My Tasks</h2>
+                    <h2 class="page-title">Tasks</h2>
                     <div class="page-subtitle">Everything you need to do, and when it's due.</div>
                 </div>
             </div>
@@ -278,7 +280,7 @@
                          already looking), with the normal .tasks-filters gap
                          keeping it from touching the filter chips. -->
                     <button id="trigger-add-task" class="btn-primary">
-                        <span data-icon="plus" data-icon-size="16"></span> New Task
+                        <span data-icon="plus"></span> New task
                     </button>
                 </div>
 
@@ -300,7 +302,7 @@
             <div class="page-header flex-header">
                 <div>
                     <h2 class="page-title">Materials</h2>
-                    <div class="page-subtitle">Your course files. Summarize them or find the deadlines in them. One folder per course keeps things tidy.</div>
+                    <div class="page-subtitle">Your course files. Summarize them, or pull the exams and deadlines out of a syllabus. One folder per course keeps things tidy.</div>
                 </div>
                 <div class="upload-buttons">
                     <button class="btn-primary btn-upload" data-upload-mode="files"><span data-icon="cloud"></span> Upload files</button>
@@ -308,11 +310,11 @@
                 </div>
             </div>
 
-            <h3 class="section-title">My Folders</h3>
+            <h3 class="section-title">Folders</h3>
             <div class="materials-grid">
             </div>
 
-            <h3 class="section-title">Recent Files</h3>
+            <h3 class="section-title">Files</h3>
             <div class="files-list">
             </div>
         </div>
@@ -358,7 +360,7 @@
 
                 <div class="study-start-row">
                     <button class="btn-primary btn-lg" id="start-study-btn">
-                        <span data-icon="sparkle" data-icon-size="18"></span> Start practicing
+                        Start practicing
                     </button>
                     <button class="btn-secondary" id="generate-study-btn">
                         <span data-icon="file" data-icon-size="16"></span> Make questions from a file
@@ -604,7 +606,7 @@
             <div class="page-header">
                 <div>
                     <h2 class="page-title">Settings</h2>
-                    <div class="page-subtitle">Appearance, focus mode, your profile and keyboard shortcuts.</div>
+                    <div class="page-subtitle">AI connection, appearance, focus mode and your profile.</div>
                 </div>
             </div>
 
@@ -635,35 +637,60 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Which model writes summaries and questions. -->
+                <div class="settings-row">
+                    <div class="ms-grow">
+                        <div class="settings-row__title">Model</div>
+                        <div class="settings-hint settings-hint--inline" id="ai-model-hint">Fast, and works with a free key.</div>
+                    </div>
+                    <select id="ai-model-select" class="input-field ai-model-select">
+                        <option value="gemini-3.8-flash">Gemini 3.8 Flash (recommended)</option>
+                        <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (needs billing)</option>
+                    </select>
+                </div>
             </div>
 
             <div class="card settings-card">
                 <h3 class="settings-title">Appearance</h3>
-                <p class="settings-hint">Choose the colour theme. Applies immediately and is remembered.</p>
-                <div class="theme-picker" id="theme-picker">
-                    <button class="theme-option" data-theme-value="ink">
-                        <span class="theme-swatch theme-swatch--ink" aria-hidden="true"></span>
-                        <span class="theme-option__name">Ink</span>
-                        <span class="theme-option__desc">Cool greys, teal accent</span>
-                    </button>
-                    <button class="theme-option" data-theme-value="paper">
-                        <span class="theme-swatch theme-swatch--paper" aria-hidden="true"></span>
-                        <span class="theme-option__name">Paper</span>
-                        <span class="theme-option__desc">Warm, easy on the eyes</span>
-                    </button>
-                    <button class="theme-option" data-theme-value="slate">
-                        <span class="theme-swatch theme-swatch--slate" aria-hidden="true"></span>
-                        <span class="theme-option__name">Slate</span>
-                        <span class="theme-option__desc">Near-monochrome</span>
-                    </button>
+                <div class="settings-row settings-row--stacked">
+                    <div>
+                        <div class="settings-row__title">Colours</div>
+                        <div class="settings-hint settings-hint--inline">Applies right away. Works in light and dark.</div>
+                    </div>
+                    <div class="theme-picker" id="theme-picker">
+                        <button class="theme-option" data-theme-value="blue">
+                            <span class="theme-swatch theme-swatch--blue" aria-hidden="true"></span>
+                            <span class="theme-option__name">Blue</span>
+                            <span class="theme-option__desc">Clean white, blue accent</span>
+                        </button>
+                        <button class="theme-option" data-theme-value="ink">
+                            <span class="theme-swatch theme-swatch--ink" aria-hidden="true"></span>
+                            <span class="theme-option__name">Ink</span>
+                            <span class="theme-option__desc">Cool greys, teal accent</span>
+                        </button>
+                        <button class="theme-option" data-theme-value="paper">
+                            <span class="theme-swatch theme-swatch--paper" aria-hidden="true"></span>
+                            <span class="theme-option__name">Paper</span>
+                            <span class="theme-option__desc">Warm, easy on the eyes</span>
+                        </button>
+                        <button class="theme-option" data-theme-value="slate">
+                            <span class="theme-swatch theme-swatch--slate" aria-hidden="true"></span>
+                            <span class="theme-option__name">Slate</span>
+                            <span class="theme-option__desc">Dark sidebar</span>
+                        </button>
+                    </div>
                 </div>
-
                 <div class="settings-row">
                     <div>
-                        <div class="settings-row__title">Dark mode</div>
-                        <div class="settings-hint">Switch between light and dark.</div>
+                        <div class="settings-row__title">Mode</div>
+                        <div class="settings-hint settings-hint--inline">Light, dark, or follow your computer's setting.</div>
                     </div>
-                    <button id="settings-dark-toggle" class="btn-secondary">Toggle</button>
+                    <div class="filter-group" id="appearance-picker" role="group" aria-label="Theme">
+                        <button class="filter-chip" data-appearance="light">Light</button>
+                        <button class="filter-chip" data-appearance="dark">Dark</button>
+                        <button class="filter-chip" data-appearance="system">System</button>
+                    </div>
                 </div>
             </div>
 
@@ -797,16 +824,18 @@
     <!-- 3. Add Event Modal -->
     <div id="add-event-modal" class="modal-overlay" style="display: none;">
         <div class="modal-content card smart-modal">
-            <h3>Add to your calendar</h3>
+            <!-- The same box adds and edits: in edit mode the item is written
+                 back in as a sentence to change (renderer.js setEventModalMode). -->
+            <h3 id="event-modal-title">Add to your calendar</h3>
 
             <div class="smart-stage" id="event-stage-write">
-                <p class="smart-help">A class, an exam, anything at a set time - write it the way you'd say it.</p>
+                <p class="smart-help" id="event-modal-help">A class, an exam, anything at a set time - write it the way you'd say it.</p>
                 <textarea id="smart-event-input" placeholder='לדוגמה: "מבחן בסטטיסטיקה ביום חמישי ב-9"' class="input-field" maxlength="500" dir="auto"></textarea>
 
                 <label class="checkbox-field" for="sync-google-check">
                     <input type="checkbox" id="sync-google-check" checked>
                     <span class="checkbox-field__text">
-                        <span class="checkbox-field__label">Also add to Google Calendar</span>
+                        <span class="checkbox-field__label" id="sync-google-label">Also add to Google Calendar</span>
                     </span>
                 </label>
 
@@ -833,6 +862,35 @@
             <div class="upload-actions">
                 <button id="confirm-upload-btn" class="btn-primary">Upload</button>
                 <button id="cancel-upload-btn" class="btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import dates from a syllabus: what the AI found, ticked by default
+         unless it needs a look. Exams go to the Planner, submissions to
+         Tasks (renderer.js openSyllabusImport). -->
+    <div id="syllabus-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content card syllabus-modal">
+            <h3>Exams &amp; deadlines</h3>
+            <div class="syllabus-file" id="syllabus-file" dir="auto"></div>
+            <p class="smart-help" id="syllabus-intro"></p>
+
+            <div class="syllabus-list" id="syllabus-list"></div>
+
+            <label class="form-label" for="syllabus-course">Course</label>
+            <input id="syllabus-course" class="input-field" maxlength="80" dir="auto" placeholder="Course name">
+            <p class="settings-hint">Added to exam names in the Planner, and used as the category of the tasks.</p>
+
+            <label class="checkbox-field" for="syllabus-google" id="syllabus-google-row">
+                <input type="checkbox" id="syllabus-google">
+                <span class="checkbox-field__text">
+                    <span class="checkbox-field__label">Also add the exams to Google Calendar</span>
+                </span>
+            </label>
+
+            <div class="smart-actions">
+                <button id="syllabus-confirm" class="btn-primary">Add</button>
+                <button id="syllabus-cancel" class="btn-secondary">Cancel</button>
             </div>
         </div>
     </div>

@@ -132,9 +132,64 @@ function extractJsonFromText(text) {
 // =====================================
 // AI Operations (Smart Inputs)
 // =====================================
+// The summary instructions, shared by both paths below.
+//
+// WHY THE OLD SUMMARIES WERE BASIC: the prompt literally asked for "short and
+// concise bullet points", at the lowest thinking level, with a 2000-token
+// budget that the model's thinking ALSO comes out of - about a page of room
+// for a 40-page lecture. A stronger model given the same instructions writes
+// the same thin list, just more politely. This asks for what a student
+// actually studies from: full explanations, every symbol in a formula, a
+// worked example, the mistakes people make, and what's likely on the exam.
+//
+// Formatting is limited to what the summary window can draw (summary.js):
+// ## / ### headings, "- " bullets, "1. " lists, **bold**, LaTeX, and ```
+// code blocks. No tables - they'd show up as rows of pipes.
+function buildSummaryPrompt() {
+    return `You are writing a study summary for a university student who will use it to prepare for an exam on this material. They have the original file; what they need is ONE place that actually explains it - not a list of slide titles.
+
+LANGUAGE: write in the same language as the material (Hebrew material -> Hebrew summary, including all headings). Keep a technical term in the form the material uses; where the material gives both, write both once, e.g. "רגרסיה לינארית (Linear Regression)".
+
+STRUCTURE:
+1. "## " + the subject of the material, then 2-3 sentences: what this material is about and what problem it solves.
+2. One "## " section per main topic, in the material's order. In each one:
+   - Explain the idea in full sentences, the way a good teaching assistant would. Say WHY it works and WHEN it's used - not only WHAT it is.
+   - The first time a key term appears, write it in **bold** together with its definition.
+   - Every formula: on its own line between double dollar signs, then a "- " bullet for EVERY symbol in it saying what it means, then one sentence on when to use it.
+   - A procedure or algorithm: numbered steps ("1. ").
+   - An example in the material: walk through it step by step, with the numbers. If a topic has no example and one would really help, add a short one and label it clearly as not from the material (in the material's language, e.g. "דוגמה (לא מהחומר)").
+   - Code: copy it exactly, in a code block (three backticks on their own line before and after).
+3. "## " + "Common mistakes" (in the material's language): the confusions a student is likely to have - especially between concepts that look alike in THIS material - and how to tell them apart.
+4. "## " + "Key points for the exam" (in the material's language): 5-10 bullets, the points most likely to be tested.
+
+RULES:
+- Stay faithful to the material. Do not invent facts. Anything you add (an example, an intuition) must be labelled as your addition.
+- Skip course logistics: dates, grading, the lecturer's contact details, reading lists.
+- Length follows the material. A short file gets a short summary; a long lecture gets a long one. Never pad, never skip a topic.
+- Formatting: only "## " and "### " headings, "- " bullets, "1. " numbered steps, **bold**, LaTeX and code blocks. NO tables and NO nested (indented) bullets - they cannot be displayed.
+- LaTeX: inline between single dollar signs ($\\bar{x}$), a standalone formula on its own line between double dollar signs ($$...$$).
+- Output only the summary itself - no "Here is the summary" line before it and no offer to help after it.`;
+}
+
 ipcMain.handle('summarize-text', async (event, textToSummarize, sourcePath) => {
     try {
-        const SUMMARY_MAX_OUTPUT_TOKENS = 2000;
+        // Was 2000 - and Gemini's thinking is paid out of this same budget,
+        // which left roughly one page of actual summary. A long lecture
+        // needs room; the model stops when it's done, so a short file still
+        // gets a short (and cheap) summary.
+        const SUMMARY_MAX_OUTPUT_TOKENS = 16384;
+        // A full summary of a long file takes longer than the 90s default.
+        const SUMMARY_TIMEOUT_MS = 180000;
+        const summaryPrompt = buildSummaryPrompt();
+
+        // Returns the summary AND which model wrote it, so the summary
+        // window can say so (and say when the chosen model wasn't available).
+        const result = (text, model) => ({
+            summary: coerceToPlainText(text),
+            model,
+            modelLabel: aiProvider.modelLabel(model),
+            requestedModelLabel: aiProvider.modelLabel(aiProvider.activeGeminiModel())
+        });
 
         // BUG FIX: this always summarized the pre-extracted text (readPdf()
         // at upload time - the lossy pdfjs/pdf2json path, source of the
@@ -148,15 +203,15 @@ ipcMain.handle('summarize-text', async (event, textToSummarize, sourcePath) => {
                 const buffer = fs.readFileSync(sourcePath);
                 const sizeMb = buffer.length / (1024 * 1024);
                 if (sizeMb <= 18) { // inline request body cap, same limit as generate-study-items-pdf
-                    const visionPrompt = `You are a smart learning assistant for a student. Summarize this document clearly, in short and concise bullet points. Highlight important concepts, and preserve any formulas/equations exactly as shown rather than describing them.
-Write every formula in LaTeX: inline formulas between single dollar signs ($\\bar{x}$), and standalone formulas on their own line between double dollar signs ($$...$$). The summary window renders these as real notation.
-IMPORTANT: Write the summary in the same language as the document.`;
-                    const raw = await aiProvider.generateFromPdf(buffer, visionPrompt, {
+                    const r = await aiProvider.generateFromPdf(buffer, summaryPrompt, {
                         maxTokens: SUMMARY_MAX_OUTPUT_TOKENS,
-                        thinkingLevel: 'low'
+                        // Explaining a topic well is reasoning, not copying.
+                        thinkingLevel: 'medium',
+                        timeoutMs: SUMMARY_TIMEOUT_MS,
+                        withMeta: true
                     });
-                    console.log('📝 summarize-text: used vision (direct PDF read)');
-                    return coerceToPlainText(raw);
+                    console.log(`📝 summarize-text: used vision (direct PDF read) - ${r.model}`);
+                    return result(r.text, r.model);
                 }
             } catch (visionErr) {
                 // Gemini unavailable or failed (no key, rate limit, transient
@@ -168,31 +223,31 @@ IMPORTANT: Write the summary in the same language as the document.`;
         }
 
         console.log(`📝 summarize-text: received ${(textToSummarize || '').length} chars`);
-        // BUG FIX: this was truncating to MAX_INPUT_CHARS (2000 - about one
-        // paragraph) before the AI ever saw the document, and capping the
-        // reply at the generic MAX_OUTPUT_TOKENS (800), both of which are
-        // sized for short classification prompts, not "summarize this
-        // document". A genuinely long file got summarized from roughly its
-        // first page only, into a couple of sentences - which is exactly
-        // "we uploaded a long file and it barely summarized anything".
-        // Neither number is a hard ceiling the models can't handle - Gemini
-        // in particular reads far more than this comfortably - so both are
-        // raised specifically for summaries rather than reusing the general
-        // defaults built for short prompts.
-        const SUMMARY_MAX_INPUT_CHARS = 15000;
+        // Gemini reads far more than a local model can: 15,000 characters was
+        // about 5 pages, so a long file was summarized from its beginning
+        // only. Gemini now gets up to ~120,000; the local model keeps the
+        // smaller limit its context window can actually hold.
+        const SUMMARY_MAX_INPUT_CHARS = aiProvider.resolveProvider() === 'gemini' ? 120000 : 15000;
 
         const safeText = textToSummarize && textToSummarize.length > SUMMARY_MAX_INPUT_CHARS
             ? textToSummarize.slice(0, SUMMARY_MAX_INPUT_CHARS) + '\n\n[...document truncated...]'
             : (textToSummarize || '');
 
-        const prompt = `You are a smart learning assistant for a student. Summarize the following study material clearly, in short and concise bullet points. Highlight important concepts. 
-Write every formula in LaTeX: inline between single dollar signs, standalone formulas on their own line between double dollar signs ($$...$$).
-IMPORTANT: Write the summary in the same language as the original text:
+        const prompt = `${summaryPrompt}
+
+THE MATERIAL (extracted text - formulas and layout may be damaged; reconstruct them only where the meaning is clear):
 
 ${safeText}`;
-        const plainTextSystem = "You are a helpful writing assistant. Respond with plain natural-language text only. Do NOT respond with JSON, a code block, markdown fences, or any key-value/structured format - just the summary text itself, formatted as readable bullet points using '-' or '*'.";
-        const rawResponse = await callAIWithFallback(prompt, plainTextSystem, SUMMARY_MAX_OUTPUT_TOKENS);
-        return coerceToPlainText(rawResponse);
+        const plainTextSystem = "You write study summaries. Respond with the summary text only - never JSON, never a key-value structure.";
+        const r = await aiProvider.generateText(prompt, {
+            system: plainTextSystem,
+            maxTokens: SUMMARY_MAX_OUTPUT_TOKENS,
+            thinkingLevel: 'medium',
+            timeoutMs: SUMMARY_TIMEOUT_MS,
+            localModel: LOCAL_MODEL,
+            withMeta: true
+        });
+        return result(r.text, r.model);
     } catch (error) {
         console.error("AI Error:", error);
         // Returned as a structured error (not a string that looks like a
@@ -803,117 +858,300 @@ function resolveDueDate(rawDate) {
     return { label, urgency };
 }
 
-ipcMain.handle('extract-tasks-from-text', async (event, textToExtract) => {
+// =====================================
+// Import from a syllabus
+// =====================================
+// "Find exams & deadlines" - replaces the old "Find deadlines" (extract-tasks-from-text). That one read the
+// file's extracted text in 2,000-character pieces - a syllabus table cut in
+// half loses which date belongs to which row - turned everything into tasks
+// (an exam is not a task, it belongs in the Planner), and added it all at
+// once with no chance to check it.
+//
+// Now it's two steps:
+//   1. read-syllabus: reads the whole file (the PDF itself when possible)
+//      and returns what it found - exams and submissions with their dates -
+//      WITHOUT saving anything.
+//   2. import-syllabus-items: adds only what the user left ticked: exams go
+//      to the Planner as dated events, submissions go to Tasks.
+
+const MONTHS_FOR_MATCH = [
+    ['ינואר', 'january', 'jan'], ['פברואר', 'february', 'feb'], ['מרץ', 'מרס', 'march', 'mar'],
+    ['אפריל', 'april', 'apr'], ['מאי', 'may'], ['יוני', 'june', 'jun'],
+    ['יולי', 'july', 'jul'], ['אוגוסט', 'august', 'aug'], ['ספטמבר', 'september', 'sep', 'sept'],
+    ['אוקטובר', 'october', 'oct'], ['נובמבר', 'november', 'nov'], ['דצמבר', 'december', 'dec']
+];
+
+function buildSyllabusPrompt(todayISO) {
+    return `You read a university course document - usually a syllabus (סילבוס), a course schedule or an assignment sheet - and list its DATED ACADEMIC EVENTS, so a student can put them in their calendar. Today's date is ${todayISO}.
+
+Find two kinds of items:
+- "exam": a test the student sits - final exam (מבחן / בחינה סופית), each sitting (מועד א / מועד ב / מועד ג - each sitting is its OWN item), midterm (בוחן אמצע), quiz (בוחן), oral exam.
+- "assignment": something the student must SUBMIT or PRESENT by a date - homework or an exercise to hand in (מטלה, תרגיל להגשה, ממ"ן, עבודה), a project or a project milestone, a lab report, a presentation, a paper.
+
+Do NOT list: lectures or classes and their topics, reading without a deadline, holidays, office hours, how the grade is weighted, rules and policies.
+
+For every item return:
+- "kind": "exam" or "assignment".
+- "title": a short name in the document's language, the way the document names it ("מטלה 2", "בוחן אמצע", "מבחן סופי - מועד א"). Do NOT add the course name.
+- "date": {"day": number, "month": number, "year": number or null} - ONLY a date written in the document for this item. "year": null if the document doesn't write the year. No date written for this item -> "date": null. Never guess, and never work a date out from a week number ("שבוע 5") - use null.
+- "time": "HH:MM" if the document gives a time for it, otherwise null.
+- "durationMinutes": the exam's length in minutes if the document gives it, otherwise null.
+- "sourceQuote": the exact text in the document where this item and its date appear (for a table: that row). Copy it as written.
+
+A deadline given as a range ("להגיש בין 1.11 ל-5.11") -> use the LAST day.
+Also return "course": the course name as the document writes it (without the course number), or null.
+
+If the document has no exams and no submissions (lecture slides, notes, an exercise sheet with no due date), return {"course": null, "items": []}. For such a file, an empty list is the correct answer.
+
+Return ONLY JSON: {"course": "...", "items": [{"kind": "...", "title": "...", "date": {"day": 1, "month": 1, "year": null}, "time": null, "durationMinutes": null, "sourceQuote": "..."}]}`;
+}
+
+// {day, month, year} (or "YYYY-MM-DD" / "DD.MM(.YYYY)") -> "YYYY-MM-DD", or
+// null. A syllabus often leaves out the year: pick the year that puts the
+// date within ~100 days back (a semester that already started) to ~265 days
+// ahead. So in late September, "15.2" and "1.6" are next year, and "20.9" is
+// last week, not next September.
+function resolveSyllabusDate(raw, now = new Date()) {
+    if (!raw) return null;
+    let day, month, year = null;
+    if (typeof raw === 'string') {
+        let m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(raw.trim());
+        if (m) { year = +m[1]; month = +m[2]; day = +m[3]; }
+        else if ((m = /^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?$/.exec(raw.trim()))) {
+            day = +m[1]; month = +m[2]; year = m[3] ? +m[3] : null;
+        } else return null;
+    } else if (typeof raw === 'object') {
+        day = Number(raw.day); month = Number(raw.month);
+        year = raw.year === null || raw.year === undefined || raw.year === '' ? null : Number(raw.year);
+    } else return null;
+
+    if (!Number.isInteger(day) || !Number.isInteger(month) || day < 1 || day > 31 || month < 1 || month > 12) return null;
+    if (year !== null) {
+        if (!Number.isInteger(year)) return null;
+        if (year < 100) year += 2000;
+        if (year < 2000 || year > 2100) return null;
+    } else {
+        const today = new Date(now); today.setHours(0, 0, 0, 0);
+        year = today.getFullYear();
+        const probe = new Date(year, month - 1, day);
+        const daysFromToday = Math.round((probe - today) / 86400000);
+        if (daysFromToday < -100) year += 1;
+        else if (daysFromToday > 265) year -= 1;
+    }
+    const d = new Date(year, month - 1, day);
+    if (d.getDate() !== day || d.getMonth() !== month - 1) return null; // 31.2 and the like
+    return toLocalIsoDate(d);
+}
+
+function normalizeTimeText(raw) {
+    const m = /^(\d{1,2})[:.](\d{2})$/.exec(String(raw || '').trim());
+    if (!m) return null;
+    const h = +m[1], min = +m[2];
+    if (h > 23 || min > 59) return null;
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+// Is this date actually written in the file's text? "26.10", "26/10/2026",
+// "26-10-26", "26 באוקטובר", "October 26". Used to flag a date the AI may
+// have made up. true / false, or null when there's no text to check against.
+function dateAppearsInText(isoDate, text) {
+    const src = String(text || '');
+    if (src.trim().length < 200) return null;
+    const [, mm, dd] = isoDate.split('-').map(Number);
+    const numeric = new RegExp(`(?<!\\d)0?${dd}\\s*[./\\-\\\\]\\s*0?${mm}(?!\\d)`);
+    if (numeric.test(src)) return true;
+    const names = MONTHS_FOR_MATCH[mm - 1].join('|');
+    const lower = src.toLowerCase();
+    const dayThenMonth = new RegExp(`(?<!\\d)0?${dd}(?:st|nd|rd|th)?\\s*(?:ב|ל|of\\s+)?(?:${names})(?![a-z])`, 'i');
+    const monthThenDay = new RegExp(`(?<![a-z])(?:${names})\\.?\\s+0?${dd}(?!\\d)`, 'i');
+    return dayThenMonth.test(lower) || monthThenDay.test(lower);
+}
+
+// "מבחן סופי - מועד א" + "סטטיסטיקה" -> "מבחן סופי - מועד א - סטטיסטיקה", so
+// the Planner says WHICH exam. Left alone if the title already names it.
+function titleWithCourse(title, course) {
+    const t = String(title || '').trim();
+    const c = String(course || '').trim();
+    if (!c || normalizeForMatch(t).includes(normalizeForMatch(c))) return t;
+    return `${t} - ${c}`;
+}
+
+function sameItemTitle(a, b) {
+    const x = normalizeForMatch(a), y = normalizeForMatch(b);
+    return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
+}
+
+// Task.date is "DD/MM/YYYY" (or "Not set") -> "YYYY-MM-DD" or null.
+function taskDateToIso(dateStr) {
+    const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(dateStr || ''));
+    return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : null;
+}
+
+ipcMain.handle('read-syllabus', async (event, file = {}) => {
     try {
-        console.log(`📄 extract-tasks-from-text: received ${(textToExtract || '').length} chars`);
-        const chunks = chunkForAI(textToExtract);
-        console.log(`📄 Split into ${chunks.length} chunk(s)`);
+        const now = new Date();
+        const todayIso = toLocalIsoDate(now);
+        const prompt = buildSyllabusPrompt(todayIso);
+        const sourceText = String(file.content || '');
+        const sourcePath = file.sourcePath || '';
 
+        // 1. The PDF itself: a syllabus is mostly TABLES, and extracted text
+        //    loses which date sits in which row.
+        let r = null;
+        let usedPdf = false;
+        if (/\.pdf$/i.test(sourcePath) && fs.existsSync(sourcePath) && aiProvider.supportsVision()) {
+            const buffer = fs.readFileSync(sourcePath);
+            if (buffer.length <= 18 * 1024 * 1024) {
+                try {
+                    r = await aiProvider.generateFromPdf(buffer, prompt, {
+                        forceJson: true, maxTokens: 8192, thinkingLevel: 'low', timeoutMs: 120000, withMeta: true
+                    });
+                    usedPdf = true;
+                } catch (err) {
+                    // Out of quota: the text path would hit the same wall.
+                    if (/quota/i.test(err.message)) return { error: err.message };
+                    console.warn('⚠️ read-syllabus: direct PDF read failed, using the extracted text:', err.message);
+                }
+            }
+        }
+
+        // 2. Otherwise the text we stored at upload - all of it in ONE request
+        //    (not 2,000-character pieces), so a table stays together.
+        if (!r) {
+            if (!sourceText.trim()) return { error: 'This file has no readable text.' };
+            const maxChars = aiProvider.resolveProvider() === 'gemini' ? 120000 : 15000;
+            r = await aiProvider.generateText(`${prompt}\n\nTHE DOCUMENT (extracted text - table layout may be lost):\n${sourceText.slice(0, maxChars)}`, {
+                // No local-model fallback: a small offline model reads a
+                // syllabus badly (it returned items with no dates), and a wrong
+                // exam date is worse than "try again later".
+                forceJson: true, maxTokens: 8192, thinkingLevel: 'low', timeoutMs: 120000, withMeta: true, noFallback: true
+            });
+        }
+
+        let parsed;
+        try {
+            parsed = JSON.parse(extractJsonFromText(r.text || ''));
+        } catch (e) {
+            console.error('❌ read-syllabus: not JSON:', String(r.text).slice(0, 300));
+            return { error: 'The AI answer could not be read. Try again.' };
+        }
+        const rawItems = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.items) ? parsed.items : []);
+        const course = String((parsed && parsed.course) || '').trim().slice(0, 80)
+            || String(file.name || '').replace(/\.[^.]+$/, '').trim().slice(0, 80);
+
+        // What's already in the app, so importing the same syllabus twice
+        // doesn't add everything twice.
+        const [tasks, events] = await Promise.all([
+            api.getTasks().catch(() => []),
+            api.getEvents().catch(() => [])
+        ]);
+
+        const items = [];
         const seen = new Set();
-        const allTasks = [];
-        let rejectedCount = 0;
-        let lastChunkError = null;
-        let anyChunkSucceeded = false;
+        let rejected = 0;
+        for (const raw of rawItems) {
+            if (!raw || typeof raw !== 'object') continue;
+            const title = String(raw.title || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+            if (!title) continue;
+            let kind = raw.kind === 'exam' || raw.kind === 'assignment' ? raw.kind : null;
+            if (!kind) kind = classifyEventByKeywords(title) === 'exam' ? 'exam' : 'assignment';
 
-        for (let i = 0; i < chunks.length; i++) {
-            console.log(`📄 Processing chunk ${i + 1}/${chunks.length}...`);
-
-            const todayISO = new Date().toISOString().slice(0, 10);
-            const prompt = `You are a text extraction tool. Today's date is ${todayISO}.
-Your ONLY job is to COPY tasks that are literally written in the text below. You are FORBIDDEN from inferring, planning, or adding steps.
-
-CRITICAL RULES - read carefully:
-- Do NOT invent sub-steps. If the text says "submit a paper", that is ONE task. Do NOT add "research the literature", "collect data", "prepare slides" or any other step that is not written in the text.
-- Do NOT use your general knowledge about how such work is usually done.
-- If the text contains only 1 task, return exactly 1 task. Returning fewer correct tasks is much better than adding invented ones.
-- Every task MUST appear word-for-word in the text.
-
-A TASK is something with a DEADLINE or a SUBMISSION attached: an assignment to hand in, a project, a form to file, a reading due by a date.
-
-Exam and worksheet QUESTIONS are NOT tasks. "Solve question 3", "prove the theorem", "find the DNF of..." are things you practise, not things you tick off a to-do list. They belong to study material. Extracting them buries the real deadlines under dozens of exercises, which is the opposite of what a task list is for.
-If this document is an exam paper or a worksheet, it most likely contains NO tasks at all - return {"tasks": []} rather than converting its questions.
-
-Never extract: exam questions, multiple-choice answer options, exam instructions, boilerplate ("good luck", "answer all questions"), headers, page numbers.
-
-Return a JSON object with a single key "tasks" whose value is an array. Each item must have:
-- "title": the task, in the original language, copied closely from the text.
-- "sourceQuote": the EXACT substring from the text below that this task came from. Copy it character for character. If you cannot find such a substring, do not include this task at all.
-- "dueDate": the deadline in "YYYY-MM-DD" format, ONLY if explicitly stated in the text (resolve "מחר"/"tomorrow" against today's date above). If no deadline is stated, use null. Never guess a date.
-
-If the text contains no tasks at all, return {"tasks": []}.
-
-Text:
-${chunks[i]}`;
-
-            let parsed;
-            try {
-                const responseText = await callAIWithFallback(prompt, null, MAX_OUTPUT_TOKENS, true);
-                parsed = JSON.parse(extractJsonFromText(responseText));
-                anyChunkSucceeded = true;
-            } catch (chunkErr) {
-                // One bad chunk shouldn't sink the whole import - log it and
-                // keep going with the rest of the document. But if this is
-                // the ONLY thing that ever happens (every chunk fails), that
-                // failure needs to reach the user - see below.
-                console.error(`⚠️ Chunk ${i + 1} failed, skipping it:`, chunkErr.message);
-                lastChunkError = chunkErr.message;
+            const quote = String(raw.sourceQuote || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+            // Grounding. From extracted text, an item that isn't in that
+            // text was made up - dropped, as before. From the PDF, the
+            // extracted text can be garbled (Hebrew, tables), so a mismatch
+            // there only marks the item for the user to check.
+            const canCheck = sourceText.trim().length >= 200;
+            const inText = canCheck ? isGroundedInSource(quote || title, sourceText) : null;
+            if (!usedPdf && inText === false) {
+                console.warn(`   ⛔ read-syllabus: rejected, not in the document: "${title}"`);
+                rejected++;
                 continue;
             }
 
-            if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.tasks)) parsed = parsed.tasks;
-            if (!Array.isArray(parsed)) parsed = [parsed];
+            const date = resolveSyllabusDate(raw.date, now);
+            const dateInText = date ? dateAppearsInText(date, sourceText) : null;
+            const time = normalizeTimeText(raw.time);
+            const dur = Number(raw.durationMinutes);
+            const durationMinutes = Number.isFinite(dur) && dur >= 15 && dur <= 600 ? Math.round(dur) : null;
 
-            for (const t of parsed) {
-                let task;
-                // Urgency is DERIVED from the extracted deadline, never taken
-                // from the model directly. The model's only job is to report a
-                // date that actually appears in the text; how urgent that makes
-                // the task is arithmetic, so it's done here where it can't be
-                // hallucinated. No date in the text => no urgency signal =>
-                // 'Normal', and the user can set it themselves.
-                if (typeof t === 'string') {
-                    task = { title: t, date: 'Not set', urgency: 'Normal' };
-                } else if (t && t.title) {
-                    // Grounding check: reject anything the model couldn't point
-                    // to in the source. This is what stops it from turning
-                    // "submit the paper" into a five-step research plan.
-                    if (!isGroundedInSource(t.sourceQuote || t.title, chunks[i])) {
-                        console.warn(`   ⛔ Rejected (not found in document): "${t.title}"`);
-                        rejectedCount++;
-                        continue;
-                    }
-                    const { label, urgency } = resolveDueDate(t.dueDate);
-                    task = { title: String(t.title).trim(), date: label, urgency };
-                } else continue;
+            const key = `${kind}|${date}|${normalizeForMatch(title)}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
 
-                const key = task.title.toLowerCase();
-                if (!key || seen.has(key)) continue; // dedupe across ALL chunks, not just within one
-                seen.add(key);
-                allTasks.push(task);
-            }
+            const fullTitle = kind === 'exam' ? titleWithCourse(title, course) : title;
+            const alreadyExists = kind === 'exam'
+                ? (events || []).some(e => e.date && e.date === date && (sameItemTitle(e.title, fullTitle) || sameItemTitle(e.title, title)))
+                : (tasks || []).some(t => taskDateToIso(t.date) === date && sameItemTitle(t.title, title));
+
+            items.push({
+                kind, title, date, time, durationMinutes, sourceQuote: quote,
+                isPast: !!date && date < todayIso,
+                // Worth a second look: the date isn't written in the file's
+                // text, or the item itself couldn't be found there.
+                needsCheck: dateInText === false || inText === false,
+                alreadyExists
+            });
         }
 
-        const finalTasks = allTasks.slice(0, 30);
-        console.log(`📄 extract-tasks-from-text: returning ${finalTasks.length} grounded task(s) from ${chunks.length} chunk(s)` + (rejectedCount > 0 ? ` (${rejectedCount} invented item(s) rejected)` : ''));
-
-        if (finalTasks.length === 0) {
-            // BUG FIX: this message used to fire whenever nothing came back,
-            // whether the document genuinely had no tasks OR every single
-            // chunk failed to even reach a model (no Gemini quota, no Ollama
-            // running). The second case is a real failure, not "nothing
-            // found", and was being told to the user as if the document was
-            // just task-free - hiding exactly the information ("the AI
-            // couldn't run at all") needed to fix it.
-            if (!anyChunkSucceeded && lastChunkError) {
-                return JSON.stringify({ error: `Could not read this document: ${lastChunkError}` });
-            }
-            return JSON.stringify({ error: 'The AI read the document but could not find any clear tasks.' });
-        }
-        return JSON.stringify(finalTasks);
+        items.sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999'));
+        console.log(`📅 read-syllabus: ${items.length} item(s) via ${usedPdf ? 'PDF' : 'text'} (${r.model})` + (rejected ? `, ${rejected} rejected` : ''));
+        return { course, items, usedPdf, model: r.model, modelLabel: aiProvider.modelLabel(r.model), rejected };
     } catch (error) {
-        console.error('❌ extract-tasks-from-text failed:', error.message);
-        return JSON.stringify({ error: error.message });
+        console.error('❌ read-syllabus failed:', error.message);
+        return { error: error.message };
     }
+});
+
+// Adds the items the user kept. Exams -> dated Planner events (optionally
+// also in Google Calendar), submissions -> tasks under the course. Returns
+// the new ids so the renderer's Undo can remove exactly these.
+ipcMain.handle('import-syllabus-items', async (event, items = [], options = {}) => {
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const course = String(options.course || '').trim().slice(0, 80);
+    const created = { events: [], tasks: [] };
+    const errors = [];
+    const syncErrors = [];
+
+    for (const item of (Array.isArray(items) ? items : [])) {
+        try {
+            const title = String(item.title || '').trim().slice(0, 200);
+            if (!title) continue;
+            const date = /^\d{4}-\d{2}-\d{2}$/.test(item.date || '') ? item.date : null;
+
+            if (item.kind === 'exam') {
+                if (!date) { errors.push(`"${title}" has no date`); continue; }
+                const [y, m, d] = date.split('-').map(Number);
+                const evt = {
+                    title: titleWithCourse(title, course),
+                    day: dayNames[new Date(y, m - 1, d).getDay()],
+                    date,
+                    // The server needs a time. No time in the syllabus -> 09:00,
+                    // and the import window says so.
+                    time: normalizeTimeText(item.time) || '09:00',
+                    type: 'exam',
+                    ...(item.durationMinutes ? { durationMinutes: item.durationMinutes } : {})
+                };
+                if (options.syncToGoogle) {
+                    const g = await syncToGoogleCalendar(evt);
+                    if (g.success) evt.googleEventId = g.eventId;
+                    else syncErrors.push(g.error);
+                }
+                const saved = await api.createEvent(evt);
+                created.events.push({ ...evt, id: saved && (saved._id || saved.id) });
+            } else {
+                // T00:00:00 = local midnight (a bare YYYY-MM-DD is read as UTC).
+                const due = date ? resolveDueDate(`${date}T00:00:00`) : { label: 'Not set', urgency: 'Normal' };
+                const task = { title, date: due.label, category: course, urgency: due.urgency };
+                const saved = await api.createTask(task);
+                created.tasks.push({ ...task, id: saved && (saved._id || saved.id) });
+            }
+        } catch (err) {
+            console.error('❌ import-syllabus-items:', item && item.title, err.message);
+            errors.push(err.message);
+        }
+    }
+    return { created, errors, syncErrors };
 });
 
 // Reads a duration hint out of free text ("ללמוד 3 שעות למבחן", "שעתיים",
@@ -2735,7 +2973,9 @@ ipcMain.handle('get-ai-config', async () => {
     // to show that one is configured.
     return {
         provider: cfg.provider,
-        geminiModel: cfg.geminiModel,
+        // The model actually in use (an old saved default shows as its
+        // replacement), so the Settings picker shows the truth.
+        geminiModel: aiProvider.activeGeminiModel(),
         hasKey: Boolean(cfg.geminiKey),
         keyPreview: cfg.geminiKey ? `${cfg.geminiKey.slice(0, 6)}...${cfg.geminiKey.slice(-4)}` : '',
         active: aiProvider.resolveProvider(),
@@ -2743,9 +2983,15 @@ ipcMain.handle('get-ai-config', async () => {
     };
 });
 
+// Only these models can be picked in Settings. Anything else is dropped
+// rather than saved - a typo'd model id would fail every AI call.
+const PICKABLE_GEMINI_MODELS = ['gemini-3.8-flash', 'gemini-3.1-pro-preview'];
+
 ipcMain.handle('save-ai-config', async (event, updates) => {
     try {
-        aiProvider.writeConfig(updates);
+        const clean = { ...(updates || {}) };
+        if ('geminiModel' in clean && !PICKABLE_GEMINI_MODELS.includes(clean.geminiModel)) delete clean.geminiModel;
+        aiProvider.writeConfig(clean);
         return { success: true, active: aiProvider.resolveProvider() };
     } catch (err) {
         return { error: err.message };
@@ -2961,6 +3207,23 @@ ipcMain.handle('add-to-google-calendar', async (event, evtData) => {
     return await syncToGoogleCalendar(evtData);
 });
 
+// Removes the Google Calendar copy of an event, if it has one. Never
+// throws: Google may already have had it deleted by hand (a 404/410), and a
+// Google problem must not block deleting or editing the event in MindSync.
+async function deleteGoogleCopy(googleEventId) {
+    if (!googleEventId) return;
+    try {
+        await callGoogleWithReauth(async (auth) => {
+            const calendar = google.calendar({ version: 'v3', auth });
+            // Same timeout fix as the insert call above.
+            await calendar.events.delete({ calendarId: 'primary', eventId: googleEventId }, { timeout: 15000 });
+        });
+        console.log("Deleted from Google Calendar.");
+    } catch (err) {
+        console.error("Google Calendar delete error:", err.message);
+    }
+}
+
 // Deletes one event from Google Calendar (if it was mirrored there) and
 // then from our database. Shared by delete-event and by the task handlers
 // below, which clean up a task's planned blocks.
@@ -2968,25 +3231,68 @@ async function deleteEventEverywhere(id, knownEvent = null) {
     const evt = knownEvent || await api.getEvent(id);
 
     // מנגנון מחיקה מגוגל שעובד יחד עם מסד הנתונים
-    if (evt && evt.googleEventId) {
-        try {
-            await callGoogleWithReauth(async (auth) => {
-                const calendar = google.calendar({ version: 'v3', auth });
-                // Same timeout fix as the insert call above.
-                await calendar.events.delete({ calendarId: 'primary', eventId: evt.googleEventId }, { timeout: 15000 });
-            });
-            console.log("Deleted from Google Calendar.");
-        } catch (err) {
-            // Google Calendar may have already had this event deleted manually -
-            // that's a 404/410 from Google, not a real failure. Anything else,
-            // log it so it's visible instead of silently vanishing.
-            console.error("Google Calendar delete error:", err.message);
-        }
-    }
+    if (evt && evt.googleEventId) await deleteGoogleCopy(evt.googleEventId);
 
     // מחיקה מקומית לאחר המחיקה מגוגל
     await api.deleteEvent(id);
 }
+
+// Edits an existing calendar event: the renderer sends what the AI read from
+// the edited sentence (title, day, date, time, type).
+//
+// Google copy: replaced (delete + insert) rather than patched. A weekly
+// event and a one-time event are different kinds of Google event (one has
+// a repeat rule), so an edit that turns one into the other can't be done
+// by patching. `options.syncToGoogle` decides whether a copy exists after
+// the edit; left out, it keeps whatever the event had.
+//
+// The database is updated FIRST: if Google then fails, MindSync still holds
+// the edit, and the event is marked as having no Google copy rather than
+// pointing at one that was just deleted.
+ipcMain.handle('update-event', async (event, id, changes = {}, options = {}) => {
+  try {
+    const before = await api.getEvent(id);
+    if (!before) return { error: 'That calendar item no longer exists.' };
+
+    const updates = {};
+    for (const key of ['title', 'day', 'date', 'time', 'type', 'durationMinutes']) {
+      if (changes[key] !== undefined) updates[key] = changes[key];
+    }
+    if (updates.date === '') updates.date = null; // '' would fail the server's YYYY-MM-DD check
+    // A block the planner placed becomes YOURS once you edit it - otherwise
+    // the next "Plan study time" would sweep your change away. (Undo passes
+    // the original value back explicitly.)
+    updates.autoScheduled = changes.autoScheduled === undefined ? false : !!changes.autoScheduled;
+
+    const updated = await api.updateEvent(id, updates);
+
+    const hadGoogle = !!before.googleEventId;
+    const wantGoogle = options.syncToGoogle === undefined ? hadGoogle : !!options.syncToGoogle;
+    let googleEventId = before.googleEventId || null;
+    let googleSyncError = null;
+
+    if (hadGoogle || wantGoogle) {
+      if (hadGoogle) await deleteGoogleCopy(before.googleEventId);
+      googleEventId = null;
+      if (wantGoogle) {
+        const g = await syncToGoogleCalendar({ ...before, ...updates });
+        if (g.success) googleEventId = g.eventId;
+        else googleSyncError = g.error;
+      }
+      await api.updateEvent(id, { googleEventId }).catch(err =>
+        console.warn('⚠️ Could not store the new Google event id:', err.message));
+    }
+
+    return {
+      event: { ...updated, id: updated.id || updated._id, googleEventId },
+      previous: { ...before, id: before.id || before._id },
+      googleSyncError
+    };
+  } catch (err) {
+    console.error('❌ update-event failed:', err.message);
+    return { error: err.message };
+  }
+});
 
 ipcMain.handle('delete-event', async (event, id) => {
   try {

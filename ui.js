@@ -37,7 +37,10 @@
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
-    const TOAST_ICONS = { success: '✅', error: '⚠️', warning: '⚡', info: 'ℹ️' };
+    // Line icons from icons.js, tinted by status in CSS. (These were emoji,
+    // which look different on every OS and don't follow the text colour.)
+    const TOAST_ICONS = { success: 'checkCircle', error: 'alert', warning: 'alert', info: 'info' };
+    const svg = (name, size) => (window.icon ? window.icon(name, { size }) : '');
 
     function showToast(type, message, title, duration) {
         const container = getToastContainer();
@@ -45,12 +48,12 @@
         el.className = `ms-toast ms-toast--${type}`;
 
         el.innerHTML = `
-            <span class="ms-toast__icon" aria-hidden="true">${TOAST_ICONS[type] || 'ℹ️'}</span>
+            <span class="ms-toast__icon" aria-hidden="true">${svg(TOAST_ICONS[type] || 'info', 16)}</span>
             <div class="ms-toast__body">
                 ${title ? `<div class="ms-toast__title" dir="auto">${escapeHtml(title)}</div>` : ''}
                 <div class="ms-toast__message" dir="auto">${escapeHtml(message)}</div>
             </div>
-            <button class="ms-toast__close" aria-label="Dismiss">✕</button>
+            <button class="ms-toast__close" aria-label="Dismiss">${svg('close', 14)}</button>
         `;
 
         function dismiss() {
@@ -192,10 +195,12 @@
     };
 
     // ---- Empty state + skeleton builders ----
+    // `icon` is an icon name from icons.js ('calendar', 'search', ...).
     window.renderEmptyState = function (container, { icon, title, message, actionLabel, onAction }) {
+        const iconName = window.iconNames && window.iconNames.includes(icon) ? icon : 'file';
         container.innerHTML = `
             <div class="ms-empty">
-                <div class="ms-empty__icon" aria-hidden="true">${icon || '📭'}</div>
+                <div class="ms-empty__icon" aria-hidden="true">${svg(iconName, 20)}</div>
                 <div class="ms-empty__title" dir="auto">${escapeHtml(title)}</div>
                 ${message ? `<div class="ms-empty__message" dir="auto">${escapeHtml(message)}</div>` : ''}
                 ${actionLabel ? `<button class="ms-btn ms-btn--primary ms-empty__action">${escapeHtml(actionLabel)}</button>` : ''}

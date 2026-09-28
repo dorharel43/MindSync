@@ -2965,3 +2965,34 @@ body.auth-pending #auth-screen {
     30% { box-shadow: 0 0 0 3px var(--accent-purple); }
 }
 .is-flash { animation: ms-flash 0.8s ease-out 2; }
+
+/* ==========================================
+   Planner cards: edit + delete
+   ========================================== */
+/* Both buttons sit in one small row at the top of the card. Quiet until
+   the card is hovered or focused - opacity only, so nothing moves. */
+.task-card__actions {
+    display: flex;
+    justify-content: center;
+    gap: 2px;
+}
+.task-card__actions .btn-icon {
+    padding: 2px 4px;
+    opacity: 0.55;
+    transition: opacity var(--duration-fast) var(--ease-out),
+                background-color var(--duration-fast) var(--ease-out),
+                color var(--duration-fast) var(--ease-out);
+}
+.task-card:hover .task-card__actions .btn-icon,
+.task-card:focus-within .task-card__actions .btn-icon {
+    opacity: 1;
+}
+.edit-weekly-btn { color: var(--text-secondary); }
+.edit-weekly-btn:hover { color: var(--text-primary); background: var(--hover-bg); }
+
+/* Settings: model picker */
+.ai-model-select {
+    width: auto;
+    min-width: 240px;
+    flex-shrink: 0;
+}

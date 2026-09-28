@@ -63,6 +63,20 @@ function renderMath(tex, displayMode) {
     return `<code>${escapeHtml(tex)}</code>`;
 }
 
+// Code blocks (``` ... ```): summaries of programming material need real
+// multi-line code, with its indentation. Pulled out FIRST, before formulas
+// and markdown, so a "$" or "*" inside code is left alone - then shown
+// escaped, as-is, left to right.
+const CODE_LINE = /^\u0000C(\d+)\u0000$/;
+function extractCode(text) {
+    const blocks = [];
+    const out = String(text || '').replace(/```[^\n]*\n([\s\S]*?)```/g, (_, code) => {
+        blocks.push(code.replace(/\n$/, ''));
+        return `\n\u0000C${blocks.length - 1}\u0000\n`;
+    });
+    return { text: out, blocks };
+}
+
 // Formulas are pulled out into placeholders BEFORE escaping and markdown, so
 // neither can mangle them (a "*" in a formula isn't bold, a "_" isn't
 // anything), then put back as rendered HTML at the very end.
@@ -90,7 +104,8 @@ function inline(text, math) {
 }
 
 function renderSummary(text) {
-    const { text: body, math } = extractMath(text);
+    const { text: withoutCode, blocks } = extractCode(text);
+    const { text: body, math } = extractMath(withoutCode);
     const lines = body.split(/\r?\n/);
     let html = '';
     let listType = null; // 'ul' | 'ol' | null
@@ -104,6 +119,11 @@ function renderSummary(text) {
         const line = raw.trim();
         let m;
         if (!line) { closeList(); continue; }
+        if ((m = line.match(CODE_LINE))) {
+            closeList();
+            html += `<pre class="code-block" dir="ltr"><code>${escapeHtml(blocks[m[1]])}</code></pre>`;
+            continue;
+        }
         if ((m = line.match(/^\u0000M(\d+)\u0000$/)) && math[m[1]].display) {
             closeList();
             html += `<div class="math-display" dir="ltr">${renderMath(math[m[1]].tex, true)}</div>`;
@@ -121,12 +141,24 @@ function renderSummary(text) {
     return html;
 }
 
-function showSummary(text, savedAt) {
+// "Written by Gemini 3.1 Pro" - and, when the chosen model wasn't
+// available and a fallback wrote it, says that too. Without this, comparing
+// Flash with Pro could quietly compare Flash with Flash.
+function modelNote(info) {
+    if (!info || !info.modelLabel) return '';
+    let note = ` · Written by ${info.modelLabel}`;
+    if (info.requestedModelLabel && info.requestedModelLabel !== info.modelLabel && !/local/.test(info.modelLabel)) {
+        note += ` (${info.requestedModelLabel} wasn't available)`;
+    }
+    return note;
+}
+
+function showSummary(text, savedAt, info) {
     currentSummary = text;
     contentEl.innerHTML = renderSummary(text);
-    metaEl.textContent = savedAt
+    metaEl.textContent = (savedAt
         ? `Saved ${new Date(savedAt).toLocaleString()}`
-        : 'Saved';
+        : 'Saved') + modelNote(info);
     copyBtn.disabled = false;
     regenBtn.disabled = false;
 }
@@ -136,7 +168,7 @@ function showLoading() {
         <div class="sum-state">
             <div class="sum-spinner"></div>
             <div>Reading the document and writing the summary…</div>
-            <div style="font-size: 0.85em; margin-top: 6px;">This can take up to a minute for a long file.</div>
+            <div style="font-size: 0.85em; margin-top: 6px;">This can take 1-2 minutes for a long file.</div>
         </div>`;
     copyBtn.disabled = true;
     regenBtn.disabled = true;
@@ -160,19 +192,23 @@ async function generate() {
     showLoading();
     try {
         const result = await ipcRenderer.invoke('summarize-text', file.content || '', file.sourcePath || '');
-        if (!result || typeof result !== 'string' || result.error) {
-            showError((result && result.error) || 'The AI did not return a summary.');
+        // main.js now returns { summary, model, ... }; a plain string is
+        // still accepted so an older main.js keeps working.
+        const info = result && typeof result === 'object' ? result : null;
+        const text = typeof result === 'string' ? result : (info && info.summary);
+        if (!result || (info && info.error) || typeof text !== 'string' || !text.trim()) {
+            showError((info && info.error) || 'The AI did not return a summary.');
             return;
         }
-        const saved = await ipcRenderer.invoke('save-file-summary', fileId, result);
+        const saved = await ipcRenderer.invoke('save-file-summary', fileId, text);
         if (saved && saved.error) {
             // The summary exists - show it rather than throwing it away, but
             // be honest that it won't be there next time.
-            showSummary(result, null);
-            metaEl.textContent = `Not saved: ${saved.error}`;
+            showSummary(text, null, info);
+            metaEl.textContent = `Not saved: ${saved.error}${modelNote(info)}`;
             return;
         }
-        showSummary(result, saved && saved.summaryUpdatedAt);
+        showSummary(text, saved && saved.summaryUpdatedAt, info);
     } catch (err) {
         showError(err.message);
     }

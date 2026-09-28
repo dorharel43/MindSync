@@ -235,10 +235,12 @@ const darkToggleSettings = document.getElementById('settings-dark-toggle');
 // and they must apply instantly on boot without waiting for a network call.
 const THEME_KEY = 'mindsync.theme';
 const DARK_KEY = 'mindsync.darkMode';
-const VALID_THEMES = ['ink', 'paper', 'slate'];
+// Colour themes (themes.css). 'blue' is the default added with the 2026
+// redesign; ink / paper / slate are the earlier three, rebuilt on it.
+const VALID_THEMES = ['blue', 'ink', 'paper', 'slate'];
 
 function applyTheme(themeName) {
-    if (!VALID_THEMES.includes(themeName)) themeName = 'ink';
+    if (!VALID_THEMES.includes(themeName)) themeName = 'blue';
     document.documentElement.setAttribute('data-theme', themeName);
     localStorage.setItem(THEME_KEY, themeName);
 
@@ -256,23 +258,51 @@ function applyDarkMode(isDark) {
     }
 }
 
+// Appearance: Light / Dark / System. The three colour themes (Ink / Paper /
+// Slate) are gone - one considered palette in light and dark is what real
+// products ship. 'System' follows the computer's own light/dark setting.
+const APPEARANCE_KEY = 'mindsync.appearance';
+const systemDark = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+
+function currentAppearance() {
+    const saved = localStorage.getItem(APPEARANCE_KEY);
+    if (saved === 'light' || saved === 'dark' || saved === 'system') return saved;
+    return localStorage.getItem(DARK_KEY) === '1' ? 'dark' : 'light'; // older setting
+}
+
+function setAppearance(mode) {
+    localStorage.setItem(APPEARANCE_KEY, mode);
+    applyDarkMode(mode === 'dark' || (mode === 'system' && !!(systemDark && systemDark.matches)));
+    document.querySelectorAll('[data-appearance]').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.appearance === mode);
+    });
+}
+
 function toggleTheme() {
-    applyDarkMode(!document.body.classList.contains('dark-mode'));
+    setAppearance(document.body.classList.contains('dark-mode') ? 'light' : 'dark');
 }
 
 if (themeBtnSidebar) themeBtnSidebar.addEventListener('click', toggleTheme);
 if (darkToggleSettings) darkToggleSettings.addEventListener('click', toggleTheme);
-
-document.querySelectorAll('.theme-option').forEach((btn) => {
-    btn.addEventListener('click', () => {
-        applyTheme(btn.dataset.themeValue);
-        toast.success(`Theme set to ${btn.dataset.themeValue}.`);
-    });
+document.querySelectorAll('[data-appearance]').forEach((btn) => {
+    btn.addEventListener('click', () => setAppearance(btn.dataset.appearance));
 });
+document.querySelectorAll('.theme-option').forEach((btn) => {
+    btn.addEventListener('click', () => applyTheme(btn.dataset.themeValue));
+});
+if (systemDark && systemDark.addEventListener) {
+    systemDark.addEventListener('change', () => { if (currentAppearance() === 'system') setAppearance('system'); });
+}
 
-// Restore saved preferences on boot
-applyTheme(localStorage.getItem(THEME_KEY) || 'ink');
-applyDarkMode(localStorage.getItem(DARK_KEY) === '1');
+// Restore saved preferences on boot.
+// One-time: with the redesign, everyone starts on the new default (Blue)
+// once; a previously chosen theme is one click away in Settings.
+if (!localStorage.getItem('mindsync.themeV2')) {
+    localStorage.setItem(THEME_KEY, 'blue');
+    localStorage.setItem('mindsync.themeV2', '1');
+}
+applyTheme(localStorage.getItem(THEME_KEY) || 'blue');
+setAppearance(currentAppearance());
 
 // ==========================================
 // 3. Focus Mode
@@ -344,6 +374,7 @@ const saveEventBtn = document.getElementById('save-event-btn');
 const scheduleList = document.querySelector('.daily-schedule-list');
 
 function openAddEventModal() {
+    setEventModalMode(null);
     addEventModal.style.display = 'flex';
     const t = document.getElementById('smart-event-input');
     if (t) t.focus();
@@ -428,7 +459,7 @@ function buildScheduleRow(evt, folders) {
 
     deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        deleteBtn.innerText = '⏳';
+        deleteBtn.disabled = true;
         await ipcRenderer.invoke('delete-event', evt.id);
         await loadAndRenderEvents();
         await loadAndRenderWeeklyBoard();
@@ -458,7 +489,7 @@ async function loadAndRenderEvents() {
 
     if (events.length === 0 && scheduleList) {
         renderEmptyState(scheduleList, {
-            icon: '📅',
+            icon: 'calendar',
             title: 'Your schedule is empty',
             message: 'Add your lessons, exams and study blocks to see your week at a glance.'
         });
@@ -593,8 +624,9 @@ function renderWeekNav(weekStart, weekEnd) {
         const name = weeklyWeekOffset === 0 ? 'This week' : weeklyWeekOffset === 1 ? 'Next week' : weeklyWeekOffset === -1 ? 'Last week' : '';
         label.textContent = `${name ? name + ' · ' : ''}${shortDate(weekStart)} – ${shortDate(weekEnd)}`;
     }
-    // visibility, not display: nothing in the row moves when these appear.
-    if (weekTodayBtn) weekTodayBtn.style.visibility = weeklyWeekOffset === 0 ? 'hidden' : 'visible';
+    // "Back to today" is always shown (it used to appear only away from the
+    // current week, and was easy to miss). Marked when you're already there.
+    if (weekTodayBtn) weekTodayBtn.classList.toggle('is-current', weeklyWeekOffset === 0);
 
     renderUpcoming();
 }
@@ -636,7 +668,8 @@ function collectUpcoming() {
 function renderUpcoming() {
     if (!upcomingBtn) return;
     const items = collectUpcoming();
-    upcomingBtn.textContent = items.length ? `Coming up (${items.length}${items.length === UPCOMING_LIMIT ? '+' : ''}) ▾` : 'Coming up ▾';
+    upcomingBtn.innerHTML = (items.length ? `Coming up (${items.length}${items.length === UPCOMING_LIMIT ? '+' : ''})` : 'Coming up')
+        + icon('chevronDown', { size: 14 });
     if (!upcomingPanel || upcomingPanel.hidden) return;
 
     upcomingPanel.innerHTML = '';
@@ -736,9 +769,11 @@ function renderWeeklyBoard() {
 
         const header = document.createElement('div');
         header.className = 'day-header';
+        // "MON 28" like a calendar; today's number sits in an accent circle.
+        header.title = `${days[index]} ${colDate.getDate()}/${colDate.getMonth() + 1}${isToday ? ' (today)' : ''}`;
         header.innerHTML = `
-            <div class="day-header__name">${days[index]}</div>
-            <div class="day-header__date">${isToday ? 'Today · ' : ''}${colDate.getDate()}/${colDate.getMonth() + 1}</div>`;
+            <div class="day-header__name">${days[index].slice(0, 3)}</div>
+            <div class="day-header__date">${colDate.getDate()}</div>`;
         column.appendChild(header);
 
         // Sorted by time - the server only ever returned them in insertion
@@ -758,8 +793,12 @@ function renderWeeklyBoard() {
             // Monday" and which are "this Monday only".
             const weekly = !evt.date;
             taskCard.innerHTML = `
-                <button class="btn-icon btn-icon--danger delete-weekly-btn" title="${weekly ? 'Delete - removes it from every week' : 'Delete from calendar'}" aria-label="Delete from calendar">${icon('trash')}</button>
-                <div class="task-time">${escapeHtml(evt.time)}${weekly ? ' <span class="task-repeat" title="Every week">↻</span>' : ''}</div>${escapeHtml(evt.title)}
+                <div class="task-card__actions">
+                    <button class="btn-icon edit-weekly-btn" title="${weekly ? 'Edit - changes it in every week' : 'Edit'}" aria-label="Edit">${icon('edit')}</button>
+                    <button class="btn-icon btn-icon--danger delete-weekly-btn" title="${weekly ? 'Delete - removes it from every week' : 'Delete from calendar'}" aria-label="Delete from calendar">${icon('trash')}</button>
+                </div>
+                <div class="task-time">${escapeHtml(evt.time)}${weekly ? ' <span class="task-repeat" title="Every week">↻</span>' : ''}</div>
+                <div class="task-card__title" dir="auto">${escapeHtml(evt.title)}</div>
             `;
 
             // Clicking a study/exam event (or one whose title names a
@@ -770,12 +809,17 @@ function renderWeeklyBoard() {
                 taskCard.onclick = () => goToLearningDestination(dest);
             }
 
+            const editBtn = taskCard.querySelector('.edit-weekly-btn');
+            editBtn.onclick = (e) => {
+                e.stopPropagation(); // the card itself may open Study/Materials
+                openEditEventModal(evt);
+            };
+
+            // (Hover opacity now lives in CSS, for both buttons.)
             const delBtn = taskCard.querySelector('.delete-weekly-btn');
-            delBtn.onmouseenter = () => delBtn.style.opacity = '1';
-            delBtn.onmouseleave = () => delBtn.style.opacity = '0.5';
             delBtn.onclick = async (e) => {
                 e.stopPropagation();
-                delBtn.innerText = '⏳';
+                delBtn.disabled = true;
                 await ipcRenderer.invoke('delete-event', evt.id);
                 await loadAndRenderWeeklyBoard();
                 await loadAndRenderHome();
@@ -853,6 +897,147 @@ function closeAddEventModal() {
     addEventModal.style.display = 'none';
     const t = document.getElementById('smart-event-input');
     if (t) t.value = '';
+    setEventModalMode(null);
+}
+
+// ---- Edit a calendar item: AI only, like adding ----
+// The item is written back into the box as a sentence - "שיעור סטטיסטיקה
+// כל יום שני ב-10:00" or "מבחן ב-26.10.2026 ב-09:00" - you change the words
+// (another time, day or date, a new name) and the AI reads it again. No
+// pickers, same as adding. The toast says what it understood, with Undo.
+const HEBREW_DAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+let editingEvent = null;
+let addModeSyncChecked = true; // remembered while the box is in edit mode
+
+// The sentence the parser reads back as exactly this event. The year is
+// always written: without it, a date that has already passed would be read
+// as next year's.
+function eventToSentence(evt) {
+    const at = `ב-${evt.time}`;
+    if (evt.date) {
+        const [y, m, d] = String(evt.date).split('-').map(Number);
+        return `${evt.title} ב-${d}.${m}.${y} ${at}`;
+    }
+    const dayIdx = EVENT_DAYS.indexOf(evt.day);
+    return `${evt.title} כל יום ${HEBREW_DAY_NAMES[dayIdx >= 0 ? dayIdx : 0]} ${at}`;
+}
+
+// Switches the one modal between "add" (evt = null) and "edit this item".
+function setEventModalMode(evt) {
+    const title = document.getElementById('event-modal-title');
+    const help = document.getElementById('event-modal-help');
+    const syncLabel = document.getElementById('sync-google-label');
+    const syncCheck = document.getElementById('sync-google-check');
+
+    if (evt && !editingEvent && syncCheck) addModeSyncChecked = syncCheck.checked;
+    if (!evt && editingEvent && syncCheck) syncCheck.checked = addModeSyncChecked;
+    editingEvent = evt || null;
+
+    if (title) title.textContent = evt ? 'Edit' : 'Add to your calendar';
+    if (help) {
+        help.textContent = !evt
+            ? 'A class, an exam, anything at a set time - write it the way you\'d say it.'
+            : evt.date
+                ? 'Change the words - a new time, date or name - and save.'
+                : 'This repeats every week, so a change applies to every week. Change the words - a new time, day or name - and save.';
+    }
+    if (syncLabel) syncLabel.textContent = evt ? 'Also in Google Calendar' : 'Also add to Google Calendar';
+    if (evt && syncCheck) syncCheck.checked = !!evt.googleEventId;
+    if (saveEventBtn) saveEventBtn.textContent = evt ? 'Save changes' : 'Add';
+}
+
+function openEditEventModal(evt) {
+    setEventModalMode(evt);
+    addEventModal.style.display = 'flex';
+    const t = document.getElementById('smart-event-input');
+    if (t) {
+        t.value = eventToSentence(evt);
+        t.focus();
+        t.setSelectionRange(t.value.length, t.value.length);
+    }
+}
+
+async function saveEventEdit(text) {
+    const before = editingEvent;
+    const syncCheck = document.getElementById('sync-google-check');
+    const syncToGoogle = !!(syncCheck && syncCheck.checked);
+
+    const originalText = saveEventBtn.textContent;
+    saveEventBtn.textContent = 'Reading…';
+    saveEventBtn.disabled = true;
+
+    let res;
+    try {
+        let parsed = JSON.parse(await ipcRenderer.invoke('parse-smart-event', text));
+        if (parsed && parsed.error) { toast.error(parsed.error); return; }
+        if (Array.isArray(parsed)) parsed = parsed[0];
+        if (!parsed || !String(parsed.title || '').trim() || !EVENT_DAYS.includes(parsed.day) || !/^\d{2}:\d{2}$/.test(parsed.time || '')) {
+            toast.error('Could not tell what or when. Keep the day or date and the time in the sentence, e.g. "ביום שלישי ב-18:00".');
+            return;
+        }
+
+        const newTitle = String(parsed.title).trim();
+        const changes = {
+            title: newTitle,
+            day: parsed.day,
+            date: parsed.date || null,
+            time: parsed.time,
+            // Same name -> same type. Re-classifying an unchanged title could
+            // only turn a correct type into a wrong one.
+            type: newTitle === before.title ? before.type : (EVENT_TYPE_LABELS[parsed.type] ? parsed.type : 'personal')
+        };
+
+        const unchanged = ['title', 'day', 'time', 'type'].every(k => changes[k] === before[k])
+            && (changes.date || null) === (before.date || null)
+            && syncToGoogle === !!before.googleEventId;
+        if (unchanged) {
+            closeAddEventModal();
+            toast.info('Nothing to change.');
+            return;
+        }
+
+        saveEventBtn.textContent = 'Saving…';
+        res = await ipcRenderer.invoke('update-event', before.id, changes, { syncToGoogle });
+        if (!res || res.error) {
+            toast.error((res && res.error) || 'Please try again.', 'Could not save the change');
+            return;
+        }
+    } catch (e) {
+        toast.error('Something went wrong reading that. Please try again.');
+        console.error(e);
+        return;
+    } finally {
+        saveEventBtn.textContent = originalText;
+        saveEventBtn.disabled = false;
+    }
+
+    closeAddEventModal();
+    const after = res.event;
+    // A one-time item moved to another week: go there, the way adding does.
+    if (after.date) {
+        const [y, m, d] = after.date.split('-').map(Number);
+        weeklyWeekOffset = Math.floor(Math.round((new Date(y, m - 1, d) - weekStartFor(0)) / 86400000) / 7);
+    }
+    weeklyHighlightId = after.id;
+    await loadAndRenderWeeklyBoard();
+    await loadAndRenderHome();
+
+    showUndoToast(`Changed: ${describeEvent(after)}`, async () => {
+        const p = res.previous;
+        const undo = await ipcRenderer.invoke('update-event', p.id, {
+            title: p.title,
+            day: p.day,
+            date: p.date || null,
+            time: p.time,
+            type: p.type,
+            durationMinutes: p.durationMinutes ?? null,
+            autoScheduled: !!p.autoScheduled
+        }, { syncToGoogle: !!p.googleEventId });
+        if (undo && undo.error) toast.error(undo.error, 'Could not undo');
+        await loadAndRenderWeeklyBoard();
+        await loadAndRenderHome();
+    });
+    if (res.googleSyncError) toast.warning(`Changed in MindSync, but not in Google Calendar: ${res.googleSyncError}`);
 }
 
 function describeEvent(evt) {
@@ -870,6 +1055,7 @@ if (saveEventBtn) {
         const textInput = document.getElementById('smart-event-input');
         const text = textInput ? textInput.value.trim() : '';
         if (!text) { toast.warning('Write what you have planned first.'); return; }
+        if (editingEvent) { await saveEventEdit(text); return; }
 
         const syncCheck = document.getElementById('sync-google-check');
         const syncToGoogle = !!(syncCheck && syncCheck.checked);
@@ -1070,6 +1256,14 @@ function escapeHtml(str) {
 
 // Progress comes from the server as a virtual field, but we recompute it
 // here too so the bar updates instantly on a click without a full refetch.
+// Urgency colours come from the design tokens (tokens.css), not literals.
+const URGENCY_COLORS = {
+    Urgent: 'var(--urgency-urgent)',
+    High: 'var(--urgency-high)',
+    Medium: 'var(--urgency-medium)',
+    Normal: 'var(--text-secondary)'
+};
+
 function computeProgress(task) {
     if (!task.subtasks || task.subtasks.length === 0) {
         return { percent: task.status === 'completed' ? 100 : 0, done: 0, total: 0 };
@@ -1289,7 +1483,7 @@ function renderTasksList() {
 
     if (!tasks || tasks.length === 0) {
         renderEmptyState(tasksListContainer, {
-            icon: '🎉',
+            icon: 'checkCircle',
             title: 'No tasks right now',
             message: 'You are all caught up. Add a task, or upload study material and let the AI pull tasks out of it.'
         });
@@ -1329,19 +1523,19 @@ function renderTasksList() {
         // after typing in a search box looks like a bug.
         if (taskSearchQuery) {
             renderEmptyState(empty, {
-                icon: '🔍',
+                icon: 'search',
                 title: 'No matches',
                 message: `Nothing matches "${taskSearchQuery}". Try a different search.`
             });
         } else if (activeTaskStatusFilter !== 'all') {
             renderEmptyState(empty, {
-                icon: '✨',
+                icon: 'plus',
                 title: 'Nothing here',
                 message: `No tasks match the "${activeTaskStatusFilter}" filter right now.`
             });
         } else {
             renderEmptyState(empty, {
-                icon: '📂',
+                icon: 'folder',
                 title: 'No tasks in this category',
                 message: 'Pick a different category, or add a task here.'
             });
@@ -1379,10 +1573,7 @@ function renderTasksList() {
     tasksListContainer.appendChild(selectAllRow);
 
     visibleTasks.forEach((task) => {
-        let urgencyColor = 'var(--text-secondary)';
-        if (task.urgency === 'Urgent') urgencyColor = '#f44336';
-        else if (task.urgency === 'High') urgencyColor = '#ff9800';
-        else if (task.urgency === 'Medium') urgencyColor = '#2196f3';
+        const urgencyColor = URGENCY_COLORS[task.urgency] || URGENCY_COLORS.Normal;
 
         const { percent, done, total } = computeProgress(task);
         const hasChecklist = total > 0;
@@ -1457,7 +1648,7 @@ function renderTasksList() {
                         <input type="checkbox" ${sub.completed ? 'checked' : ''} />
                         <span dir="auto" class="${sub.completed ? 'subtask-done' : ''}">${escapeHtml(sub.title)}</span>
                     </label>
-                    <button class="delete-subtask-btn" title="Remove step">✕</button>
+                    <button class="delete-subtask-btn" title="Remove step" aria-label="Remove step">${icon('close', { size: 14 })}</button>
                 `;
 
                 row.querySelector('input[type="checkbox"]').onchange = async (e) => {
@@ -1582,8 +1773,7 @@ function renderTasksList() {
                     return;
                 }
                 task.urgency = newUrgency;
-                const colors = { Urgent: '#f44336', High: '#ff9800', Medium: '#2196f3', Normal: 'var(--text-secondary)' };
-                e.target.style.color = colors[newUrgency];
+                e.target.style.color = URGENCY_COLORS[newUrgency] || URGENCY_COLORS.Normal;
             };
         }
 
@@ -1696,9 +1886,8 @@ async function loadAndRenderFolders() {
     materialsGrid.innerHTML = '';
 
     const allFolder = document.createElement('div');
-    allFolder.className = 'card folder-card';
-    allFolder.style.border = currentActiveFolder === 'All' ? '2px solid var(--accent-purple)' : '1px solid var(--border-color)';
-    allFolder.innerHTML = `<div class="folder-icon">${icon('library')}</div><div class="folder-name">All Files</div>`;
+    allFolder.className = 'card folder-card' + (currentActiveFolder === 'All' ? ' is-active' : '');
+    allFolder.innerHTML = `<div class="folder-icon">${icon('library')}</div><div class="folder-name">All files</div>`;
     allFolder.onclick = () => {
         currentActiveFolder = 'All';
         loadAndRenderFolders();
@@ -1708,14 +1897,12 @@ async function loadAndRenderFolders() {
 
     folders.forEach((folder) => {
         const folderCard = document.createElement('div');
-        folderCard.className = 'card folder-card';
-        folderCard.style.position = 'relative';
-        folderCard.style.border = currentActiveFolder === folder.name ? '2px solid var(--accent-purple)' : '1px solid var(--border-color)';
+        folderCard.className = 'card folder-card' + (currentActiveFolder === folder.name ? ' is-active' : '');
         
         folderCard.innerHTML = `
-            <button class="btn-icon btn-icon--danger delete-folder-btn" aria-label="Delete folder">${icon('trash')}</button>
             <div class="folder-icon">${icon('folder')}</div>
-            <div class="folder-name">${escapeHtml(folder.name)}</div>
+            <div class="folder-name" dir="auto">${escapeHtml(folder.name)}</div>
+            <button class="btn-icon btn-icon--danger delete-folder-btn" title="Delete folder" aria-label="Delete folder">${icon('trash')}</button>
         `;
         
         folderCard.onclick = (e) => {
@@ -1726,8 +1913,6 @@ async function loadAndRenderFolders() {
         };
 
         const delBtn = folderCard.querySelector('.delete-folder-btn');
-        delBtn.onmouseenter = () => delBtn.style.opacity = '1';
-        delBtn.onmouseleave = () => delBtn.style.opacity = '0.5';
         delBtn.onclick = async (e) => {
             e.stopPropagation();
             const result = await ipcRenderer.invoke('delete-folder', folder.id); // Fixed: Pass ID instead of index
@@ -1742,7 +1927,7 @@ async function loadAndRenderFolders() {
 
     const addBtn = document.createElement('div');
     addBtn.className = 'card folder-card add-folder';
-    addBtn.innerHTML = `<div class="add-icon">+</div><div class="folder-name" style="color: var(--text-secondary);">New Folder</div>`;
+    addBtn.innerHTML = `<div class="folder-icon">${icon('plus')}</div><div class="folder-name">New folder</div>`;
     addBtn.onclick = () => addFolderModal.style.display = 'flex';
     materialsGrid.appendChild(addBtn);
 
@@ -1766,9 +1951,9 @@ async function loadAndRenderFiles() {
 
     if (filteredFiles.length === 0) {
         renderEmptyState(filesListContainer, {
-            icon: '📄',
+            icon: 'file',
             title: 'No files here yet',
-            message: 'Upload a PDF, summary or exercise sheet to summarize it or extract tasks from it.'
+            message: 'Upload a PDF, summary or exercise sheet to summarize it, practise from it, or pull out its exams and deadlines.'
         });
         return;
     }
@@ -1781,13 +1966,13 @@ async function loadAndRenderFiles() {
                 <div class="file-icon">${icon('file')}</div>
                 <div>
                     <div class="file-name">${escapeHtml(file.name)}</div>
-                    <div class="file-meta">Folder: ${escapeHtml(file.folder)}</div>
+                    <div class="file-meta">${escapeHtml(file.folder)}</div>
                 </div>
             </div>
             <div class="file-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
-                <button class="btn-secondary btn-extract">${icon('brain')} Extract Tasks</button>
-                <button class="btn-primary btn-ai">${icon('sparkle')} ${file.summary ? 'View summary' : 'Summarize'}</button>
-                <button class="btn-secondary delete-file-btn">${icon('trash')} Delete</button>
+                <button class="btn-secondary btn-sm btn-extract" title="Reads a syllabus or assignment sheet: exams go to the Planner, submissions to Tasks">Exams & deadlines</button>
+                <button class="btn-secondary btn-sm btn-ai">${file.summary ? 'View summary' : 'Summarize'}</button>
+                <button class="btn-icon btn-icon--danger delete-file-btn" title="Delete file" aria-label="Delete file">${icon('trash')}</button>
             </div>
         `;
 
@@ -1802,67 +1987,7 @@ async function loadAndRenderFiles() {
         };
 
         const extractBtn = fileItem.querySelector('.btn-extract');
-        if (extractBtn) {
-            extractBtn.onclick = async () => {
-                const originalText = extractBtn.innerText;
-                extractBtn.innerText = 'Analyzing document... ⏳';
-                extractBtn.disabled = true;
-
-                try {
-                    const aiResponse = await ipcRenderer.invoke('extract-tasks-from-text', file.content);
-                    const tasksArray = JSON.parse(aiResponse);
-
-                    if (tasksArray.error) {
-                        toast.error('Error: ' + tasksArray.error);
-                    } else if (Array.isArray(tasksArray) && tasksArray.length > 0) {
-                        // Group everything from one document under one category
-                        // so a bulk import doesn't scatter itself through the
-                        // whole task list. The filename is the default, but the
-                        // user can change it - promptDialog is our own modal,
-                        // since Electron doesn't implement window.prompt().
-                        const suggested = file.name.replace(/\.[^.]+$/, '').trim();
-                        const category = await promptDialog(
-                            'Group these tasks',
-                            `Found ${tasksArray.length} task(s). They'll be grouped under this category:`,
-                            suggested
-                        );
-                        if (category === null) return; // cancelled
-
-                        let failed = 0;
-                        for (const task of tasksArray) {
-                            const saveResult = await ipcRenderer.invoke('save-task', {
-                                title: task.title,
-                                date: task.date,
-                                category: category,
-                                urgency: task.urgency || 'Normal'
-                            });
-                            if (saveResult && saveResult.error) {
-                                console.error('Failed to save task:', task.title, saveResult.error);
-                                failed++;
-                            }
-                        }
-
-                        await loadAndRenderTasks(); 
-                        await loadAndRenderHome();
-
-                        const saved = tasksArray.length - failed;
-                        if (failed > 0) {
-                            toast.error(`Added ${saved} task(s), but ${failed} failed to save. Check the console for details.`);
-                        } else {
-                            toast.success(`Added ${saved} tasks under "${category}".`, 'Extraction complete');
-                        }
-                    } else {
-                        toast.error('The AI read the document but couldn\'t find clear tasks to extract.');
-                    }
-                } catch (err) {
-                    toast.error('Error parsing the data from the AI: ' + err.message);
-                    console.error(err);
-                } finally {
-                    extractBtn.innerText = originalText;
-                    extractBtn.disabled = false;
-                }
-            };
-        }
+        if (extractBtn) extractBtn.onclick = () => openSyllabusImport(file, extractBtn);
 
         filesListContainer.appendChild(fileItem);
     });
@@ -2017,13 +2142,40 @@ async function runUploadBatch() {
 
     batch.running = false;
     batch.done = true;
+    const notUploaded = batch.files.length - uploaded - skipped - failed; // stopped early
     const parts = [`${uploaded} uploaded`];
-    if (skipped) parts.push(`${skipped} skipped`);
+    if (skipped) parts.push(`${skipped} already there`);
     if (failed) parts.push(`${failed} failed`);
-    uploadSummary.textContent = parts.join(' · ') + '.';
-    cancelUploadBtn.textContent = 'Close';
-    confirmUploadBtn.textContent = 'Done';
-    confirmUploadBtn.disabled = false;
+    if (notUploaded) parts.push(`${notUploaded} not uploaded`);
+    const resultText = parts.join(' · ');
+    const where = folder === 'No Folder' ? '' : ` to "${folder}"`;
+
+    if (failed === 0) {
+        // Nothing needs the user's attention - close the window by itself and
+        // say what happened in a toast. (uploadBatch === batch: only close the
+        // window that belongs to THIS batch.)
+        if (uploadBatch === batch) {
+            uploadModal.style.display = 'none';
+            uploadBatch = null;
+        }
+        if (uploaded === 0 && !notUploaded) {
+            toast.info(skipped === 1 ? 'This file is already uploaded here.' : `All ${skipped} files are already uploaded here.`);
+        } else if (uploaded === 1 && parts.length === 1) {
+            toast.success(`Uploaded ${batch.files[0].name}${where}.`);
+        } else {
+            const title = notUploaded ? 'Upload stopped'
+                : folder === 'No Folder' ? 'Upload finished' : `Uploaded to ${folder}`;
+            toast.success(resultText + '.', title);
+        }
+    } else {
+        // Some files failed - keep the window open so the user can see WHICH
+        // ones (the status next to each row).
+        uploadSummary.textContent = resultText + '.';
+        cancelUploadBtn.textContent = 'Close';
+        confirmUploadBtn.textContent = 'Done';
+        confirmUploadBtn.disabled = false;
+        toast.warning(`${failed} file${failed === 1 ? '' : 's'} couldn't be uploaded - see the list.`);
+    }
 
     if (folder !== 'No Folder') currentActiveFolder = folder;
     await loadAndRenderFolders();
@@ -2055,6 +2207,207 @@ if (cancelUploadBtn) {
         uploadBatch = null;
     };
 }
+
+// ==========================================
+// Exams & deadlines from a syllabus
+// ==========================================
+// Replaces "Find deadlines", which added everything it found as tasks, at
+// once. Now: the AI reads the file (read-syllabus in main.js), this window
+// lists what it found - exams go to the Planner, submissions to Tasks - and
+// only what stays ticked is added (import-syllabus-items), with Undo.
+const syllabusModal = document.getElementById('syllabus-modal');
+const syllabusList = document.getElementById('syllabus-list');
+const syllabusIntro = document.getElementById('syllabus-intro');
+const syllabusCourse = document.getElementById('syllabus-course');
+const syllabusGoogle = document.getElementById('syllabus-google');
+const syllabusGoogleRow = document.getElementById('syllabus-google-row');
+const syllabusConfirm = document.getElementById('syllabus-confirm');
+const syllabusCancel = document.getElementById('syllabus-cancel');
+let syllabusState = null; // { file, items, saving }
+
+const SYLLABUS_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function syllabusDateLabel(item) {
+    if (!item.date) return 'No date in the file';
+    const [y, m, d] = item.date.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    let label = `${SYLLABUS_WEEKDAYS[dt.getDay()]} ${d}/${m}/${y}`;
+    if (item.kind === 'exam') label += item.time ? ` · ${item.time}` : ' · 09:00 (no time in the file)';
+    return label;
+}
+
+// Why an item starts unticked (or can't be ticked at all), in words.
+function syllabusNote(item) {
+    if (item.kind === 'exam' && !item.date) return { text: "Can't go in the Planner without a date", blocked: true };
+    if (item.alreadyExists) return { text: 'Already in MindSync' };
+    if (item.isPast) return { text: 'Already passed' };
+    if (item.needsCheck) return { text: "This date isn't written like this in the file - check it" };
+    return null;
+}
+
+function updateSyllabusConfirm() {
+    if (!syllabusState) return;
+    const picked = syllabusState.items.filter(i => i.checked);
+    const exams = picked.filter(i => i.kind === 'exam').length;
+    const tasks = picked.length - exams;
+    syllabusConfirm.disabled = picked.length === 0 || syllabusState.saving;
+    syllabusConfirm.textContent = picked.length === 0 ? 'Add'
+        : `Add ${picked.length} item${picked.length === 1 ? '' : 's'}`;
+    if (syllabusGoogleRow) syllabusGoogleRow.hidden = exams === 0;
+    syllabusIntro.textContent = picked.length === 0
+        ? 'Tick what you want to add.'
+        : [exams ? `${exams} exam${exams === 1 ? '' : 's'} to the Planner` : '', tasks ? `${tasks} submission${tasks === 1 ? '' : 's'} to Tasks` : '']
+            .filter(Boolean).join(', ') + '.';
+}
+
+function renderSyllabusList() {
+    syllabusList.innerHTML = '';
+    syllabusState.items.forEach((item, index) => {
+        const note = syllabusNote(item);
+        const row = document.createElement('label');
+        row.className = 'syllabus-row' + (note && note.blocked ? ' is-blocked' : '');
+
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = !!item.checked;
+        box.disabled = !!(note && note.blocked);
+        box.onchange = () => { item.checked = box.checked; updateSyllabusConfirm(); };
+
+        const body = document.createElement('span');
+        body.className = 'syllabus-row__body';
+        const top = document.createElement('span');
+        top.className = 'syllabus-row__top';
+        const kind = document.createElement('span');
+        kind.className = `syllabus-kind syllabus-kind--${item.kind}`;
+        kind.textContent = item.kind === 'exam' ? 'Exam' : 'Submission';
+        const title = document.createElement('span');
+        title.className = 'syllabus-row__title';
+        title.dir = 'auto';
+        title.textContent = item.title;
+        top.append(kind, title);
+
+        const meta = document.createElement('span');
+        meta.className = 'syllabus-row__meta';
+        meta.textContent = `${syllabusDateLabel(item)} · ${item.kind === 'exam' ? 'Planner' : 'Tasks'}`;
+        body.append(top, meta);
+
+        if (note) {
+            const n = document.createElement('span');
+            n.className = 'syllabus-row__note';
+            n.textContent = note.text;
+            body.append(n);
+        }
+        if (item.sourceQuote) {
+            const q = document.createElement('span');
+            q.className = 'syllabus-row__quote';
+            q.dir = 'auto';
+            q.textContent = `“${item.sourceQuote}”`;
+            q.title = 'Where it says so in the file';
+            body.append(q);
+        }
+        row.dataset.index = index;
+        row.append(box, body);
+        syllabusList.appendChild(row);
+    });
+    updateSyllabusConfirm();
+}
+
+function closeSyllabusModal() {
+    if (syllabusState && syllabusState.saving) return;
+    syllabusModal.style.display = 'none';
+    syllabusState = null;
+}
+
+async function openSyllabusImport(file, btn) {
+    const originalText = btn ? btn.textContent : '';
+    if (btn) { btn.textContent = 'Reading…'; btn.disabled = true; }
+    let res;
+    try {
+        res = await ipcRenderer.invoke('read-syllabus', {
+            name: file.name, content: file.content || '', sourcePath: file.sourcePath || ''
+        });
+    } catch (e) {
+        res = { error: e.message };
+    } finally {
+        if (btn) { btn.textContent = originalText; btn.disabled = false; }
+    }
+    if (!res || res.error) {
+        toast.error((res && res.error) || 'Please try again.', 'Could not read the file');
+        return;
+    }
+    if (!res.items.length) {
+        toast.info('No exams or submission dates in this file. This works on a syllabus, a course schedule or an assignment sheet.', 'Nothing found');
+        return;
+    }
+
+    // Ticked by default: everything that can go in and doesn't need a look.
+    const items = res.items.map(i => {
+        const note = syllabusNote(i);
+        return { ...i, checked: !note };
+    });
+    syllabusState = { file, items, saving: false };
+    document.getElementById('syllabus-file').textContent = file.name;
+    syllabusCourse.value = res.course || '';
+    if (syllabusGoogle) syllabusGoogle.checked = false;
+    renderSyllabusList();
+    syllabusModal.style.display = 'flex';
+}
+
+async function confirmSyllabusImport() {
+    const state = syllabusState;
+    if (!state || state.saving) return;
+    const picked = state.items.filter(i => i.checked);
+    if (!picked.length) return;
+    const course = syllabusCourse.value.trim();
+    const syncToGoogle = !!(syllabusGoogle && syllabusGoogle.checked && picked.some(i => i.kind === 'exam'));
+
+    state.saving = true;
+    syllabusConfirm.disabled = true;
+    syllabusCancel.disabled = true;
+    syllabusConfirm.textContent = syncToGoogle ? 'Adding and syncing…' : 'Adding…';
+    let res;
+    try {
+        res = await ipcRenderer.invoke('import-syllabus-items',
+            picked.map(({ kind, title, date, time, durationMinutes }) => ({ kind, title, date, time, durationMinutes })),
+            { course, syncToGoogle });
+    } catch (e) {
+        res = { created: { events: [], tasks: [] }, errors: [e.message], syncErrors: [] };
+    }
+    state.saving = false;
+    syllabusCancel.disabled = false;
+
+    const events = (res && res.created && res.created.events) || [];
+    const tasks = (res && res.created && res.created.tasks) || [];
+    if (!events.length && !tasks.length) {
+        updateSyllabusConfirm();
+        toast.error((res && res.errors && res.errors[0]) || 'Please try again.', 'Nothing was added');
+        return;
+    }
+    closeSyllabusModal();
+
+    await loadAndRenderTasks();
+    await loadAndRenderWeeklyBoard();
+    await loadAndRenderHome();
+    if (typeof refreshOnboarding === 'function') refreshOnboarding();
+
+    const parts = [];
+    if (events.length) parts.push(`${events.length} exam${events.length === 1 ? '' : 's'} to the Planner`);
+    if (tasks.length) parts.push(`${tasks.length} submission${tasks.length === 1 ? '' : 's'} to Tasks`);
+    showUndoToast(`Added ${parts.join(' and ')}.`, async () => {
+        // delete-event also removes the Google copy.
+        for (const e of events) if (e.id) await ipcRenderer.invoke('delete-event', e.id);
+        for (const t of tasks) if (t.id) await ipcRenderer.invoke('delete-task', t.id);
+        await loadAndRenderTasks();
+        await loadAndRenderWeeklyBoard();
+        await loadAndRenderHome();
+    }, 10000);
+
+    if (res.errors && res.errors.length) toast.warning(res.errors[0], `${res.errors.length} item(s) could not be added`);
+    if (syncToGoogle && res.syncErrors && res.syncErrors.length) toast.warning(`Added in MindSync, but not in Google Calendar: ${res.syncErrors[0]}`);
+}
+
+if (syllabusConfirm) syllabusConfirm.onclick = confirmSyllabusImport;
+if (syllabusCancel) syllabusCancel.onclick = closeSyllabusModal;
 
 const saveFolderBtnFinal = document.getElementById('save-folder-btn');
 if (saveFolderBtnFinal) {
@@ -2308,7 +2661,7 @@ if (finishOnboardBtn) {
             return;
         }
 
-        finishOnboardBtn.innerText = 'Saving... ⏳';
+        finishOnboardBtn.innerText = 'Saving…';
 
         await ipcRenderer.invoke('save-profile', { name: nameInput, degree: degreeInput });
         await loadProfile();
@@ -2368,7 +2721,6 @@ async function loadAndRenderHome() {
     if (statEvents) statEvents.innerText = events.filter(inThisWeek).length;
     if (statLessons) statLessons.innerText = events.filter(e => e.type === 'lesson' && inThisWeek(e)).length;
 
-    const todayName = WEEKDAY_NAMES[new Date().getDay()];
     
     const todayEvents = events.filter(e => eventOccursOn(e, new Date())).sort((a, b) => a.time.localeCompare(b.time));
     
@@ -2381,9 +2733,9 @@ async function loadAndRenderHome() {
     if (timelineList) timelineList.innerHTML = '';
     
     if (todayEvents.length === 0) {
-        if (timelineList) timelineList.innerHTML = '<div style="text-align:center; color: var(--text-secondary); padding: 20px;">No events planned for today. 🎉</div>';
-        if (nextTitle) nextTitle.innerText = "Your day is free";
-        if (nextTime) nextTime.innerText = "You can rest or crush some tasks!";
+        if (timelineList) timelineList.innerHTML = '<div class="timeline-empty">Nothing on your calendar today.</div>';
+        if (nextTitle) nextTitle.innerText = 'Nothing scheduled';
+        if (nextTime) nextTime.innerText = 'No classes or exams on your calendar today.';
         if (sidebarNextTitle) sidebarNextTitle.innerText = "Nothing scheduled today";
         if (sidebarNextMeta) sidebarNextMeta.innerText = tasks.length > 0 ? `${tasks.length} open task${tasks.length === 1 ? '' : 's'}` : '';
     } else {
@@ -2397,7 +2749,7 @@ async function loadAndRenderHome() {
             if (isNext) {
                 nextEventFound = true;
                 if (nextTitle) nextTitle.innerText = evt.title;
-                if (nextTime) nextTime.innerText = `⏱ ${todayName} • ${evt.time} • Up next`;
+                if (nextTime) nextTime.innerText = `${WEEKDAY_NAMES[new Date().getDay()]} • ${evt.time} • Up next`;
                 if (sidebarNextTitle) sidebarNextTitle.innerText = evt.title;
                 if (sidebarNextMeta) sidebarNextMeta.innerText = `${evt.time} today`;
             }
@@ -2413,17 +2765,17 @@ async function loadAndRenderHome() {
             div.innerHTML = `
                 <div class="timeline-content">
                     <div class="dot ${isNext ? 'active' : ''}" style="${isNext ? '' : `background-color: ${dotColor};`}"></div>
-                    <span ${isNext ? 'style="font-weight: bold;"' : ''}>${escapeHtml(evt.title)}</span>
+                    <span class="timeline-title" dir="auto">${escapeHtml(evt.title)}</span>
                     ${isNext ? '<span class="tag-active" style="margin-left:8px;">Next</span>' : ''}
                 </div>
-                <div class="timeline-time" ${isNext ? 'style="font-weight: bold;"' : ''}>${evt.time}</div>
+                <div class="timeline-time">${evt.time}</div>
             `;
             if (timelineList) timelineList.appendChild(div);
         });
 
         if (!nextEventFound) {
-            if (nextTitle) nextTitle.innerText = "Done for today!";
-            if (nextTime) nextTime.innerText = "All today's events have passed. See you tomorrow 🌙";
+            if (nextTitle) nextTitle.innerText = 'All done for today';
+            if (nextTime) nextTime.innerText = "Today's classes and events are over.";
             if (sidebarNextTitle) sidebarNextTitle.innerText = "All done for today";
             if (sidebarNextMeta) sidebarNextMeta.innerText = tasks.length > 0 ? `${tasks.length} open task${tasks.length === 1 ? '' : 's'}` : '';
         }
@@ -2437,6 +2789,8 @@ async function loadAndRenderHome() {
     
     const greetingEl = document.getElementById('home-greeting-time');
     if (greetingEl) greetingEl.innerText = greeting;
+    const dateEl = document.getElementById('home-date');
+    if (dateEl) dateEl.textContent = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
 const navHomeBtn = document.getElementById('nav-home');
@@ -2678,12 +3032,12 @@ if (generateWeeklyAiBtn) {
         let events = await ipcRenderer.invoke('get-events') || [];
 
         if (!tasks.some(t => t.status !== 'completed')) {
-            toast.info("No open tasks to plan. 🎉");
+            toast.info('No open tasks to plan.');
             return;
         }
 
         const originalText = generateWeeklyAiBtn.innerHTML;
-        generateWeeklyAiBtn.innerHTML = 'Planning your study time... ⏳';
+        generateWeeklyAiBtn.innerHTML = 'Planning…';
         generateWeeklyAiBtn.disabled = true;
 
         try {
@@ -2732,7 +3086,7 @@ if (generateWeeklyAiBtn) {
                 await loadAndRenderHome();
 
                 if (syncToGoogle && syncErrors.length > 0) {
-                    toast.error(`⚠️ ${syncErrors.length} out of ${newPlan.length} study blocks failed to sync to Google Calendar.\n\nReason: ${syncErrors[0]}\n\nThe blocks were still saved in MindSync itself.`);
+                    toast.error(`${syncErrors.length} out of ${newPlan.length} study blocks failed to sync to Google Calendar.\n\nReason: ${syncErrors[0]}\n\nThe blocks were still saved in MindSync itself.`);
                 } else {
                     toast.success(`Added ${newPlan.length} blocks to your calendar${previousPlan.length ? ', replacing the previous plan' : ''}.`, 'Study plan ready');
                 }
@@ -2814,7 +3168,7 @@ setInterval(async () => {
 
             // אם נשארו בין 0 ל-10 דקות, ועוד לא התרענו - תקפיץ התראה!
             if (diffMinutes > 0 && diffMinutes <= 10 && !notifiedEvents.has(evt.id)) {
-                showNotification("Upcoming Event", `${evt.title} starts at ${evt.time} ⏱️`);
+                showNotification('Starting soon', `${evt.title} starts at ${evt.time}`);
                 notifiedEvents.add(evt.id); // מסמנים שהתרענו כדי לא להציק שוב
             }
         }
@@ -3565,7 +3919,7 @@ function revealAnswer() {
         // this app promises: telling you the truth about what you know.
         if (labelEl) {
             if (item.solutionSource === 'ai') {
-                labelEl.innerHTML = `<span class="ai-answer-flag">${icon('sparkle', { size: 13 })} AI-generated solution — worth checking</span>`;
+                labelEl.innerHTML = `<span class="ai-answer-flag">${icon('info', { size: 13 })} AI-generated solution — worth checking</span>`;
             } else {
                 labelEl.textContent = item.sourceFile
                     ? `From your material — ${item.sourceFile}`
@@ -3878,7 +4232,7 @@ async function loadManageList() {
     if (!items || items.length === 0) {
         manageSourceFilter = 'all';
         renderEmptyState(listEl, {
-            icon: '🗂️',
+            icon: 'list',
             title: 'No questions yet',
             message: 'Make questions from one of your files to start practicing.'
         });
@@ -4199,6 +4553,30 @@ const saveKeyBtn = document.getElementById('save-key-btn');
 const testKeyBtn = document.getElementById('test-key-btn');
 const aiActiveLabel = document.getElementById('ai-active-label');
 const aiKeyStatus = document.getElementById('ai-key-status');
+const aiModelSelect = document.getElementById('ai-model-select');
+const aiModelHint = document.getElementById('ai-model-hint');
+
+// Which Gemini model writes summaries and questions. Flash is the default
+// and works on a free key; Pro writes better but needs billing turned on
+// for the key - without it, the app falls back to Flash and the summary
+// window says so ("Gemini 3.1 Pro wasn't available").
+const AI_MODEL_HINTS = {
+    'gemini-3.8-flash': 'Fast, and works with a free key.',
+    'gemini-3.1-pro-preview': 'Better summaries and questions, about 3x the cost of Flash. Works only if billing is turned on for your key in Google AI Studio - otherwise the app uses Flash and tells you.'
+};
+function showAiModelHint(model) {
+    if (aiModelHint) aiModelHint.textContent = AI_MODEL_HINTS[model] || '';
+}
+if (aiModelSelect) {
+    aiModelSelect.onchange = async () => {
+        const model = aiModelSelect.value;
+        const res = await ipcRenderer.invoke('save-ai-config', { geminiModel: model });
+        if (res && res.error) { toast.error(res.error, 'Could not change the model'); return; }
+        showAiModelHint(model);
+        const name = aiModelSelect.options[aiModelSelect.selectedIndex].textContent.replace(/\s*\(.*\)$/, '');
+        toast.success(`${name} will write your summaries and questions from now on.`, 'Model changed');
+    };
+}
 
 async function loadAiSettings() {
     const cfg = await ipcRenderer.invoke('get-ai-config');
@@ -4219,6 +4597,12 @@ async function loadAiSettings() {
         aiKeyStatus.innerHTML = cfg.hasKey
             ? `Saved (<span class="ms-tabular">${escapeHtml(cfg.keyPreview)}</span>). Paste a new one below to replace it.`
             : 'Not added yet.';
+    }
+
+    if (aiModelSelect && cfg.geminiModel) {
+        const known = Array.from(aiModelSelect.options).some(o => o.value === cfg.geminiModel);
+        aiModelSelect.value = known ? cfg.geminiModel : 'gemini-3.8-flash';
+        showAiModelHint(aiModelSelect.value);
     }
 }
 

@@ -61,6 +61,9 @@
         user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
         wave: '<path d="M3 12c2.5-4 5-4 7.5 0s5 4 7.5 0"/><path d="M3 17c2.5-4 5-4 7.5 0s5 4 7.5 0"/>',
         chevronDown: '<path d="m6 9 6 6 6-6"/>',
+        chevronLeft: '<path d="m15 6-6 6 6 6"/>',
+        // Study: a stack of cards (practice questions)
+        cards: '<rect x="3" y="7" width="13" height="14" rx="2"/><path d="M8 3h10a3 3 0 0 1 3 3v11"/>',
         chevronRight: '<path d="m9 6 6 6-6 6"/>'
     };
 
@@ -70,7 +73,7 @@
             console.warn(`icon(): unknown icon "${name}"`);
             return '';
         }
-        const size = options.size || 18;
+        const size = options.size || 16;
         const stroke = options.stroke || 1.75;
         const cls = options.className ? ` class="${options.className}"` : '';
         // currentColor is the whole point: icons inherit the surrounding text
@@ -85,7 +88,7 @@
     window.hydrateIcons = function (root = document) {
         root.querySelectorAll('[data-icon]').forEach((el) => {
             const name = el.getAttribute('data-icon');
-            const size = parseInt(el.getAttribute('data-icon-size') || '18', 10);
+            const size = parseInt(el.getAttribute('data-icon-size') || '16', 10);
             if (PATHS[name]) el.innerHTML = window.icon(name, { size });
         });
     };
