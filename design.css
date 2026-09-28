@@ -1045,3 +1045,41 @@ body.auth-pending #auth-screen { background: var(--bg-sidebar); }
 .syllabus-kind--exam { background: color-mix(in srgb, var(--event-exam, #8b5cf6) 14%, transparent); color: var(--event-exam, #7c3aed); }
 .syllabus-modal .settings-hint { margin-top: 4px; font-size: var(--text-xs); color: var(--text-tertiary); }
 .syllabus-modal #syllabus-google-row[hidden] { display: none; }
+
+/* ---------- Study: exams + "when is the exam?" ---------- */
+.study-exams { margin-bottom: 16px; padding-top: 6px; padding-bottom: 6px; }
+.study-exams__list { display: flex; flex-direction: column; }
+.study-exam-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; }
+.study-exam-row + .study-exam-row { border-top: 1px solid var(--border-color); }
+.study-exam-row__course { font-weight: var(--font-medium); color: var(--text-primary); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.study-exam-row__when {
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--text-secondary);
+    background: var(--bg-subtle);
+    border-radius: var(--radius-sm);
+    padding: 2px 8px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.study-exam-row.is-soon .study-exam-row__when { color: var(--status-warning); background: var(--status-warning-bg); }
+.study-exam-ask { padding: 8px 0; }
+.study-exams__list:not([hidden]) + .study-exam-ask { border-top: 1px solid var(--border-color); margin-top: 4px; padding-top: 12px; }
+.study-exam-ask__q { font-weight: var(--font-medium); color: var(--text-primary); margin-bottom: 8px; text-align: left; }
+.study-exam-ask__row { display: flex; gap: 8px; align-items: center; }
+.study-exam-ask__row .input-field { flex: 1; min-width: 0; max-width: 420px; }
+
+/* ---------- Action toast ("Add exams & deadlines", "Make questions") ---------- */
+.ms-toast .toast-action-btn { margin-top: 8px; height: 26px; padding: 0 10px; font-size: var(--text-xs); }
+
+/* ---------- Review screen: course ---------- */
+.review-course { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; max-width: 460px; }
+.review-course .form-label { margin: 0; flex-shrink: 0; }
+.review-course .input-field { flex: 1; min-width: 0; }
+
+/* Syllabus window: class kind, soft note, exam date box */
+.syllabus-kind--class { background: color-mix(in srgb, var(--event-lesson, #3b82f6) 14%, transparent); color: var(--event-lesson, #2563eb); }
+.syllabus-row__note--soft { color: var(--text-tertiary); }
+.syllabus-row__date { display: flex; gap: 6px; margin-top: 6px; max-width: 320px; }
+.syllabus-row__date .input-field { height: 28px; flex: 1; min-width: 0; }
+.syllabus-row.is-blocked:has(.syllabus-row__date) { opacity: 1; }

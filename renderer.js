@@ -1297,6 +1297,49 @@ async function refreshTaskViews() {
     await loadAndRenderProgress();
 }
 
+// A toast with one action button ("Add exams & deadlines", "Make
+// questions"): the app suggesting the next step instead of the user having
+// to find it. Stays longer than a normal toast, since it asks something.
+// The sentence is English (LTR); wrap Hebrew names in isolate() so a name at
+// the start doesn't flip the whole sentence right-to-left.
+const isolate = (text) => `\u2068${text}\u2069`;
+function showActionToast(message, actionLabel, actionFn, { title = '', duration = 15000 } = {}) {
+    const container = document.querySelector('.ms-toast-container') || (() => {
+        const c = document.createElement('div');
+        c.className = 'ms-toast-container';
+        document.body.appendChild(c);
+        return c;
+    })();
+    const el = document.createElement('div');
+    el.className = 'ms-toast ms-toast--info';
+    el.innerHTML = `
+        <span class="ms-toast__icon">${icon('info', { size: 18 })}</span>
+        <div class="ms-toast__body">
+            ${title ? '<div class="ms-toast__title"></div>' : ''}
+            <div class="ms-toast__message" dir="ltr"></div>
+            <button class="btn-primary btn-sm toast-action-btn"></button>
+        </div>
+        <button class="ms-toast__close" aria-label="Dismiss">&#10005;</button>
+    `;
+    if (title) el.querySelector('.ms-toast__title').textContent = title;
+    el.querySelector('.ms-toast__message').textContent = message;
+    const btn = el.querySelector('.toast-action-btn');
+    btn.textContent = actionLabel;
+
+    let done = false;
+    const dismiss = () => {
+        if (done) return;
+        done = true;
+        el.classList.add('ms-toast--leaving');
+        setTimeout(() => el.remove(), 200);
+    };
+    btn.onclick = () => { dismiss(); actionFn(); };
+    el.querySelector('.ms-toast__close').onclick = dismiss;
+    container.appendChild(el);
+    setTimeout(dismiss, duration);
+    return dismiss;
+}
+
 // A toast with an Undo button. Destructive actions should always be
 // reversible for a few seconds rather than requiring a confirmation dialog
 // for every single one - it's faster to use and safer at the same time.
@@ -2103,6 +2146,7 @@ async function runUploadBatch() {
     const alreadyThere = new Set(existing.filter(f => (f.folder || 'No Folder') === folder).map(f => f.name));
 
     let uploaded = 0, skipped = 0, failed = 0;
+    const uploadedNow = [];
     for (let i = 0; i < batch.files.length; i++) {
         if (batch.stopRequested) {
             for (let j = i; j < batch.files.length; j++) setUploadRowStatus(j, 'skipped', 'Not uploaded');
@@ -2136,6 +2180,7 @@ async function runUploadBatch() {
             continue;
         }
         uploaded++;
+        uploadedNow.push({ name: read.fileName, content: read.fileContent || '' });
         alreadyThere.add(f.name);
         setUploadRowStatus(i, 'done', 'Uploaded');
     }
@@ -2181,6 +2226,55 @@ async function runUploadBatch() {
     await loadAndRenderFolders();
     await loadAndRenderFiles();
     if (typeof refreshOnboarding === 'function') refreshOnboarding();
+    offerNextStepsAfterUpload(uploadedNow).catch(err => console.warn('upload suggestions failed:', err));
+}
+
+// ---- After an upload: suggest the obvious next step ----
+// Most people will never find "Exams & deadlines" on a file row, or "Make
+// questions from a file" on another screen. So right after uploading, the
+// app says what it can do with what was just uploaded:
+//   - a file that reads like a syllabus -> add its exams and deadlines;
+//   - ONE lecture file -> make practice questions from it.
+// (A batch of 20 lectures gets no offer: 20 AI requests at once would use a
+// free key's whole day.)
+// Recognised with plain word matching - no AI request just to decide.
+// A syllabus is recognised by its STRUCTURE - many have no dates at all
+// ("מבחן סוף סמסטר", homework without due dates). Three of these phrases is
+// a syllabus; a lecture rarely has even one. (Plain words like "מבחן" or
+// "הגשה" are left out: "מבחני התכנסות" is maths, not an exam.)
+const SYLLABUS_WORDS = [
+    'סילבוס', 'שם הקורס', 'קוד הקורס', 'מספר הקורס', 'נ"ז', 'נקודות זכות', 'שעות קבלה', 'שם המרצה', 'שם המתרגל',
+    'דרישות הקורס', 'חובות הקורס', 'מטרות הקורס', 'תפוקות למידה', 'נושאי הקורס', 'תנאי קדם', 'דרישות קדם',
+    'חישוב הציון', 'הרכב הציון', 'מרכיבי הציון', 'ביבליוגרפיה', 'רשימת קריאה', 'מבחן סוף', 'בחינה סופית', 'מבחן סופי',
+    'מועד א', 'מועד ב', 'מועדי ההרצאה', 'מועד התרגול',
+    'syllabus', 'course code', 'office hours', 'prerequisite', 'grading', 'bibliography', 'learning outcomes', 'course requirements', 'final exam'
+];
+function looksLikeSyllabus(text) {
+    const t = String(text || '').toLowerCase();
+    if (t.length < 200) return false;
+    return SYLLABUS_WORDS.filter(w => t.includes(w.toLowerCase())).length >= 3;
+}
+
+async function offerNextStepsAfterUpload(uploadedNow) {
+    if (!uploadedNow || !uploadedNow.length) return;
+    const all = await ipcRenderer.invoke('get-files').catch(() => []) || [];
+    // The newest record with each name (a re-upload keeps the old one too).
+    const byName = (name) => [...all].reverse().find(f => f.name === name);
+
+    const syllabi = uploadedNow.filter(u => looksLikeSyllabus(u.content)).map(u => byName(u.name)).filter(Boolean);
+    syllabi.slice(0, 2).forEach(file => {
+        showActionToast(`${isolate(file.name)} looks like a syllabus. Add its exams and deadlines to your Planner and Tasks?`,
+            'Add exams & deadlines', () => openSyllabusImport(file, null), { title: 'Syllabus found' });
+    });
+
+    const others = uploadedNow.filter(u => !looksLikeSyllabus(u.content));
+    if (uploadedNow.length === 1 && others.length === 1) {
+        const file = byName(others[0].name);
+        if (file && (file.content || file.sourcePath)) {
+            showActionToast(`Make practice questions from ${isolate(file.name)}?`, 'Make questions',
+                () => generateQuestionsFor(file), { title: 'Next step' });
+        }
+    }
 }
 
 document.querySelectorAll('.btn-upload').forEach(btn => {
@@ -2227,7 +2321,11 @@ let syllabusState = null; // { file, items, saving }
 
 const SYLLABUS_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+const SYLLABUS_DAY_SHORT = { Sunday: 'Sun', Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat' };
 function syllabusDateLabel(item) {
+    if (item.kind === 'class') {
+        return `Every ${SYLLABUS_DAY_SHORT[item.weekday] || item.weekday} ${item.time}${item.endTime ? `–${item.endTime}` : ''}`;
+    }
     if (!item.date) return 'No date in the file';
     const [y, m, d] = item.date.split('-').map(Number);
     const dt = new Date(y, m - 1, d);
@@ -2238,7 +2336,21 @@ function syllabusDateLabel(item) {
 
 // Why an item starts unticked (or can't be ticked at all), in words.
 function syllabusNote(item) {
-    if (item.kind === 'exam' && !item.date) return { text: "Can't go in the Planner without a date", blocked: true };
+    // An exam with no date gets a box to write it in (see renderSyllabusList)
+    // - blocked only until a date is written.
+    if (item.kind === 'exam' && !item.date) {
+        return item.dateError
+            ? { text: item.dateError, blocked: true, askDate: true }
+            : { text: "Not in the syllabus. Write it if you know it - or leave it, and you'll be asked later.", blocked: true, askDate: true, soft: true };
+    }
+    // Homework with no dates: ten empty tasks would help nobody.
+    if (item.kind === 'assignment' && !item.date) return { text: 'The dates aren\'t in the syllabus - add each one when it\'s published.', blocked: true };
+    if (item.kind === 'class') {
+        if (item.alreadyExists) return { text: 'Already in your Planner at that time' };
+        // Not ticked by default: a weekly class repeats with no end date, and
+        // an old syllabus (last semester) would fill every week from now on.
+        return { text: 'Repeats every week in the Planner. Tick it if this is this semester\'s timetable.', soft: true };
+    }
     if (item.alreadyExists) return { text: 'Already in MindSync' };
     if (item.isPast) return { text: 'Already passed' };
     if (item.needsCheck) return { text: "This date isn't written like this in the file - check it" };
@@ -2249,14 +2361,18 @@ function updateSyllabusConfirm() {
     if (!syllabusState) return;
     const picked = syllabusState.items.filter(i => i.checked);
     const exams = picked.filter(i => i.kind === 'exam').length;
-    const tasks = picked.length - exams;
+    const classes = picked.filter(i => i.kind === 'class').length;
+    const tasks = picked.length - exams - classes;
     syllabusConfirm.disabled = picked.length === 0 || syllabusState.saving;
     syllabusConfirm.textContent = picked.length === 0 ? 'Add'
         : `Add ${picked.length} item${picked.length === 1 ? '' : 's'}`;
-    if (syllabusGoogleRow) syllabusGoogleRow.hidden = exams === 0;
+    if (syllabusGoogleRow) syllabusGoogleRow.hidden = exams + classes === 0;
+    // "1 weekly class and 2 exams to the Planner, 1 submission to Tasks."
+    const plannerPart = [classes ? `${classes} weekly class${classes === 1 ? '' : 'es'}` : '',
+                         exams ? `${exams} exam${exams === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ');
     syllabusIntro.textContent = picked.length === 0
         ? 'Tick what you want to add.'
-        : [exams ? `${exams} exam${exams === 1 ? '' : 's'} to the Planner` : '', tasks ? `${tasks} submission${tasks === 1 ? '' : 's'} to Tasks` : '']
+        : [plannerPart ? `${plannerPart} to the Planner` : '', tasks ? `${tasks} submission${tasks === 1 ? '' : 's'} to Tasks` : '']
             .filter(Boolean).join(', ') + '.';
 }
 
@@ -2264,7 +2380,7 @@ function renderSyllabusList() {
     syllabusList.innerHTML = '';
     syllabusState.items.forEach((item, index) => {
         const note = syllabusNote(item);
-        const row = document.createElement('label');
+        const row = document.createElement(note && note.askDate ? 'div' : 'label');
         row.className = 'syllabus-row' + (note && note.blocked ? ' is-blocked' : '');
 
         const box = document.createElement('input');
@@ -2279,7 +2395,7 @@ function renderSyllabusList() {
         top.className = 'syllabus-row__top';
         const kind = document.createElement('span');
         kind.className = `syllabus-kind syllabus-kind--${item.kind}`;
-        kind.textContent = item.kind === 'exam' ? 'Exam' : 'Submission';
+        kind.textContent = item.kind === 'exam' ? 'Exam' : item.kind === 'class' ? 'Class' : 'Submission';
         const title = document.createElement('span');
         title.className = 'syllabus-row__title';
         title.dir = 'auto';
@@ -2288,14 +2404,51 @@ function renderSyllabusList() {
 
         const meta = document.createElement('span');
         meta.className = 'syllabus-row__meta';
-        meta.textContent = `${syllabusDateLabel(item)} · ${item.kind === 'exam' ? 'Planner' : 'Tasks'}`;
+        meta.textContent = `${syllabusDateLabel(item)} · ${item.kind === 'assignment' ? 'Tasks' : 'Planner'}`;
         body.append(top, meta);
 
         if (note) {
             const n = document.createElement('span');
-            n.className = 'syllabus-row__note';
+            n.className = 'syllabus-row__note' + (note.soft ? ' syllabus-row__note--soft' : '');
             n.textContent = note.text;
             body.append(n);
+        }
+        // Exam with no date: write it right here, in your own words ("12.2",
+        // "מועד א 12.2 מועד ב 5.3") - read the same way as everywhere else.
+        if (note && note.askDate) {
+            const wrap = document.createElement('span');
+            wrap.className = 'syllabus-row__date';
+            const input = document.createElement('input');
+            input.className = 'input-field';
+            input.dir = 'auto';
+            input.maxLength = 200;
+            input.placeholder = 'לדוגמה: 12.2';
+            input.value = item.dateText || '';
+            const set = document.createElement('button');
+            set.className = 'btn-secondary btn-sm';
+            set.type = 'button';
+            set.textContent = 'Set date';
+            const apply = async () => {
+                const text = input.value.trim();
+                if (!text) return;
+                item.dateText = text;
+                set.disabled = true;
+                const r = await ipcRenderer.invoke('parse-exam-dates', text).catch(e => ({ error: e.message }));
+                set.disabled = false;
+                if (!r || r.error || !r.exams || !r.exams.length) {
+                    item.dateError = (r && r.error) || 'Couldn\'t tell the date. Try writing it like "12.2".';
+                } else {
+                    item.date = r.exams[0].date;
+                    item.time = r.exams[0].time || item.time;
+                    item.dateError = null;
+                    item.checked = true;
+                }
+                renderSyllabusList();
+            };
+            set.onclick = (e) => { e.preventDefault(); apply(); };
+            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
+            wrap.append(input, set);
+            body.append(wrap);
         }
         if (item.sourceQuote) {
             const q = document.createElement('span');
@@ -2343,11 +2496,14 @@ async function openSyllabusImport(file, btn) {
     // Ticked by default: everything that can go in and doesn't need a look.
     const items = res.items.map(i => {
         const note = syllabusNote(i);
-        return { ...i, checked: !note };
+        return { ...i, checked: !note };   // classes carry a (soft) note -> unticked
     });
     syllabusState = { file, items, saving: false };
     document.getElementById('syllabus-file').textContent = file.name;
-    syllabusCourse.value = res.course || '';
+    // Folder first, then the course named in the syllabus (matched to one
+    // the user already has), then the file name - so the exams link to the
+    // right questions without the user knowing anything about it.
+    syllabusCourse.value = resolveCourse(file, res.course, await knownCourses().catch(() => []));
     if (syllabusGoogle) syllabusGoogle.checked = false;
     renderSyllabusList();
     syllabusModal.style.display = 'flex';
@@ -2368,7 +2524,7 @@ async function confirmSyllabusImport() {
     let res;
     try {
         res = await ipcRenderer.invoke('import-syllabus-items',
-            picked.map(({ kind, title, date, time, durationMinutes }) => ({ kind, title, date, time, durationMinutes })),
+            picked.map(({ kind, title, date, time, durationMinutes, weekday, endTime }) => ({ kind, title, date, time, durationMinutes, weekday, endTime })),
             { course, syncToGoogle });
     } catch (e) {
         res = { created: { events: [], tasks: [] }, errors: [e.message], syncErrors: [] };
@@ -2391,7 +2547,11 @@ async function confirmSyllabusImport() {
     if (typeof refreshOnboarding === 'function') refreshOnboarding();
 
     const parts = [];
-    if (events.length) parts.push(`${events.length} exam${events.length === 1 ? '' : 's'} to the Planner`);
+    const classCount = events.filter(e => e.type === 'lesson').length;
+    const examCount = events.length - classCount;
+    const plannerBits = [classCount ? `${classCount} weekly class${classCount === 1 ? '' : 'es'}` : '',
+                         examCount ? `${examCount} exam${examCount === 1 ? '' : 's'}` : ''].filter(Boolean);
+    if (plannerBits.length) parts.push(`${plannerBits.join(' and ')} to the Planner`);
     if (tasks.length) parts.push(`${tasks.length} submission${tasks.length === 1 ? '' : 's'} to Tasks`);
     showUndoToast(`Added ${parts.join(' and ')}.`, async () => {
         // delete-event also removes the Google copy.
@@ -3709,12 +3869,173 @@ async function loadStudyHome() {
         }
     }
 
+    renderStudyExams(stats.subjects || []);
+    const startBtn = document.getElementById('start-study-btn');
+    if (startBtn) startBtn.textContent = stats.dueCount > 0 ? `Practice now · ${stats.dueCount}` : 'Practice now';
     renderCalibration(stats.calibration, stats.reviewsAllTime, stats.trendByConfidence);
     renderConfidentlyWrong(stats.confidentlyWrong);
     renderAttentionList('underconfident-panel', stats.underconfidentItems,
         'Nothing here yet — no pattern of doubting yourself on things you actually know.', 'good');
     renderAttentionList('genuine-difficulty-panel', stats.genuineDifficultyItems,
         'Nothing flagged as genuinely hard right now.', 'warn');
+    updateStudyPanelsVisibility(stats);
+    fixFileNamedCourses().catch(err => console.warn('course fix skipped:', err));
+}
+
+// Exams on the Study screen: one line per course with an exam, and - when a
+// course has questions but no exam - ONE question: "When is your X exam?".
+// That answer is what lets the server time reviews before the exam; asking
+// for it here, at the moment it matters, beats hoping the user finds the
+// Planner or "Exams & deadlines" on their own.
+const noExamKey = () => `mindsync.noExam.${currentUserId || 'anon'}`;
+function readNoExamCourses() {
+    try { return JSON.parse(localStorage.getItem(noExamKey()) || '[]'); } catch { return []; }
+}
+let examAskCourse = null;
+
+function renderStudyExams(subjects) {
+    const box = document.getElementById('study-exams');
+    const list = document.getElementById('study-exams-list');
+    const ask = document.getElementById('study-exam-ask');
+    if (!box || !list) return;
+    // An older server (before exam-aware scheduling) sends no `exam` field
+    // at all - nothing to show, and nothing to ask.
+    if (!subjects.some(s => 'exam' in s)) { box.hidden = true; examAskCourse = null; return; }
+
+    const withExam = subjects.filter(s => s.exam);
+    list.innerHTML = '';
+    withExam.forEach(s => {
+        const [y, m, d] = s.exam.date.split('-').map(Number);
+        const dt = new Date(y, m - 1, d);
+        const when = s.exam.daysLeft === 0 ? 'Exam today' : s.exam.daysLeft === 1 ? 'Exam tomorrow' : `Exam in ${s.exam.daysLeft} days`;
+        const row = document.createElement('div');
+        row.className = 'study-exam-row' + (s.exam.daysLeft <= 7 ? ' is-soon' : '');
+        row.title = s.exam.title;
+        const name = document.createElement('span');
+        name.className = 'study-exam-row__course';
+        name.dir = 'auto';
+        name.textContent = s.category;
+        const whenEl = document.createElement('span');
+        whenEl.className = 'study-exam-row__when';
+        whenEl.textContent = `${when} · ${WEEKDAY_NAMES[dt.getDay()].slice(0, 3)} ${d}/${m}`;
+        row.append(name, whenEl);
+        list.appendChild(row);
+    });
+    list.hidden = withExam.length === 0;
+
+    // The course to ask about: most questions first; never "Uncategorized",
+    // never one the user said has no exam.
+    const skip = new Set(readNoExamCourses());
+    const next = subjects
+        .filter(s => !s.exam && s.items > 0 && s.category !== 'Uncategorized' && !skip.has(s.category))
+        .sort((a, b) => b.items - a.items)[0];
+    examAskCourse = next ? next.category : null;
+    if (ask) {
+        ask.hidden = !next;
+        if (next) document.getElementById('study-exam-ask-q').textContent = `When is your ${isolate(next.category)} exam?`;
+    }
+    box.hidden = withExam.length === 0 && !next;
+}
+
+async function saveExamAnswer() {
+    const course = examAskCourse;
+    const input = document.getElementById('study-exam-input');
+    const btn = document.getElementById('study-exam-save');
+    if (!course || !input) return;
+    const text = input.value.trim();
+    if (!text) { toast.warning('Write when the exam is, e.g. "12.2".'); return; }
+
+    btn.disabled = true;
+    const res = await ipcRenderer.invoke('parse-exam-dates', text).catch(e => ({ error: e.message }));
+    if (!res || res.error) {
+        btn.disabled = false;
+        toast.error((res && res.error) || 'Please try again.', 'Couldn\'t read that');
+        return;
+    }
+    const saved = [];
+    for (const e of res.exams) {
+        const [y, m, d] = e.date.split('-').map(Number);
+        const evt = {
+            // The course name in the title is what links the exam to the
+            // questions (server: examMatchesCourse).
+            title: `${e.label || 'מבחן'} - ${course}`,
+            day: WEEKDAY_NAMES[new Date(y, m - 1, d).getDay()],
+            date: e.date,
+            time: e.time || '09:00',
+            type: 'exam'
+        };
+        const r = await ipcRenderer.invoke('save-event', evt);
+        if (r && !r.error) saved.push({ ...evt, id: r.id || r._id });
+    }
+    btn.disabled = false;
+    if (!saved.length) { toast.error('Could not save it. Please try again.'); return; }
+    input.value = '';
+
+    const label = saved.map(e => { const [, m, d] = e.date.split('-').map(Number); return `${isolate(e.title)} · ${d}/${m}`; }).join(', ');
+    showUndoToast(`Added to the Planner: ${label}. Practice is now timed for it.`, async () => {
+        for (const e of saved) if (e.id) await ipcRenderer.invoke('delete-event', e.id);
+        await loadStudyHome();
+        await loadAndRenderWeeklyBoard();
+    });
+    await loadStudyHome();
+    loadAndRenderWeeklyBoard();
+    loadAndRenderHome();
+}
+
+const examSaveBtn = document.getElementById('study-exam-save');
+if (examSaveBtn) examSaveBtn.onclick = saveExamAnswer;
+const examInput = document.getElementById('study-exam-input');
+if (examInput) examInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveExamAnswer(); });
+const examNoneBtn = document.getElementById('study-exam-none');
+if (examNoneBtn) examNoneBtn.onclick = async () => {
+    const course = examAskCourse;
+    if (!course) return;
+    try { localStorage.setItem(noExamKey(), JSON.stringify([...new Set([...readNoExamCourses(), course])])); } catch { /* not worth failing over */ }
+    toast.info(`Got it - no exam in ${isolate(course)}.`);
+    await loadStudyHome();
+};
+
+// Panels that have nothing to say yet stay out of the way. A new user sees
+// the practice button and their exams, not four empty boxes.
+function updateStudyPanelsVisibility(stats) {
+    const show = {
+        'calibration-panel': (stats.reviewsAllTime || 0) >= 8,
+        'confidently-wrong-panel': (stats.confidentlyWrong || []).length > 0,
+        'underconfident-panel': (stats.underconfidentItems || []).length > 0,
+        'genuine-difficulty-panel': (stats.genuineDifficultyItems || []).length > 0
+    };
+    let any = false;
+    Object.entries(show).forEach(([id, visible]) => {
+        const el = document.getElementById(id);
+        const card = el && el.closest('.card');
+        if (card) card.hidden = !visible;
+        any = any || visible;
+    });
+    const panels = document.getElementById('study-panels');
+    if (panels) panels.hidden = !any;
+    const hint = document.getElementById('study-panels-hint');
+    if (hint) hint.hidden = any || !(stats.reviewsAllTime > 0);
+}
+
+// One-time fix for questions made before the course came from the folder:
+// their course is the FILE's name ("הרצאה 3 - התפלגות נורמלית"), which never
+// matches an exam. When that file sits in a folder, move them to the folder.
+let courseFixDone = false;
+async function fixFileNamedCourses() {
+    if (courseFixDone) return;
+    courseFixDone = true;
+    const [cats, files] = await Promise.all([
+        ipcRenderer.invoke('get-study-categories').catch(() => []),
+        ipcRenderer.invoke('get-files-light').catch(() => [])
+    ]);
+    let moved = 0;
+    for (const cat of cats || []) {
+        const file = (files || []).find(f => f.name && f.name.replace(/\.[^.]+$/, '').trim() === String(cat).trim() && realFolder(f));
+        if (!file) continue;
+        const r = await ipcRenderer.invoke('recategorize-study-items', cat, realFolder(file));
+        if (r && r.updated) moved += r.updated;
+    }
+    if (moved) await loadStudyHome();
 }
 
 function renderCalibration(cal, totalReviews, trendByConfidence) {
@@ -4027,7 +4348,102 @@ if (summaryDoneBtn) summaryDoneBtn.onclick = async () => {
     await loadStudyHome();
 };
 
+// ---- Which course does something belong to? ----
+// A course is what links questions to their exam (the server times reviews
+// around it). Nobody should have to know that, so the app works it out:
+//   1. the file's folder ("סטטיסטיקה") - how most people already sort files;
+//   2. no folder: the course the AI read in the file itself, matched to a
+//      course the user already has ("מבוא לסטטיסטיקה" -> "סטטיסטיקה");
+//   3. nothing at all: the file name.
+const COURSE_GENERIC_WORDS = new Set(['מבוא', 'יסודות', 'קורס', 'עקרונות', 'intro', 'introduction', 'to', 'of', 'the', 'and', 'course']);
+function courseKey(name) {
+    return String(name || '').toLowerCase()
+        .replace(/["'`׳״.,:;!?()\[\]{}\-־–—_/\\]/g, ' ')
+        .split(/\s+/)
+        .filter(w => w && !COURSE_GENERIC_WORDS.has(w))
+        // Prefix letters come off repeatedly on BOTH names, so "למדעי" and
+        // "מדעי" end at the same root even though מ is also part of the word.
+        .map(w => { while (w.length > 3 && /^[בלהמושכ]/.test(w)) w = w.slice(1); return w; })
+        .filter(w => w && !COURSE_GENERIC_WORDS.has(w))
+        .sort()
+        .join(' ');
+}
+function realFolder(file) {
+    const f = (file && file.folder || '').trim();
+    return f && f !== 'No Folder' ? f : '';
+}
+async function knownCourses() {
+    const [folders, cats] = await Promise.all([
+        ipcRenderer.invoke('get-folders').catch(() => []),
+        ipcRenderer.invoke('get-study-categories').catch(() => [])
+    ]);
+    const names = [...(folders || []).map(f => f.name), ...(cats || [])]
+        .map(n => String(n || '').trim()).filter(n => n && n !== 'No Folder' && n !== 'Uncategorized');
+    return [...new Set(names)];
+}
+function resolveCourse(file, aiCourse, known) {
+    const folder = realFolder(file);
+    if (folder) return folder;
+    const guess = String(aiCourse || '').trim();
+    if (guess) {
+        const key = courseKey(guess);
+        const existing = key && (known || []).find(k => courseKey(k) === key);
+        return existing || guess;
+    }
+    return String(file && file.name || '').replace(/\.[^.]+$/, '').trim();
+}
+
 // ---- Generating questions from an uploaded file ----
+// Used by "Make questions from a file" and by the offer after an upload.
+// No "which course?" question any more - see resolveCourse above; the course
+// is shown (and can be changed) on the review screen.
+let questionsInProgress = false;
+async function generateQuestionsFor(file, button = null) {
+    if (questionsInProgress) { toast.info('Already making questions - one file at a time.'); return; }
+    questionsInProgress = true;
+    const folder = realFolder(file);
+    const originalHTML = button ? button.innerHTML : '';
+    if (button) { button.disabled = true; button.textContent = 'Reading the document...'; }
+    const working = button ? null : toast.info(`Making questions from ${isolate(file.name)}… this takes about a minute.`, 'Working on it');
+
+    try {
+        const aiConfig = await ipcRenderer.invoke('get-ai-config');
+        const opts = { category: folder, sourceFile: file.name };
+        let response;
+
+        if (aiConfig && aiConfig.visionAvailable && file.sourcePath && /\.pdf$/i.test(file.name)) {
+            // The PDF itself: layout, formulas and Hebrew order intact.
+            response = await ipcRenderer.invoke('generate-study-items-pdf', file.sourcePath, opts);
+            const first = JSON.parse(response);
+            // Out of quota: the text path asks the same Gemini - just say so.
+            if (first.error && !/quota/i.test(first.error)) {
+                console.warn('⚠️ PDF generation failed, falling back to extracted text:', first.error);
+                toast.info('Reading the PDF directly didn\'t work right now - using the text extracted from it instead. Formulas and tables may come out worse, so check the questions before adding them.', 'Using the extracted text');
+                response = await ipcRenderer.invoke('generate-study-items', file.content, opts);
+            }
+        } else {
+            response = await ipcRenderer.invoke('generate-study-items', file.content, opts);
+        }
+
+        const result = JSON.parse(response);
+        if (result.error) { toast.error(result.error, 'Could not create questions'); return; }
+
+        const course = folder || resolveCourse(file, result[0] && result[0].category, await knownCourses());
+        result.forEach(item => { item.category = course; });
+
+        // Draft first, deck second: a review screen before anything is saved.
+        if (typeof working === 'function') working();
+        const nav = document.getElementById('nav-study');
+        if (nav && document.getElementById('view-study').style.display === 'none') nav.click();
+        openReviewScreen(result, { course, fileName: file.name });
+    } catch (e) {
+        toast.error(e.message, 'Something went wrong');
+    } finally {
+        questionsInProgress = false;
+        if (button) { button.disabled = false; button.innerHTML = originalHTML; }
+    }
+}
+
 const generateStudyBtn = document.getElementById('generate-study-btn');
 if (generateStudyBtn) {
     generateStudyBtn.onclick = async () => {
@@ -4036,84 +4452,10 @@ if (generateStudyBtn) {
             toast.info('Upload course material under Materials first.', 'No files yet');
             return;
         }
-
-        const chosen = await pickOption(
-            'Create questions from which file?',
-            files.map(f => f.name)
-        );
+        const chosen = await pickOption('Create questions from which file?', files.map(f => f.name));
         if (!chosen) return;
-
         const file = files.find(f => f.name === chosen);
-        if (!file) return;
-
-        const category = await promptDialog(
-            'Which subject?',
-            'Questions will be grouped under this, so you can study one course at a time.',
-            file.name.replace(/\.[^.]+$/, '')
-        );
-        if (category === null) return;
-
-        generateStudyBtn.disabled = true;
-        const originalHTML = generateStudyBtn.innerHTML;
-
-        try {
-            const aiConfig = await ipcRenderer.invoke('get-ai-config');
-            let response;
-
-            // Prefer reading the actual page images. Text extraction is what
-            // destroyed formulas, code layout and Hebrew ordering; a vision
-            // model reads the page as rendered, so none of that damage occurs.
-            if (aiConfig && aiConfig.visionAvailable && file.sourcePath && /\.pdf$/i.test(file.name)) {
-                // Send the PDF itself. Gemini 3.x reads PDFs natively, so the
-                // document arrives with its layout intact - no extraction step
-                // to mangle formulas, code indentation or Hebrew ordering, and
-                // no rasterising either.
-                generateStudyBtn.textContent = 'Reading the document...';
-                response = await ipcRenderer.invoke('generate-study-items-pdf', file.sourcePath, {
-                    category: category.trim(),
-                    sourceFile: file.name
-                });
-
-                // BUG FIX: vision had no fallback at all - a Gemini outage/
-                // rate limit (503/429) meant a hard failure with no way
-                // through, even though the text-based path a few lines down
-                // already exists and already falls back to Ollama on its
-                // own. The generated set still goes through the same review
-                // screen before anything is saved, so a lower-quality draft
-                // here is caught there, not served silently as final.
-                const visionResult = JSON.parse(response);
-                if (visionResult.error) {
-                    console.warn('⚠️ Vision generation failed, falling back to extracted text:', visionResult.error);
-                    toast.info('Direct PDF reading is unavailable right now (likely a Gemini outage/rate limit) - using the extracted text instead. Double-check the questions before saving.', 'Lower-quality fallback used');
-                    generateStudyBtn.textContent = 'Reading the document...';
-                    response = await ipcRenderer.invoke('generate-study-items', file.content, {
-                        category: category.trim(),
-                        sourceFile: file.name
-                    });
-                }
-            } else {
-                generateStudyBtn.textContent = 'Reading the document...';
-                response = await ipcRenderer.invoke('generate-study-items', file.content, {
-                    category: category.trim(),
-                    sourceFile: file.name
-                });
-            }
-
-            const result = JSON.parse(response);
-
-            if (result.error) { toast.error(result.error, 'Could not create questions'); return; }
-
-            // Draft first, deck second. Generated questions go to a review
-            // screen rather than straight into the deck: the model is right
-            // most of the time but not always, and a wrong definition that
-            // gets studied and tested is worse than no question at all.
-            openReviewScreen(result);
-        } catch (e) {
-            toast.error(e.message, 'Something went wrong');
-        } finally {
-            generateStudyBtn.disabled = false;
-            generateStudyBtn.innerHTML = originalHTML;
-        }
+        if (file) await generateQuestionsFor(file, generateStudyBtn);
     };
 }
 
@@ -4420,8 +4762,17 @@ if (copyQuestionBtn) {
 
 let reviewDraft = [];
 
-function openReviewScreen(items) {
+function openReviewScreen(items, meta = {}) {
     reviewDraft = items.map((it, i) => ({ ...it, _id: i, _selected: true }));
+
+    const courseInput = document.getElementById('review-course-input');
+    if (courseInput) {
+        courseInput.value = meta.course || (items[0] && items[0].category) || '';
+        knownCourses().then(names => {
+            const dl = document.getElementById('review-course-list');
+            if (dl) dl.innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+        }).catch(() => {});
+    }
 
     document.getElementById('study-home').hidden = true;
     document.getElementById('study-manage').hidden = true;
@@ -4527,6 +4878,10 @@ if (reviewConfirmBtn) reviewConfirmBtn.onclick = async () => {
         .map(({ _id, _selected, ...clean }) => clean);   // keeps mode, solutionSource, skillTag
 
     if (chosen.length === 0) return;
+
+    const courseInput = document.getElementById('review-course-input');
+    const course = courseInput && courseInput.value.trim();
+    if (course) chosen.forEach(c => { c.category = course; });
 
     reviewConfirmBtn.disabled = true;
     const res = await ipcRenderer.invoke('save-study-items', chosen);

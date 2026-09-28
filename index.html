@@ -346,6 +346,25 @@
                     </div>
                 </div>
 
+                <!-- Courses with an exam in the Planner: reviews are timed so
+                     nothing lands after the exam (server: utils/examSchedule.js).
+                     Filled by renderStudyExams() in renderer.js. -->
+                <div class="card study-exams" id="study-exams" hidden>
+                    <div class="study-exams__list" id="study-exams-list"></div>
+                    <!-- Asked about ONE course at a time: has questions, no
+                         exam in the Planner, and the user hasn't said "no
+                         exam". Written in their own words, read like the
+                         Planner's add box (main.js parse-exam-dates). -->
+                    <div class="study-exam-ask" id="study-exam-ask" hidden>
+                        <div class="study-exam-ask__q" id="study-exam-ask-q" dir="ltr"></div>
+                        <div class="study-exam-ask__row">
+                            <input id="study-exam-input" class="input-field" maxlength="300" dir="auto" placeholder='לדוגמה: "12.2" או "מועד א 12.2, מועד ב 5.3"'>
+                            <button class="btn-primary btn-sm" id="study-exam-save">Save</button>
+                            <button class="btn-secondary btn-sm" id="study-exam-none" title="Don't ask about this course again">No exam</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Only rendered when a paused session exists -->
                 <div class="resume-banner" id="resume-banner" hidden>
                     <div class="resume-banner__text">
@@ -375,11 +394,13 @@
                      reviews of the SAME question - not the deck's total
                      review count - and stay empty otherwise, which read as
                      "broken" without this. -->
-                <p class="settings-hint" style="margin-bottom: var(--space-4);">
+                <p class="settings-hint" id="study-panels-hint" style="margin-bottom: var(--space-4);" hidden>
                     These fill in as you answer the same questions more than once.
                 </p>
 
-                <div class="progress-columns">
+                <!-- Each panel shows only once it has something to say
+                     (renderer.js updateStudyPanelsVisibility). -->
+                <div class="progress-columns" id="study-panels">
                     <!-- The calibration panel: the differentiating feature -->
                     <div class="card">
                         <div class="card-header">
@@ -428,6 +449,14 @@
                     </div>
                 </div>
 
+                <!-- The course the questions go under - worked out from the
+                     file's folder or from the file itself (renderer.js
+                     resolveCourse). Shown so a wrong guess is visible. -->
+                <div class="review-course">
+                    <label class="form-label" for="review-course-input">Course</label>
+                    <input id="review-course-input" class="input-field" list="review-course-list" maxlength="100" dir="auto">
+                    <datalist id="review-course-list"></datalist>
+                </div>
                 <div class="review-toolbar">
                     <div class="review-count"><strong id="review-selected-count">0</strong> of <span id="review-total-count">0</span> selected</div>
                     <div class="review-toolbar__actions">
@@ -879,12 +908,12 @@
 
             <label class="form-label" for="syllabus-course">Course</label>
             <input id="syllabus-course" class="input-field" maxlength="80" dir="auto" placeholder="Course name">
-            <p class="settings-hint">Added to exam names in the Planner, and used as the category of the tasks.</p>
+            <p class="settings-hint">Added to the names in the Planner, and used as the category of the tasks.</p>
 
             <label class="checkbox-field" for="syllabus-google" id="syllabus-google-row">
                 <input type="checkbox" id="syllabus-google">
                 <span class="checkbox-field__text">
-                    <span class="checkbox-field__label">Also add the exams to Google Calendar</span>
+                    <span class="checkbox-field__label">Also add to Google Calendar</span>
                 </span>
             </label>
 

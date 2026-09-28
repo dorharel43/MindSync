@@ -27,35 +27,6 @@ const LOCAL_MODEL = 'aya-expanse:8b';
 // exactly like a hang.
 const MAX_OUTPUT_TOKENS = 800;
 
-// IMPORTANT - this is much lower than it looks like it should be, on purpose:
-// Hebrew tokenizes very poorly compared to Latin text. English runs roughly
-// 4 characters per token, but Hebrew can be 1-3 TOKENS PER CHARACTER. So
-// 4,600 Hebrew characters can blow past 8,000 tokens, overflow the context,
-// and take minutes to process on CPU - which looks exactly like a hang.
-const MAX_INPUT_CHARS = 2000;
-
-// Splits long text into chunks small enough for one prompt each. We process
-// every chunk instead of truncating, otherwise anything past the cutoff is
-// silently invisible to the model (a 10-question exam would only ever yield
-// the first few). Boundaries prefer line breaks so a task isn't cut in half.
-function chunkForAI(text, chunkSize = MAX_INPUT_CHARS) {
-    if (!text) return [];
-    if (text.length <= chunkSize) return [text];
-
-    const chunks = [];
-    let index = 0;
-    while (index < text.length) {
-        let end = Math.min(index + chunkSize, text.length);
-        if (end < text.length) {
-            const lastBreak = text.lastIndexOf('\n', end);
-            if (lastBreak > index + chunkSize * 0.5) end = lastBreak; // only if it isn't a tiny chunk
-        }
-        chunks.push(text.slice(index, end));
-        index = end;
-    }
-    return chunks;
-}
-
 // NOTE (bug fix): this used to talk to Ollama directly and completely bypassed
 // aiProvider.js - meaning every caller of this function (task urgency, event
 // type classification, task extraction from PDFs, etc.) could NEVER use
@@ -297,54 +268,6 @@ function isGroundedInSource(quote, sourceText) {
     return present / words.length >= 0.65;
 }
 
-// Grounding check for GENERATED QUESTIONS, which needs different rules from
-// the one used for extracted tasks.
-//
-// A task title tends to echo the source wording, so comparing it directly to
-// the document works. A question is a *reformulation by design* - "What is the
-// main purpose of using a queue?" will never appear verbatim in a document
-// about queues. Falling back to matching the question text therefore rejected
-// almost every perfectly valid question.
-//
-// So: verify the sourceQuote when the model supplies one, and otherwise fall
-// back to the ANSWER, which does tend to reuse the source's own terms.
-// The threshold is also looser than for tasks, because Hebrew prefixes
-// (ב/ל/ה/מ/ו) change word forms and depress exact-token overlap.
-function isQuestionGrounded(item, sourceText) {
-    const src = normalizeForMatch(sourceText);
-
-    const check = (text, threshold) => {
-        const t = normalizeForMatch(text);
-        if (!t || t.length < 6) return false;
-        if (src.includes(t)) return true;
-
-        const words = t.split(' ').filter(w => w.length > 2);
-        if (words.length === 0) return false;
-
-        // Match on stems: a source containing "בתור" should satisfy a quote
-        // word of "תור". Comparing whole tokens misses this constantly.
-        const present = words.filter(w => {
-            if (src.includes(w)) return true;
-            const stem = w.replace(/^(ב|ל|ה|מ|ו|ש|כ)/, '');
-            return stem.length > 2 && src.includes(stem);
-        }).length;
-
-        return present / words.length >= threshold;
-    };
-
-    // The quote must be genuinely present, since for recall/explain items it
-    // becomes the answer the student sees. A fabricated quote would be a
-    // fabricated answer.
-    if (item.sourceQuote && check(item.sourceQuote, 0.6)) return true;
-
-    // Practice items don't show an answer, so a missing quote is survivable
-    // as long as the question itself clearly comes from this text.
-    if (item.mode === 'practice' && check(item.question, 0.5)) return true;
-
-    return false;
-}
-
-
 // ==========================================
 // Hebrew PDF text repair
 // ==========================================
@@ -425,266 +348,6 @@ function repairHebrewPdfText(text) {
     }).join('\n');
 }
 
-// Detects text whose word order was scrambled badly enough that no
-// post-processing can recover it. Such passages must not be shown as answers
-// - a garbled answer is worse than admitting we don't have one.
-function looksMangled(text) {
-    const t = String(text || '');
-    const hebrewChars = (t.match(/[\u0590-\u05FF]/g) || []).length;
-    if (hebrewChars < 5) return false;
-
-    // Hebrew prefixes (ל ב כ מ ו ה ש) always attach to the following word.
-    // Finding them standing alone means the tokens were reordered.
-    const orphanPrefixes = (t.match(/(^|\s)[לבכמוהש](\s|$)/g) || []).length;
-    if (orphanPrefixes >= 2) return true;
-
-    // Punctuation still leading a Hebrew word after repair. A comma is
-    // excluded here because repairReversedClauses() now handles that case;
-    // flagging it again would reject text we just successfully recovered.
-    if (/(^|\s)[.;:]\s*[\u0590-\u05FF]/.test(t)) return true;
-
-    // Latin letters spliced into the middle of a Hebrew word (e.g. "hוך")
-    // indicate the run boundaries themselves were interleaved - not fixable.
-    if (/[\u0590-\u05FF][a-zA-Z]|[a-zA-Z][\u0590-\u05FF]/.test(t)) return true;
-
-    // NOTE: a mid-sentence ellipsis is NOT treated as damage. It is almost
-    // always the model abbreviating a long quote, and expandTruncatedQuote()
-    // has already had a chance to restore it. Flagging it here rejected a
-    // large amount of perfectly good material.
-
-    return false;
-}
-
-
-// Recovers the full passage when the model abbreviated a quote with "...".
-//
-// The model routinely shortens long quotes ("כל מחרוזת סופית... היא מילה").
-// That ellipsis was being misread as PDF garbling and the item discarded -
-// but nothing is actually damaged: the complete passage is still sitting in
-// the source. We locate the fragments either side and lift the whole span.
-function expandTruncatedQuote(quote, sourceText) {
-    const q = String(quote || '');
-    if (!/\.{2,}|…/.test(q)) return q;
-
-    const srcNormForTail = normalizeForMatch(sourceText);
-
-    // Trailing ellipsis: the passage was cut off at the end rather than in the
-    // middle ("אם ידוע שכל סטודנט לומד לפחות את אחד..."). There's only one
-    // fragment, so the mid-quote logic below never fired and the sentence was
-    // left hanging. Locate the fragment and read forward from it instead.
-    if (/(?:\.{2,}|…)\s*$/.test(q)) {
-        const head = normalizeForMatch(q.replace(/\s*(?:\.{2,}|…)\s*$/, ''));
-        if (head.length > 8) {
-            const at = srcNormForTail.indexOf(head);
-            if (at !== -1) {
-                const forward = srcNormForTail.slice(at, at + head.length + 260);
-                // Stop at a sentence end so we don't trail into the next topic.
-                const cut = forward.search(/[.!?](\s|$)/);
-                const result = cut > head.length ? forward.slice(0, cut + 1) : forward;
-                return result.trim();
-            }
-        }
-        return q;
-    }
-
-    const pieces = q.split(/\s*(?:\.{2,}|…)\s*/).map(p => p.trim()).filter(p => p.length > 4);
-    if (pieces.length < 2) return q;
-
-    const srcNorm = normalizeForMatch(sourceText);
-    const first = normalizeForMatch(pieces[0]);
-    const last = normalizeForMatch(pieces[pieces.length - 1]);
-
-    const start = srcNorm.indexOf(first);
-    if (start === -1) return q;
-    const endIdx = srcNorm.indexOf(last, start + first.length);
-    if (endIdx === -1) return q;
-
-    const span = srcNorm.slice(start, endIdx + last.length);
-    // Guard against a loose match swallowing half the document.
-    if (span.length > q.length * 4 || span.length > 400) return q;
-    return span;
-}
-
-
-
-
-// NOTE ON \b AND HEBREW:
-// JavaScript's \b is defined over [A-Za-z0-9_], so it never matches at the
-// boundary of a Hebrew word - every Hebrew term wrapped in \b silently fails.
-// This check uses explicit non-letter lookarounds instead. An earlier version
-// used \b and therefore rejected valid passages like
-// "פסוקים יסודיים אטומים נסמן באותיות קטנות" as if they had no verb.
-const HEBREW_EXPLANATORY = /(?:^|[^\u0590-\u05FFa-zA-Z])(הוא|היא|הם|הן|נקרא|נקראת|נסמן|מסמנים|מוגדר|מוגדרת|מקבל|מתקבל|פירושה|פירושו|כלומר|כאשר|ניתן|אין|יש|מהווה|תהווה|אם ורק אם)(?:$|[^\u0590-\u05FFa-zA-Z])/;
-const LATIN_EXPLANATORY = /\b(is|are|means|refers|defined|denotes)\b/i;
-
-function hasExplanatoryVerb(text) {
-    const t = String(text || '');
-    return HEBREW_EXPLANATORY.test(t) || LATIN_EXPLANATORY.test(t);
-}
-
-// Pulls in the text that follows a quote ending in ':'.
-//
-// A colon announces content rather than delivering it: "עליה למלא שתי דרישות:"
-// tells you requirements exist and nothing about what they are. The
-// continuation is right there in the source, so complete the passage instead
-// of discarding it.
-function completeAfterColon(quote, sourceText) {
-    const q = String(quote || '').trim();
-    if (!/[:：]\s*$/.test(q)) return q;
-
-    const srcN = normalizeForMatch(sourceText);
-    const qN = normalizeForMatch(q);
-    const idx = srcN.indexOf(qN);
-    if (idx === -1) return q;
-
-    const after = srcN.slice(idx + qN.length).trim();
-    if (!after) return q;
-
-    return (q + ' ' + after.slice(0, 220).trim()).trim();
-}
-
-// Detects a slide title being quoted as though it were an explanation.
-// "Modus Ponens כלל ההיסק" names the topic; it doesn't say what the rule is.
-function looksLikeHeading(text) {
-    const t = String(text || '').trim();
-    const words = t.split(/\s+/).filter(Boolean);
-    if (words.length > 6) return false;
-    if (hasExplanatoryVerb(t)) return false;
-    if (/[.!?]$/.test(t)) return false;   // a finished sentence, not a heading
-    return true;
-}
-
-// Detects agenda / table-of-contents slides.
-//
-// Such a slide lists the topics a lecture will cover, so it contains all the
-// right keywords and none of the explanations. The model happily quotes it:
-//   Q: "מהי טופולוגיית רשת פיזית?"
-//   A: "סוגי רשתות לפי מרחקים נושאי ההרצאה◦ ארכיטקטורות בסיסיות◦ טופולוגיות"
-// The word is there; the meaning never is. A keyword match can't tell the
-// difference, but the shape of the text can.
-function looksLikeOutline(text) {
-    const t = String(text || '').trim();
-    if (!t) return false;
-
-    if (/נושאי ההרצאה|תוכן העניינים|תוכן ההרצאה|סדר היום|בהרצאה זו נלמד|agenda|outline|table of contents|in this lecture/i.test(t)) {
-        return true;
-    }
-
-    // Dense bullet markers separating short fragments.
-    const bullets = (t.match(/[◦•▪●‣·]|^\s*[-–]\s/gm) || []).length;
-    if (bullets >= 2) {
-        const segments = t.split(/[◦•▪●‣·\n]|(?:^|\s)[-–]\s/).map(x => x.trim()).filter(Boolean);
-        const shortOnes = segments.filter(x => x.split(/\s+/).length <= 5).length;
-        if (segments.length >= 3 && shortOnes / segments.length >= 0.6) return true;
-    }
-
-    // Noun phrases with no explanatory verb: a topic list, not a definition.
-    const hasExplanatory = hasExplanatoryVerb(t);
-    const wordCount = t.split(/\s+/).length;
-    if (!hasExplanatory && wordCount <= 14 && bullets >= 1) return true;
-
-    return false;
-}
-
-// Checks that the quote actually addresses what the question asks about.
-//
-// The RTL fix cleaned up the text, so quotes are no longer garbled - but the
-// model can still pick the WRONG passage. Two real failures:
-//   Q: "מהי משמעות הסימון ∨ ?"      A: a passage about connectives generally,
-//                                      which never shows ∨ at all.
-//   Q: "האם 'מה השעה?' נחשב לפסוק?" A: the slide's list of examples, i.e. the
-//                                      question echoed back, with no answer.
-//
-// Deliberately only two rules, both precise. A third heuristic comparing
-// keyword overlap between question and quote was tried and dropped: it
-// rejected good pairs like ("מהי משמעות הסימון ∨", "הקשר ∨ (או) מקבל ערך אמת
-// כאשר...") because the answer legitimately doesn't repeat the question's
-// wording. A relevance check that discards correct answers is worse than none.
-function quoteAnswersQuestion(question, quote) {
-    const q = String(question || '');
-    const a = String(quote || '');
-
-    // 1. A symbol named in the question must appear in the quote.
-    const symbols = q.match(/[∨∧¬→↔⊕⊨⊢∀∃∈⊆∪∩≡≠≤≥]/g) || [];
-    for (const sym of symbols) {
-        if (!a.includes(sym)) return { ok: false, why: `quote never shows the symbol ${sym}` };
-    }
-
-    // 2. If the question quotes a phrase, the passage must say something
-    //    BEYOND repeating that phrase, or it answers nothing.
-    const quotedPhrases = q.match(/['"״](.+?)['"״]/g) || [];
-    if (quotedPhrases.length > 0) {
-        let stripped = normalizeForMatch(a);
-        quotedPhrases.forEach(p => {
-            stripped = stripped.replace(normalizeForMatch(p.slice(1, -1)), '');
-        });
-        stripped = stripped.replace(/\d+/g, '').trim();
-        const remaining = stripped.split(/\s+/).filter(w => w.length > 1).length;
-        if (remaining < 5) {
-            return { ok: false, why: 'quote only repeats the phrase from the question' };
-        }
-    }
-
-    return { ok: true };
-}
-
-
-
-// Rejects answer passages damaged beyond use, or that carry no actual content.
-//
-// Three failures remained after the RTL fix, all in formula-heavy slides:
-//
-//  1. Font-mapping damage. Some PDFs embed fonts whose glyph-to-unicode table
-//     is wrong, so the extractor emits real-looking but meaningless Hebrew
-//     ("חרילן פסכו"). This is NOT a bidi problem and no reordering fixes it -
-//     the characters themselves are wrong. It shows up as a Hebrew letter
-//     fused directly onto a math glyph with no space ("חמב𝑖"), which never
-//     happens in clean text.
-//  2. Formula-only passages, which state a result without explaining it.
-//  3. Model placeholders like "(...)".
-function analyseAnswerText(text) {
-    const t = String(text || '');
-    const noSpace = t.replace(/\s/g, '');
-    if (noSpace.length === 0) return { reject: true, why: 'empty passage' };
-
-    if (/^\s*\(?\.{2,}\)?/.test(t) || /\(\s*\.{3}\s*\)/.test(t)) {
-        return { reject: true, why: 'passage is a placeholder, not text' };
-    }
-
-    // Hebrew letter fused to a math alphanumeric = broken font mapping.
-    if (/[\u0590-\u05FF][\u{1D400}-\u{1D7FF}]|[\u{1D400}-\u{1D7FF}][\u0590-\u05FF]/u.test(t)) {
-        return { reject: true, why: 'text damaged by the PDF font encoding' };
-    }
-
-    const mathChars = (t.match(/[∨∧¬→↔⊕⊨⊢∀∃∈⊆∪∩≡≠≤≥⋀⋁⋯…±×÷√∑∏∫⎬⎫]|[\u{1D400}-\u{1D7FF}]/gu) || []).length;
-    const words = t.match(/[\u0590-\u05FF]{3,}|[A-Za-z]{3,}/g) || [];
-    const mathRatio = mathChars / noSpace.length;
-
-    if (mathRatio > 0.25 && words.length < 6) {
-        return { reject: true, why: `mostly formula (${Math.round(mathRatio * 100)}% symbols)` };
-    }
-    if (words.length < 3) {
-        return { reject: true, why: 'passage has almost no prose' };
-    }
-
-    // An exercise statement quoted as an answer. These show up when the file
-    // is a problem sheet rather than notes: the model finds no definition to
-    // quote, so it grabs a whole question instead - complete with its data.
-    // A run of numbers, or a question mark inside the "answer", gives it away.
-    const dataRun = /(?:\b\d+[\s,]+){4,}\d+/.test(t);
-    if (dataRun) {
-        return { reject: true, why: 'passage is an exercise statement, not an explanation' };
-    }
-    if (t.length > 400) {
-        return { reject: true, why: 'passage too long to be a definition' };
-    }
-    if (/[?？]/.test(t) && t.length > 120) {
-        return { reject: true, why: 'passage is itself a question' };
-    }
-
-    return { reject: false };
-}
-
 // Rejects questions about the anecdote rather than the concept.
 //
 // Course material wraps ideas in motivating stories - the Konigsberg bridges,
@@ -746,14 +409,6 @@ function isSelfContained(question) {
     return true;
 }
 
-// Rejects questions that ask about the CONSTRAINTS of one specific exercise
-// rather than about knowledge worth carrying.
-//
-// "What data type do the elements use?" / "Is it allowed to modify the
-// original list?" are properties of exercise 3 on one exam paper. Nobody
-// needs to remember them, and they teach nothing. They pass the
-// self-containment check while still being worthless, so they need their own
-// filter.
 // Rejects recall questions that demand reasoning, because the answer we show
 // is a quoted passage. "Can we conclusively infer X? Explain" cannot be
 // answered by a sentence lifted from a slide - the question and the answer
@@ -777,44 +432,6 @@ function needsReasoningNotQuote(question, mode) {
         /explain (your )?(answer|reasoning|the process)/i, /justify/i, /prove that/i, /why (is|does|do)/i
     ];
     return reasoningAsks.some(p => p.test(q));
-}
-
-function isExerciseTrivia(question, answer) {
-    const q = String(question || '');
-
-    const triviaPatterns = [
-        /סוג הנתונים|טיפוס הנתונים|איזה טיפוס/,
-        /האם מותר (לשנות|להשתמש)/,
-        /האם ניתן לשנות/,
-        /מה (מותר|אסור)/,
-        /כמה נקודות/,
-        /מה נדרש להחזיר|מה הפונקציה מחזירה\s*\?$/,
-        /what data type|is it allowed to|how many points/i
-    ];
-    if (triviaPatterns.some(p => p.test(q))) return true;
-
-    // A one- or two-word answer to a "what is" question is almost always a
-    // parameter of the exercise rather than a concept.
-    const a = String(answer || '').trim();
-    if (a && a.split(/\s+/).length <= 3 && /^(מהו|מהי|מה)\s/.test(q)) return true;
-
-    return false;
-}
-
-// Decides whether a document is teaching material or an assignment sheet.
-// They need completely different treatment: from a textbook you generate
-// recall questions, but from an exam paper the EXERCISE ITSELF is the study
-// item - generating trivia about the exercise is noise.
-function looksLikeExercisePaper(text) {
-    const t = String(text || '').toLowerCase();
-    const markers = [
-        'עליכם לממש', 'עליך לממש', 'כתבו פונקציה', 'כתוב פונקציה', 'ממשו',
-        'זמן הריצה', 'סיבוכיות', 'אין לשנות', 'מותר להשתמש',
-        'שאלה 1', 'שאלה 2', 'סעיף א', 'סעיף ב', 'נקודות)',
-        'implement a function', 'write a function', 'time complexity'
-    ];
-    const hits = markers.filter(m => t.includes(m)).length;
-    return hits >= 2;
 }
 
 // Strips multiple-choice scaffolding. The model still occasionally emits
@@ -884,11 +501,16 @@ const MONTHS_FOR_MATCH = [
 function buildSyllabusPrompt(todayISO) {
     return `You read a university course document - usually a syllabus (סילבוס), a course schedule or an assignment sheet - and list its DATED ACADEMIC EVENTS, so a student can put them in their calendar. Today's date is ${todayISO}.
 
-Find two kinds of items:
+Find three kinds of items:
+- "class": a WEEKLY meeting with a fixed day and time - the lecture (הרצאה), the tutorial (תרגול), a lab (מעבדה). One item per meeting, e.g. "מועדי ההרצאה: יום ד' 8:30-12:30" -> {"kind": "class", "title": "הרצאה", "weekday": "Wednesday", "time": "08:30", "endTime": "12:30"}. Office hours (שעות קבלה) are NOT a class.
 - "exam": a test the student sits - final exam (מבחן / בחינה סופית), each sitting (מועד א / מועד ב / מועד ג - each sitting is its OWN item), midterm (בוחן אמצע), quiz (בוחן), oral exam.
 - "assignment": something the student must SUBMIT or PRESENT by a date - homework or an exercise to hand in (מטלה, תרגיל להגשה, ממ"ן, עבודה), a project or a project milestone, a lab report, a presentation, a paper.
 
-Do NOT list: lectures or classes and their topics, reading without a deadline, holidays, office hours, how the grade is weighted, rules and policies.
+Do NOT list: the TOPICS of each lecture ("שיעור 3: סדרות"), reading without a deadline, holidays, office hours, how the grade is weighted, rules and policies.
+
+MANY SYLLABI HAVE NO DATES. That's fine - still list what's there:
+- An exam with no date given ("מבחן סוף סמסטר") -> the exam item with "date": null.
+- Homework / exercises with no dates -> ONE item for all of them, e.g. {"kind": "assignment", "title": "תרגילי בית (10)", "date": null} - not one item per exercise.
 
 For every item return:
 - "kind": "exam" or "assignment".
@@ -896,6 +518,7 @@ For every item return:
 - "date": {"day": number, "month": number, "year": number or null} - ONLY a date written in the document for this item. "year": null if the document doesn't write the year. No date written for this item -> "date": null. Never guess, and never work a date out from a week number ("שבוע 5") - use null.
 - "time": "HH:MM" if the document gives a time for it, otherwise null.
 - "durationMinutes": the exam's length in minutes if the document gives it, otherwise null.
+- For "class" only: "weekday" (English day name, e.g. "Wednesday") and "endTime" ("HH:MM" or null). Classes have no "date".
 - "sourceQuote": the exact text in the document where this item and its date appear (for a table: that row). Copy it as written.
 
 A deadline given as a range ("להגיש בין 1.11 ל-5.11") -> use the LAST day.
@@ -903,7 +526,7 @@ Also return "course": the course name as the document writes it (without the cou
 
 If the document has no exams and no submissions (lecture slides, notes, an exercise sheet with no due date), return {"course": null, "items": []}. For such a file, an empty list is the correct answer.
 
-Return ONLY JSON: {"course": "...", "items": [{"kind": "...", "title": "...", "date": {"day": 1, "month": 1, "year": null}, "time": null, "durationMinutes": null, "sourceQuote": "..."}]}`;
+Return ONLY JSON: {"course": "...", "items": [{"kind": "exam|assignment|class", "title": "...", "date": {"day": 1, "month": 1, "year": null}, "time": null, "durationMinutes": null, "weekday": null, "endTime": null, "sourceQuote": "..."}]}`;
 }
 
 // {day, month, year} (or "YYYY-MM-DD" / "DD.MM(.YYYY)") -> "YYYY-MM-DD", or
@@ -941,6 +564,19 @@ function resolveSyllabusDate(raw, now = new Date()) {
     const d = new Date(year, month - 1, day);
     if (d.getDate() !== day || d.getMonth() !== month - 1) return null; // 31.2 and the like
     return toLocalIsoDate(d);
+}
+
+// "Wednesday" / "Wed" / "רביעי" / "יום ד'" / "ד" -> "Wednesday", or null.
+const WEEKDAYS_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+function normalizeWeekday(raw) {
+    const t = String(raw || '').trim().toLowerCase().replace(/^יום\s+/, '').replace(/['׳"״.]/g, '');
+    if (!t) return null;
+    const en = WEEKDAYS_EN.find(d => d.toLowerCase() === t || d.toLowerCase().slice(0, 3) === t);
+    if (en) return en;
+    const he = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'].indexOf(t);
+    if (he !== -1) return WEEKDAYS_EN[he];
+    const letter = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'].indexOf(t);
+    return letter !== -1 ? WEEKDAYS_EN[letter] : null;
 }
 
 function normalizeTimeText(raw) {
@@ -1036,8 +672,10 @@ ipcMain.handle('read-syllabus', async (event, file = {}) => {
             return { error: 'The AI answer could not be read. Try again.' };
         }
         const rawItems = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.items) ? parsed.items : []);
-        const course = String((parsed && parsed.course) || '').trim().slice(0, 80)
-            || String(file.name || '').replace(/\.[^.]+$/, '').trim().slice(0, 80);
+        // '' when the document doesn't name its course - the renderer then
+        // uses the file's folder, a course the user already has, or the
+        // file name, in that order.
+        const course = String((parsed && parsed.course) || '').trim().slice(0, 80);
 
         // What's already in the app, so importing the same syllabus twice
         // doesn't add everything twice.
@@ -1053,7 +691,7 @@ ipcMain.handle('read-syllabus', async (event, file = {}) => {
             if (!raw || typeof raw !== 'object') continue;
             const title = String(raw.title || '').replace(/\s+/g, ' ').trim().slice(0, 200);
             if (!title) continue;
-            let kind = raw.kind === 'exam' || raw.kind === 'assignment' ? raw.kind : null;
+            let kind = ['exam', 'assignment', 'class'].includes(raw.kind) ? raw.kind : null;
             if (!kind) kind = classifyEventByKeywords(title) === 'exam' ? 'exam' : 'assignment';
 
             const quote = String(raw.sourceQuote || '').replace(/\s+/g, ' ').trim().slice(0, 300);
@@ -1066,6 +704,26 @@ ipcMain.handle('read-syllabus', async (event, file = {}) => {
             if (!usedPdf && inText === false) {
                 console.warn(`   ⛔ read-syllabus: rejected, not in the document: "${title}"`);
                 rejected++;
+                continue;
+            }
+
+            // A weekly class: a day and a start time, or it's useless.
+            if (kind === 'class') {
+                const weekday = normalizeWeekday(raw.weekday);
+                const start = normalizeTimeText(raw.time);
+                if (!weekday || !start) continue;
+                const end = normalizeTimeText(raw.endTime);
+                const toMin = (hm) => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
+                const len = end ? toMin(end) - toMin(start) : null;
+                const key = `class|${weekday}|${start}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                items.push({
+                    kind, title, date: null, weekday, time: start, endTime: end,
+                    durationMinutes: len && len >= 15 && len <= 720 ? len : null,
+                    sourceQuote: quote, isPast: false, needsCheck: inText === false,
+                    alreadyExists: (events || []).some(e => !e.date && e.day === weekday && e.time === start)
+                });
                 continue;
             }
 
@@ -1094,7 +752,10 @@ ipcMain.handle('read-syllabus', async (event, file = {}) => {
             });
         }
 
-        items.sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999'));
+        // Weekly classes first (the student's timetable), then by date,
+        // undated last.
+        const rank = (i) => (i.kind === 'class' ? '0' : '1') + (i.date || '9999');
+        items.sort((a, b) => rank(a).localeCompare(rank(b)));
         console.log(`📅 read-syllabus: ${items.length} item(s) via ${usedPdf ? 'PDF' : 'text'} (${r.model})` + (rejected ? `, ${rejected} rejected` : ''));
         return { course, items, usedPdf, model: r.model, modelLabel: aiProvider.modelLabel(r.model), rejected };
     } catch (error) {
@@ -1119,6 +780,25 @@ ipcMain.handle('import-syllabus-items', async (event, items = [], options = {}) 
             if (!title) continue;
             const date = /^\d{4}-\d{2}-\d{2}$/.test(item.date || '') ? item.date : null;
 
+            if (item.kind === 'class') {
+                const day = normalizeWeekday(item.weekday);
+                const time = normalizeTimeText(item.time);
+                if (!day || !time) { errors.push(`"${title}" has no day or time`); continue; }
+                const evt = {
+                    title: titleWithCourse(title, course),
+                    day, date: null,           // null = repeats every week
+                    time, type: 'lesson',
+                    ...(item.durationMinutes ? { durationMinutes: item.durationMinutes } : {})
+                };
+                if (options.syncToGoogle) {
+                    const g = await syncToGoogleCalendar(evt);
+                    if (g.success) evt.googleEventId = g.eventId;
+                    else syncErrors.push(g.error);
+                }
+                const saved = await api.createEvent(evt);
+                created.events.push({ ...evt, id: saved && (saved._id || saved.id) });
+                continue;
+            }
             if (item.kind === 'exam') {
                 if (!date) { errors.push(`"${title}" has no date`); continue; }
                 const [y, m, d] = date.split('-').map(Number);
@@ -2208,329 +1888,164 @@ ipcMain.handle('delete-subtask', async (event, taskId, subtaskId) => {
 // =====================================
 // Study item generation (spaced repetition)
 // =====================================
-// Turns uploaded material into practice items. Three modes are produced
-// because different subjects fail differently:
-//   recall   - definitions/concepts. Retrieval from memory works here.
-//   practice - maths/statistics. You can't "remember" an integral, you
-//              perform it, so the app tracks whether you managed rather than
-//              trying to mark your answer. Crucially, a local 8B model is bad
-//              at maths - having it grade your algebra would produce confident
-//              wrong verdicts, which would destroy trust in an app whose
-//              entire promise is telling you the truth.
-//   explain  - open understanding questions, graded against the source later.
+// Two ways in, one set of rules (buildStudyPrompt + finaliseStudyItems below):
+//   generate-study-items-pdf  - the PDF itself (the normal path)
+//   generate-study-items      - the text we extracted at upload (non-PDF files,
+//                               or when the PDF can't be sent)
+//
+// REMOVED (29/9): the old text path cut the document into 2,000-character
+// pieces and asked the AI once PER PIECE - 20 to 40 requests for one lecture.
+// A free Gemini key has 20 a day, so one fallback run used up the whole day.
+// It also came with ~1,000 lines of repair filters (garbled Hebrew, slide
+// titles quoted as answers, agenda slides...) written for the small local
+// model that used to do this job. Now: the whole text in ONE request, with
+// the same prompt and filters as the PDF path.
 ipcMain.handle('generate-study-items', async (event, sourceText, options = {}) => {
     try {
         const category = options.category || '';
         const sourceFile = options.sourceFile || '';
-        console.log(`🧠 generate-study-items: ${(sourceText || '').length} chars, category "${category}"`);
+        const text = String(sourceText || '');
+        console.log(`🧠 generate-study-items (text): ${text.length} chars, category "${category}"`);
+        if (!text.trim()) return JSON.stringify({ error: 'This file has no readable text.' });
 
-        const chunks = chunkForAI(sourceText);
-        console.log(`🧠 Split into ${chunks.length} chunk(s)`);
+        // Gemini reads ~120,000 characters in one go; a local model's context
+        // window holds far less.
+        const maxChars = aiProvider.resolveProvider() === 'gemini' ? 120000 : 15000;
+        const prompt = `${buildStudyPrompt(category)}
 
-        const seen = new Set();
-        const allItems = [];
-        let rejected = 0;
-        // Tallied so a file that yields nothing can explain itself. Silent
-        // failure is the worst outcome: a maths-heavy PDF returned zero
-        // questions with no indication of whether the file was wrong, the
-        // app was broken, or the material simply isn't suitable.
-        const rejectReasons = {};
-        const noteReject = (reason) => { rejectReasons[reason] = (rejectReasons[reason] || 0) + 1; };
+THE MATERIAL (text extracted from the file - formulas, tables and right-to-left order may be damaged; skip anything you can't read with confidence rather than guessing):
 
-        for (let i = 0; i < chunks.length; i++) {
-            console.log(`🧠 Generating from chunk ${i + 1}/${chunks.length}...`);
+${text.slice(0, maxChars)}`;
 
-            const isExercisePaper = looksLikeExercisePaper(chunks[i]);
-
-            // An exam paper and a textbook chapter need opposite treatment.
-            // From an exercise sheet, the exercise IS the study item; asking
-            // "what is the purpose of the function?" produces questions that
-            // are meaningless once the paper isn't in front of you.
-            const modeGuidance = isExercisePaper
-                ? `This text is an EXERCISE SHEET or EXAM PAPER, not teaching material.
-Exercise sheets rarely define anything, so there may be little here worth turning into a question. That is fine - return {"items": []} rather than padding it out.
-Only create a question where the text actually DEFINES or EXPLAINS something you can quote.
-Do NOT turn the exercises themselves into questions, and do NOT ask ABOUT them ("what is the required runtime", "what data type is used").`
-                : `This text is teaching material (lecture slides, a chapter, notes).
-Create ONLY "recall" questions (definitions, concepts, facts stated in the text) and "explain" questions.
-Do NOT create "practice" items from teaching material. Do not invent exercises such as "convert this formula to DNF" - an exercise you made up has no official solution anywhere, so the student would have to solve it, verify it elsewhere, and type the answer back in. That is worse than not asking.
-Practice items belong only to real exercise sheets, where the student has to do the work regardless.`;
-
-            const prompt = `You create study questions from a student's own course material.
-You are working from part ${i + 1} of ${chunks.length} of a document.
-
-${modeGuidance}
-
-THE EXAM TEST - apply this to every question before you write it:
-"Would a lecturer put this on an exam?"
-If the answer is no, do not ask it.
-
-Course material contains motivating stories, history and biography alongside the actual content. The story exists to introduce the idea; the IDEA is what gets examined.
-BAD:  "In which city was the bridge problem set?"          (trivia about the anecdote)
-BAD:  "Who first studied the seven bridges problem?"        (biography)
-BAD:  "In which year was this theorem proved?"              (a date)
-GOOD: "What condition must a graph satisfy to have an Euler path?"  (the concept the story introduces)
-Never ask about: people's names, places, dates, historical events, who discovered what, or course admin (deadlines, grading, office hours).
-Always ask about: definitions, conditions, properties, notation, methods, and the relationships between concepts.
-
-CRITICAL - every question must stand completely alone:
-The student will see it weeks later WITHOUT this document. A question that depends on the document is useless.
-BAD:  "What is the purpose of the function to be written?"  (which function?)
-GOOD: "Write a function that returns the largest value in a linked list without modifying the original list. What is the approach?"
-BAD:  "What does the text say about runtime?"
-GOOD: "What is the time complexity of searching an unsorted linked list?"
-Never write "the function", "the exercise", "the text", "as mentioned", "בתרגיל", "לפי הטקסט", "הפונקציה שתוכתב".
-Always name the actual data structure, algorithm or concept inside the question itself.
-
-NEVER ask about the parameters of one specific exercise. These are worthless:
-BAD: "What data type are the elements?"  "Is it allowed to modify the original list?"  "How many points is this question worth?"
-Those describe one exam paper, not knowledge. Ask about concepts, methods and complexity instead.
-
-Create questions that test whether the student can REPRODUCE the material from memory, not recognise it. Never write multiple-choice options.
-
-Choose a mode per question:
-- "recall": a definition, concept, term or fact stated in the text.
-- Do NOT use "practice" mode. Never turn a problem or exercise into a question - there is no solution available for it, so it cannot be reviewed.
-- "explain": an open question asking the student to explain something in their own words.
-
-Rules:
-- Base every question ONLY on what is written in the text below. Do not add outside knowledge.
-- NEVER write multiple-choice questions. Do not write "choose one", "בחר אחת", or lettered options (א, ב, ג / a, b, c). The student must produce the answer from memory.
-- "sourceQuote" is REQUIRED for every question: copy the exact sentence from the text that the question is based on, character for character. A question without a real quote will be discarded.
-- Do NOT write answers. Your job is to LOCATE the passage that answers the question and copy it into "sourceQuote". The quote itself becomes the answer shown to the student, so it must be complete enough to actually answer the question on its own - include the full sentence or definition, not a fragment.
-- Copy the passage in full. NEVER shorten it with "..." or "…" - write out every word between the start and end of the passage.
-- Never quote a slide that only LISTS topics (an agenda, contents page, or a run of bullet headings). Those contain the words but not the meaning. Quote the slide that explains the concept.
-- The passage must CONTAIN the answer, not merely be near it. If the question names a symbol (∨, ∧, ¬), the passage must show that symbol. If the question quotes an example, the passage must explain it, not just list it again. If no passage in this text actually answers the question, do not ask that question.
-
-Because the answer shown to the student IS that passage, only ask questions a passage can actually answer.
-GOOD: "What is the definition of logical equivalence?"  (a definition exists in the text)
-GOOD: "Which two-place connectives are defined in propositional calculus?"  (a list exists)
-BAD:  "Can we conclusively infer X? Explain your reasoning."  (needs an argument, not a passage)
-BAD:  "Why is this approach better?"  (the text states facts, not justifications)
-Do not ask the student to "explain", "justify" or "prove" in a recall question - if the material only states something, ask what it states.
-- Write questions and answers in the SAME language as the text.
-- Produce at most 8 questions from this part. Fewer good ones is better than padding.
-- If this part is boilerplate (title page, instructions, table of contents), return {"items": []}.
-
-Return ONLY a JSON object: {"items": [{"question": "...", "mode": "recall|practice|explain", "skillTag": "...", "sourceQuote": "..."}]}
-
-Text:
-${chunks[i]}`;
-
-            let parsed;
-            try {
-                const responseText = await callAIWithFallback(prompt, null, 1200, true);
-                parsed = JSON.parse(extractJsonFromText(responseText));
-            } catch (chunkErr) {
-                console.error(`⚠️ Chunk ${i + 1} failed, skipping:`, chunkErr.message);
-                continue;
-            }
-
-            let list = [];
-            if (parsed && Array.isArray(parsed.items)) list = parsed.items;
-            else if (Array.isArray(parsed)) list = parsed;
-            else if (parsed && parsed.question) list = [parsed];
-
-            for (const raw of list) {
-                if (!raw || !raw.question || String(raw.question).trim().length < 8) continue;
-
-                // Grounding guard tuned for questions, not task titles.
-                if (!isQuestionGrounded(raw, chunks[i])) {
-                    console.warn(`   ⛔ Rejected (not grounded): "${String(raw.question).slice(0, 60)}"`);
-                    noteReject('ungrounded');
-                    rejected++;
-                    continue;
-                }
-
-                const question = stripMultipleChoice(raw.question);
-                if (!question || question.length < 8) continue;
-
-                // Reject anything that leans on the document for meaning.
-                if (!isSelfContained(question)) {
-                    console.warn(`   ⛔ Rejected (needs the document to make sense): "${question.slice(0, 60)}"`);
-                    noteReject('context-dependent');
-                    rejected++;
-                    continue;
-                }
-
-                let mode = ['recall', 'practice', 'explain'].includes(raw.mode) ? raw.mode : 'recall';
-
-                // Hard rule, not just prompt guidance: a practice item with no
-                // known solution is a chore, not a study aid. The student has
-                // to solve an invented exercise, verify it somewhere else, and
-                // then type back an answer they already know - all effort, no
-                // learning. Only genuine exercise sheets produce practice
-                // items, because there the work has to be done anyway and the
-                // item is tracking real coursework.
-                // No generated practice items, from any source.
-                //
-                // The previous rule allowed them from exercise sheets, but the
-                // distinction doesn't survive contact with real files: lecture
-                // decks contain worked examples, so "מצא את צורת ה-DNF של..."
-                // still got through. And the underlying objection holds
-                // regardless of source - the app cannot supply a solution, so
-                // the student must solve it, verify it in a chat model, then
-                // come back and type in an answer they already know. That is
-                // work with no learning in it.
-                //
-                // The mode still exists in the schema for items created by
-                // hand, where the student is choosing to track a problem they
-                // already have a solution for.
-                if (mode === 'practice') {
-                    console.warn(`   ⛔ Rejected (practice item with no available solution): "${question.slice(0, 55)}"`);
-                    noteReject('unanswerable problems');
-                    rejected++;
-                    continue;
-                }
-
-                if (isHistoricalTrivia(question)) {
-                    console.warn(`   ⛔ Rejected (asks about the anecdote, not the concept): "${question.slice(0, 55)}"`);
-                    noteReject('trivia');
-                    rejected++;
-                    continue;
-                }
-
-                if (needsReasoningNotQuote(question, mode)) {
-                    console.warn(`   ⛔ Rejected (asks for reasoning, but the answer is a quote): "${question.slice(0, 60)}"`);
-                    noteReject('reasoning questions');
-                    rejected++;
-                    continue;
-                }
-
-                if (isExerciseTrivia(question, raw.sourceQuote)) {
-                    console.warn(`   ⛔ Rejected (exercise trivia, not knowledge): "${question.slice(0, 60)}"`);
-                    noteReject('exercise trivia');
-                    rejected++;
-                    continue;
-                }
-                const key = question.toLowerCase();
-                if (seen.has(key)) continue;
-                seen.add(key);
-
-                // The ANSWER IS THE SOURCE QUOTE, never model-authored text.
-                //
-                // Letting the model write answers produced confident nonsense:
-                // "two-pointer technique" for finding a maximum, "גרעין לוגי"
-                // instead of "גרירה לוגית", and a definition of contradiction
-                // that said nothing. An 8B model cannot reliably write precise
-                // technical Hebrew, and a wrong answer in a study app doesn't
-                // just fail to help - it teaches the wrong thing.
-                //
-                // The correct answer is already sitting in the student's own
-                // course material. So the model's job shrinks from "know the
-                // subject" to "find the relevant passage", which it is good
-                // at, and the answer is correct by construction because the
-                // lecturer wrote it.
-                let answer = '';
-                if (mode !== 'practice') {
-                    const quote = String(raw.sourceQuote || '').trim();
-                    // Only useful if it's substantial enough to actually answer.
-                    if (quote.length >= 15) {
-                        // A quote whose word order was scrambled by PDF
-                        // extraction is unrecoverable. Showing it as an answer
-                        // would teach gibberish, so the item is dropped
-                        // entirely rather than kept with a broken answer.
-                        // Try to restore anything the model abbreviated before
-                        // judging whether the text is damaged.
-                        const expanded = expandTruncatedQuote(quote, chunks[i]);
-
-                        if (looksMangled(expanded)) {
-                            console.warn(`   ⛔ Rejected (source text garbled by PDF extraction): "${expanded.slice(0, 50)}"`);
-                            noteReject('garbled text');
-                            rejected++;
-                            continue;
-                        }
-                        // Complete a lead-in before judging it incomplete.
-                        const completed = completeAfterColon(expanded, chunks[i]);
-
-                        if (looksLikeHeading(completed)) {
-                            console.warn(`   ⛔ Rejected (quote is a slide title, not an explanation): "${completed.slice(0, 50)}"`);
-                            noteReject('slide titles');
-                            rejected++;
-                            continue;
-                        }
-
-                        if (looksLikeOutline(completed)) {
-                            console.warn(`   ⛔ Rejected (quote is an agenda/contents slide, not an explanation): "${question.slice(0, 55)}"`);
-                            noteReject('contents slides');
-                            rejected++;
-                            continue;
-                        }
-
-                        const quality = analyseAnswerText(completed);
-                        if (quality.reject) {
-                            console.warn(`   ⛔ Rejected (${quality.why}): "${question.slice(0, 50)}"`);
-                            noteReject(quality.why);
-                            rejected++;
-                            continue;
-                        }
-
-                        const relevance = quoteAnswersQuestion(question, completed);
-                        if (!relevance.ok) {
-                            console.warn(`   ⛔ Rejected (${relevance.why}): "${question.slice(0, 55)}"`);
-                            noteReject(relevance.why);
-                            rejected++;
-                            continue;
-                        }
-
-                        answer = completed;
-                    }
-                }
-
-                allItems.push({
-                    question,
-                    answer,
-                    mode,
-                    // skillTag only matters for practice items; for others it
-                    // would just create meaningless grouping.
-                    skillTag: mode === 'practice' ? String(raw.skillTag || '').trim() : '',
-                    category,
-                    sourceFile
-                });
-            }
-        }
-
-        const final = allItems.slice(0, 60);
-        const attempted = final.length + rejected;
-        console.log(`🧠 generate-study-items: ${final.length} item(s)` + (rejected ? ` (${rejected} rejected as ungrounded)` : ''));
-
-        // A high rejection rate usually means the grounding check is too
-        // strict rather than the model being wildly creative - worth seeing
-        // rather than silently discarding half the output.
-        if (rejected > 0) {
-            console.log('🧠 Rejection breakdown:', JSON.stringify(rejectReasons));
-        }
-        if (attempted > 0 && rejected / attempted > 0.35) {
-            console.warn(`⚠️ ${Math.round((rejected / attempted) * 100)}% of generated questions were rejected. If they looked valid, the grounding threshold may be too strict.`);
-        }
-
-        if (final.length === 0) {
-            // Explain the failure instead of a blank "couldn't do it". A maths
-            // or exercise PDF genuinely may not contain anything worth
-            // studying, and the user needs to know that's the reason - not
-            // wonder whether the app is broken.
-            const top = Object.entries(rejectReasons).sort((a, b) => b[1] - a[1]).slice(0, 2);
-            let detail = '';
-            if (top.length > 0) {
-                detail = ' Most were discarded because of: ' + top.map(([r, n]) => `${r} (${n})`).join(', ') + '.';
-            }
-
-            let advice = '';
-            const reasonText = Object.keys(rejectReasons).join(' ');
-            if (/garbled|font encoding|formula|prose/.test(reasonText)) {
-                advice = ' This file is heavy on formulas and symbols, which PDF text extraction mangles. Lecture notes or summaries written mostly in words work far better than slides full of equations.';
-            } else if (/exercise|problems|question/.test(reasonText)) {
-                advice = ' This looks like a problem sheet rather than teaching material. There are no definitions to quote, so try a lecture summary instead.';
-            }
-
-            return JSON.stringify({
-                error: `No usable questions came out of this document.${detail}${advice}`
-            });
-        }
-        return JSON.stringify(final);
+        const responseText = await aiProvider.generateText(prompt, {
+            forceJson: true,
+            maxTokens: 16384,
+            thinkingLevel: 'medium',
+            timeoutMs: 180000,
+            // No quiet switch to the small local model when Gemini is out of
+            // quota or busy: its questions were the reason for all those
+            // filters. Say what happened instead. (A user who ONLY has the
+            // local model still gets it - noFallback only stops the switch.)
+            noFallback: true,
+            localModel: LOCAL_MODEL
+        });
+        return JSON.stringify(finaliseStudyItems(responseText, category, sourceFile));
     } catch (error) {
         console.error('❌ generate-study-items failed:', error.message);
         return JSON.stringify({ error: error.message });
+    }
+});
+
+// =====================================
+// "When is the X exam?" (Study screen)
+// =====================================
+// The Study screen asks this about a course that has questions but no exam in
+// the Planner. The student answers in their own words: "12.2", "מועד א 12.2
+// מועד ב 5.3", "ביום חמישי ב-9", "בעוד שבועיים". Read without AI where
+// possible (instant, costs no quota); the AI only for what the rules miss.
+// Returns { exams: [{ label, date: 'YYYY-MM-DD', time: 'HH:MM' | null }] } or { error }.
+const EXAM_LABEL_RE = /(מועד\s*[אבגabc]['׳]?|בוחן(?:\s+אמצע)?|מבחן(?:\s+(?:אמצע|סופי|גמר))?|בחינה(?:\s+(?:סופית|אמצע))?|midterm|final|quiz|moed\s*[abc])/i;
+
+function nextOccurrenceIso(day, month, year, today) {
+    let y = year || today.getFullYear();
+    if (y < 100) y += 2000;
+    let d = new Date(y, month - 1, day);
+    if (d.getDate() !== day || d.getMonth() !== month - 1) return null;
+    // No year written and the date already passed -> they mean next year.
+    if (!year && d < today) d = new Date(y + 1, month - 1, day);
+    return toLocalIsoDate(d);
+}
+
+ipcMain.handle('parse-exam-dates', async (event, text) => {
+    try {
+        const input = String(text || '').trim();
+        if (!input) return { error: 'Write when the exam is.' };
+        if (input.length > 300) return { error: 'That\'s too long - just the date is enough, e.g. "12.2".' };
+
+        const now = new Date();
+        const today = new Date(now); today.setHours(0, 0, 0, 0);
+        const todayIso = toLocalIsoDate(today);
+        const exams = [];
+
+        // 1. Written dates: 12.2 / 12/2/27 / 12.02.2027, each with the label
+        //    and time written next to it ("מועד א 12.2 ב-9").
+        const DATE = /(?<![\d:.\/])(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?(?![\d:])/g;
+        const matches = [...input.matchAll(DATE)];
+        matches.forEach((m, i) => {
+            const date = nextOccurrenceIso(+m[1], +m[2], m[3] ? +m[3] : null, today);
+            if (!date) return;
+            const segStart = i === 0 ? 0 : matches[i - 1].index + matches[i - 1][0].length;
+            const segEnd = i + 1 < matches.length ? matches[i + 1].index : input.length;
+            const before = input.slice(segStart, m.index);
+            const after = input.slice(m.index + m[0].length, segEnd);
+            const labelHit = before.match(new RegExp(EXAM_LABEL_RE.source, 'gi'));
+            const t = after.match(/(?:ב-?|בשעה\s*|at\s*)?\b([01]?\d|2[0-3]):([0-5]\d)\b/) || after.match(/(?:(?<![א-ת])ב-?|בשעה\s*)([01]?\d|2[0-3])(?![\d:./])/);
+            const time = t ? `${String(+t[1]).padStart(2, '0')}:${t[2] || '00'}` : null;
+            exams.push({ label: labelHit ? labelHit[labelHit.length - 1].trim() : '', date, time });
+        });
+
+        // 2. No written date: "מחר", "בעוד שבוע", "ביום חמישי".
+        if (!exams.length) {
+            const rel = resolveRelativeDate(input, now);
+            let date = rel ? toLocalIsoDate(rel.date) : null;
+            if (!date) {
+                const dayWord = detectHebrewDay(input);
+                if (dayWord) {
+                    const dow = { 'ראשון': 0, 'שני': 1, 'שלישי': 2, 'רביעי': 3, 'חמישי': 4, 'שישי': 5, 'שבת': 6 }[dayWord];
+                    const d = new Date(today); d.setDate(d.getDate() + (((dow - d.getDay()) + 7) % 7 || 7));
+                    date = toLocalIsoDate(d);
+                }
+            }
+            if (date) {
+                const l = input.match(EXAM_LABEL_RE);
+                const t = input.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+                exams.push({ label: l ? l[0].trim() : '', date, time: t ? `${String(+t[1]).padStart(2, '0')}:${t[2]}` : null });
+            }
+        }
+
+        // 3. Still nothing ("באמצע פברואר", "end of January"): ask the AI.
+        if (!exams.length) {
+            const prompt = `Today is ${todayIso}. A student wrote when their exam(s) are: "${input.replace(/"/g, "'")}".
+Return ONLY JSON: {"exams": [{"label": "the sitting's name as written (e.g. מועד א) or empty", "date": {"day": number, "month": number, "year": number or null}, "time": "HH:MM" or null}]}.
+Only dates the student actually gave; if the text gives no usable date, return {"exams": []}.`;
+            try {
+                const out = JSON.parse(extractJsonFromText(await aiProvider.generateText(prompt, { forceJson: true, maxTokens: 400, noFallback: true })));
+                (out.exams || []).forEach(e => {
+                    const d = e && e.date && typeof e.date === 'object'
+                        ? nextOccurrenceIso(Number(e.date.day), Number(e.date.month), e.date.year ? Number(e.date.year) : null, today) : null;
+                    const t = /^([01]\d|2[0-3]):[0-5]\d$/.test(e.time || '') ? e.time : null;
+                    if (d) exams.push({ label: String(e.label || '').trim().slice(0, 40), date: d, time: t });
+                });
+            } catch (err) {
+                return { error: /quota|overloaded|busy/i.test(err.message) ? err.message : 'Couldn\'t tell the date. Try writing it like "12.2".' };
+            }
+        }
+
+        const valid = exams.filter(e => e.date >= todayIso && e.date <= toLocalIsoDate(new Date(today.getFullYear() + 1, today.getMonth() + 3, today.getDate())));
+        if (!valid.length) return { error: exams.length ? 'That date has already passed.' : 'Couldn\'t tell the date. Try writing it like "12.2".' };
+        valid.sort((a, b) => a.date.localeCompare(b.date));
+        return { exams: valid.slice(0, 4) };
+    } catch (err) {
+        console.error('❌ parse-exam-dates failed:', err.message);
+        return { error: err.message };
+    }
+});
+
+// Moves every question from one course name to another. Used once, quietly,
+// to fix questions made before the course defaulted to the file's folder:
+// their "course" is a file name ("הרצאה 3 - ..."), which never matches an exam.
+ipcMain.handle('recategorize-study-items', async (event, from, to) => {
+    try {
+        const source = String(from || '').trim();
+        const target = String(to || '').trim().slice(0, 100);
+        if (!source || !target || source === target) return { updated: 0 };
+        const items = await api.getStudyItems({ light: 1 });
+        const matching = (items || []).filter(i => (i.category || '').trim() === source);
+        for (const i of matching) await api.updateStudyItem(i.id || i._id, { category: target });
+        return { updated: matching.length };
+    } catch (err) {
+        console.error('❌ recategorize-study-items failed:', err.message);
+        return { error: err.message };
     }
 });
 
@@ -2707,8 +2222,10 @@ RULES FOR EVERYTHING:
   and never stop early because the first page was enough.
 - If there is no examinable content (title page, agenda, photo), return {"items": []}.
 
+Also return "course": the name of the course this material belongs to, as the material itself shows it (title slide, header, footer) - without a course number. null if the material doesn't say.
+
 Return ONLY JSON:
-{"items": [{"question": "...", "answer": "...", "mode": "recall|practice", "solutionSource": "document|ai", "topic": "short skill or topic name"}]}`;
+{"course": "...", "items": [{"question": "...", "answer": "...", "mode": "recall|practice", "solutionSource": "document|ai", "topic": "short skill or topic name"}]}`;
 }
 
 // Shared validation for whatever the model returns.
@@ -2723,6 +2240,13 @@ function finaliseStudyItems(responseText, category, sourceFile) {
 
     let list = Array.isArray(parsed) ? parsed : (parsed.items || []);
     if (!Array.isArray(list)) list = [];
+
+    // No course given (a file outside any folder): use the course the AI saw
+    // in the material itself - it came in the same answer, no extra request.
+    // The renderer then matches it against courses the user already has.
+    if (!String(category || '').trim() && parsed && !Array.isArray(parsed) && parsed.course) {
+        category = String(parsed.course).trim().slice(0, 100);
+    }
 
     const seen = new Set();
     const cleaned = [];
@@ -2831,137 +2355,6 @@ ipcMain.handle('generate-study-items-pdf', async (event, sourcePath, options = {
         return JSON.stringify(finaliseStudyItems(responseText, category, sourceFile));
     } catch (error) {
         console.error('❌ PDF generation failed:', error.message);
-        return JSON.stringify({ error: error.message });
-    }
-});
-
-// =====================================
-// Vision-based study item generation
-// =====================================
-// Reads rendered page images instead of extracted text.
-//
-// Every quality problem we hit on maths, logic and Hebrew traced back to the
-// same place: text extraction had already destroyed the content before any
-// model saw it. Formulas lost their structure, subscripts vanished, Hebrew
-// came out reordered, and some PDFs emitted plainly wrong characters because
-// their embedded font tables were broken. None of that is recoverable by a
-// better model or a smarter heuristic - the information is gone.
-//
-// Reading the page as an image sidesteps all of it. The model sees the slide
-// as rendered, so a fraction is a fraction, an index is an index, code keeps
-// its indentation, and Hebrew reads right to left.
-ipcMain.handle('generate-study-items-vision', async (event, images, options = {}) => {
-    try {
-        const category = options.category || '';
-        const sourceFile = options.sourceFile || '';
-        console.log(`👁️ generate-study-items-vision: ${images.length} page image(s), category "${category}"`);
-
-        if (!aiProvider.supportsVision()) {
-            return JSON.stringify({ error: 'Reading pages visually needs a Gemini API key. Add one under Settings → AI, or this file will be read as plain text instead.' });
-        }
-
-        const prompt = `You are looking at pages from a student's course material. Create study questions from what you can SEE on these pages.
-
-THE EXAM TEST - apply to every question before writing it:
-"Would a lecturer put this on an exam?"
-If not, don't ask it. Never ask about people, places, dates, who discovered what, or course admin (deadlines, grading). Those belong to the story around the material, not the material.
-
-WHAT TO ASK ABOUT, by content type:
-
-Definitions and concepts -> "recall".
-  Ask what something is, what conditions it must satisfy, how it's denoted.
-
-Mathematical content (formulas, matrices, proofs) -> "recall".
-  You can SEE the formula, so transcribe it accurately into the answer, keeping
-  subscripts, superscripts, matrix shape and set notation. Ask what a formula
-  states, when it applies, what each part means. Do NOT ask the student to
-  compute a specific numeric result.
-
-Code -> "recall".
-  Ask what a function returns, what its time complexity is, what a language
-  construct does, or what a given snippet outputs and why. Include the relevant
-  code in the question itself, formatted, so the question stands alone. Do NOT
-  ask the student to write a program - there'd be no way to check it.
-
-Worked examples and exercises -> skip them. There is no solution to review against.
-
-RULES:
-- Answers must come from what is written on the page. Do not add outside knowledge.
-- Every question must stand alone. The student sees it weeks later without these pages, so never write "the function", "this formula", "as shown", "לפי הטקסט". Name the actual thing, and include any code or formula the question depends on.
-- Write in the SAME language as the material.
-- Transcribe formulas and code faithfully. Use plain text notation (x_1, x^2, <=, and, or) where a symbol would be ambiguous.
-- Produce at most 12 questions across all these pages. Fewer good ones beats more padded ones.
-- If the pages contain no examinable content (a title page, an agenda, a photo), return {"items": []}.
-
-Return ONLY JSON:
-{"items": [{"question": "...", "answer": "...", "mode": "recall", "topic": "short topic name"}]}`;
-
-        const responseText = await aiProvider.generateFromImages(images, prompt, {
-            maxTokens: 4096,
-            forceJson: true
-        });
-
-        let parsed;
-        try {
-            parsed = JSON.parse(extractJsonFromText(responseText));
-        } catch (e) {
-            console.error('❌ Vision response was not valid JSON:', responseText.slice(0, 300));
-            return JSON.stringify({ error: 'The AI response could not be read. Try again.' });
-        }
-
-        let list = Array.isArray(parsed) ? parsed : (parsed.items || []);
-        if (!Array.isArray(list)) list = [];
-
-        const seen = new Set();
-        const cleaned = [];
-
-        for (const raw of list) {
-            if (!raw || !raw.question) continue;
-
-            const question = stripMultipleChoice(String(raw.question).trim());
-            if (question.length < 10) continue;
-
-            const key = question.toLowerCase();
-            if (seen.has(key)) continue;
-            seen.add(key);
-
-            // The self-containment and trivia filters still apply - a stronger
-            // model asks better questions but is not immune to asking about
-            // the anecdote or leaning on the page it just read.
-            if (!isSelfContained(question)) {
-                console.warn(`   ⛔ Rejected (needs the document): "${question.slice(0, 55)}"`);
-                continue;
-            }
-            if (isHistoricalTrivia(question)) {
-                console.warn(`   ⛔ Rejected (trivia): "${question.slice(0, 55)}"`);
-                continue;
-            }
-            if (needsReasoningNotQuote(question, 'recall')) {
-                console.warn(`   ⛔ Rejected (needs reasoning): "${question.slice(0, 55)}"`);
-                continue;
-            }
-
-            const answer = String(raw.answer || '').trim();
-            if (!answer || answer.length < 5) continue;
-
-            cleaned.push({
-                question,
-                answer,
-                mode: 'recall',
-                skillTag: String(raw.topic || '').trim().slice(0, 120),
-                category,
-                sourceFile
-            });
-        }
-
-        console.log(`👁️ generate-study-items-vision: ${cleaned.length} question(s) from ${images.length} page(s)`);
-
-        if (cleaned.length === 0) {
-            return JSON.stringify({ error: 'No examinable content was found on these pages.' });
-        }
-        return JSON.stringify(cleaned.slice(0, 40));
-    } catch (error) {
-        console.error('❌ Vision generation failed:', error.message);
         return JSON.stringify({ error: error.message });
     }
 });
