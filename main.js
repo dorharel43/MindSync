@@ -2137,6 +2137,60 @@ ipcMain.handle('submit-study-review', async (event, id, payload) => {
     try { return await api.submitStudyReview(id, payload); } catch (err) { return { error: err.message }; }
 });
 
+// Checks what the student TYPED against the question (and the stored answer,
+// when there is one). Replaces "grade yourself", which students do kindly -
+// and the "sure but wrong" list is only worth something if the grading is
+// honest. One short request (a "light" job on the web's daily allowance).
+// Returns { verdict: 'correct' | 'partial' | 'wrong', feedback } or { error }.
+ipcMain.handle('grade-study-answer', async (event, payload = {}) => {
+    try {
+        const question = String(payload.question || '').slice(0, 2000);
+        const expected = String(payload.expected || '').slice(0, 4000);
+        const userAnswer = String(payload.userAnswer || '').trim().slice(0, 3000);
+        const solve = payload.mode === 'practice';
+        const clean = (v, n) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
+
+        // "I don't know": nothing to judge - just the short, direct answer,
+        // since the stored one is a quote that often opens with an intro.
+        if (payload.explainOnly) {
+            if (!question) return { error: 'No question.' };
+            const explainPrompt = `A university student did not know the answer to this practice question. Give the correct answer, short and direct: 1-2 sentences${solve ? ' (the final result and the key step)' : ''}, in the SAME LANGUAGE as the question, no introduction ("There is another type of..."), just what answers it.
+${expected ? 'Base it on the reference answer from the course material.' : 'There is no reference answer: work it out yourself.'}
+
+Question: ${question}
+${expected ? `Reference answer (from the course material): ${expected}\n` : ''}
+Return ONLY JSON: {"answer": "the short direct answer"}`;
+            const out = await aiProvider.generateText(explainPrompt, { forceJson: true, maxTokens: 700, thinkingLevel: 'low', noFallback: true, timeoutMs: 30000 });
+            const answer = clean(JSON.parse(extractJsonFromText(String(out))).answer, 500);
+            return answer ? { answer } : { error: 'No answer came back.' };
+        }
+
+        if (!question || !userAnswer) return { error: 'Nothing to check.' };
+        const prompt = `You check a university student's answer to a practice question. Judge the MEANING, not the wording: a short answer that has the key idea is correct; a different but valid method is correct.
+${solve ? 'This is a problem to solve. The student may give only the final result - judge that result.' : ''}
+Verdicts:
+- "correct": the key idea (or the right result) is there.
+- "partial": on the right track, but something important is missing or slightly wrong.
+- "wrong": wrong, or does not answer the question.
+${expected ? 'Use the reference answer as the standard, but accept anything equivalent.' : 'There is no reference answer: work out the correct answer yourself first, then judge.'}
+
+Question: ${question}
+${expected ? `Reference answer (from the course material): ${expected}\n` : ''}Student's answer: ${userAnswer}
+
+Also write "answer": the correct answer to the question itself, short and direct - 1-2 sentences, in the SAME LANGUAGE as the question, no introduction ("There is another type of..."), just what answers it.${expected ? ' Base it on the reference answer.' : ''}
+
+Return ONLY JSON: {"verdict": "correct|partial|wrong", "feedback": "ONE short sentence in the SAME LANGUAGE as the question - what is missing or wrong; if correct, a small useful addition or 'exactly right'", "answer": "the short direct answer"}`;
+        const text = await aiProvider.generateText(prompt, { forceJson: true, maxTokens: 900, thinkingLevel: 'low', noFallback: true, timeoutMs: 30000 });
+        const data = JSON.parse(extractJsonFromText(String(text)));
+        const verdict = ['correct', 'partial', 'wrong'].includes(data.verdict) ? data.verdict : null;
+        if (!verdict) return { error: 'The check did not come back clearly.' };
+        return { verdict, feedback: clean(data.feedback, 300), answer: clean(data.answer, 500) };
+    } catch (err) {
+        console.error('❌ grade-study-answer:', err.message);
+        return { error: err.message };
+    }
+});
+
 ipcMain.handle('delete-study-item', async (event, id) => {
     try { return await api.deleteStudyItem(id); } catch (err) { return { error: err.message }; }
 });
@@ -2838,20 +2892,30 @@ ipcMain.handle('get-onboarding-status', async () => {
   // getting-started guide. Any failure -> report it, and the guide stays hidden.
   let failed = false;
   const safe = (p, fallback) => p.catch(() => { failed = true; return fallback; });
-  const [files, stats, events, tasks] = await Promise.all([
+  const [files, stats, events, tasks, me] = await Promise.all([
     safe(api.getFilesLight(), []),
     safe(api.getStudyStats(), null),
     safe(api.getEvents(), []),
-    safe(api.getTasks(), [])
+    safe(api.getTasks(), []),
+    safe(api.getMe(), null)
   ]);
   if (failed) return { error: 'unavailable' };
   return {
+    // Finished (or hidden) once = never again, even after deleting every
+    // question or on a new computer. Stored on the account.
+    guideDone: Boolean(me && me.guideDone),
+    dueCount: stats ? stats.dueCount || 0 : 0,
     hasKey: Boolean(aiProvider.readConfig().geminiKey),
     files: (files || []).length,
     questions: stats ? stats.totalItems || 0 : 0,
     reviews: stats ? stats.reviewsAllTime || 0 : 0,
     calendarItems: (events || []).length + (tasks || []).length
   };
+});
+
+ipcMain.handle('mark-guide-done', async (event, done = true) => {
+  try { await api.updateMe({ guideDone: done !== false }); return true; }
+  catch (err) { return { error: err.message }; }
 });
 
 ipcMain.handle('get-files-light', async () => {

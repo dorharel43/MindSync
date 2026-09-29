@@ -2872,44 +2872,56 @@ async function renderProgressInsights() {
     const openEl = document.getElementById('metric-open-tasks');
     if (openEl) openEl.textContent = openTasks.length;
 
-    // "Done this week" counts tasks updated in the last 7 days that are done.
+    // "Done this week" = completed in the last 7 days. completedAt is stamped
+    // by the server (30/9); updatedAt was used before, so renaming an old
+    // finished task counted it again. Older tasks have no completedAt yet.
     const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const weekDone = tasks.filter(t =>
-        t.status === 'completed' && t.updatedAt && new Date(t.updatedAt).getTime() >= weekAgo
-    ).length;
+    const weekDone = tasks.filter(t => {
+        if (t.status !== 'completed') return false;
+        const when = t.completedAt || t.updatedAt;
+        return when && new Date(when).getTime() >= weekAgo;
+    }).length;
     const weekEl = document.getElementById('metric-week-done');
     if (weekEl) weekEl.textContent = weekDone;
 
     // ---- Workload by category ----
+    // Courses that still have open tasks. "Done" counts the course's finished
+    // tasks too (it used to look at open tasks only, so it said "0% done" for
+    // a course with 9 of 10 finished), plus ticked steps of open ones. The bar
+    // is how much is done, matching the words next to it.
     const catEl = document.getElementById('category-breakdown');
     if (catEl) {
+        const keyOf = t => (t.category || '').trim() || 'Uncategorized';
         const groups = {};
-        openTasks.forEach(t => {
-            const key = (t.category || '').trim() || 'Uncategorized';
-            if (!groups[key]) groups[key] = { total: 0, done: 0 };
-            groups[key].total++;
-            // Count checklist progress so a half-finished task shows as such.
-            if (t.subtasks && t.subtasks.length) {
-                const d = t.subtasks.filter(st => st.completed).length;
-                groups[key].done += d / t.subtasks.length;
+        tasks.forEach(t => {
+            const key = keyOf(t);
+            if (!groups[key]) groups[key] = { total: 0, open: 0, done: 0 };
+            const g = groups[key];
+            g.total++;
+            if (t.status === 'completed') g.done += 1;
+            else {
+                g.open++;
+                if (t.subtasks && t.subtasks.length) {
+                    g.done += t.subtasks.filter(st => st.completed).length / t.subtasks.length;
+                }
             }
         });
 
-        const entries = Object.entries(groups).sort((a, b) => b[1].total - a[1].total);
+        const entries = Object.entries(groups).filter(([, v]) => v.open > 0)
+            .sort((a, b) => b[1].open - a[1].open || a[0].localeCompare(b[0]));
         if (entries.length === 0) {
             catEl.innerHTML = '<div class="ms-muted ms-text-sm">No open tasks to break down yet.</div>';
         } else {
-            const max = Math.max(...entries.map(([, v]) => v.total));
             catEl.innerHTML = entries.map(([name, v]) => {
                 const pct = Math.round((v.done / v.total) * 100);
                 return `
                     <div class="cat-row">
                         <div class="cat-row__head">
                             <span class="cat-row__name" dir="auto">${escapeHtml(name)}</span>
-                            <span class="cat-row__count">${v.total} task${v.total === 1 ? '' : 's'} · ${pct}% done</span>
+                            <span class="cat-row__count">${v.open} open of ${v.total} · ${pct}% done</span>
                         </div>
                         <div class="cat-row__track">
-                            <div class="cat-row__fill" style="width: ${Math.round((v.total / max) * 100)}%"></div>
+                            <div class="cat-row__fill" style="width: ${pct}%"></div>
                         </div>
                     </div>`;
             }).join('');
@@ -2917,6 +2929,8 @@ async function renderProgressInsights() {
     }
 
     // ---- Needs attention ----
+    // Most urgent first, then the nearest deadline (the help text always
+    // promised this; it used to sort by urgency only). Past deadlines say so.
     const attEl = document.getElementById('attention-list');
     if (attEl) {
         const rank = { Urgent: 0, High: 1, Medium: 2, Normal: 3 };
@@ -2926,22 +2940,26 @@ async function renderProgressInsights() {
             Medium: 'var(--status-info)',
             Normal: 'var(--text-tertiary)'
         };
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const dueOf = t => { const d = parseTaskDueDate(t); return d ? d.getTime() : Infinity; };
         const top = [...openTasks]
-            .sort((a, b) => (rank[a.urgency] ?? 3) - (rank[b.urgency] ?? 3))
+            .sort((a, b) => (rank[a.urgency] ?? 3) - (rank[b.urgency] ?? 3) || dueOf(a) - dueOf(b))
             .slice(0, 6);
 
         if (top.length === 0) {
             attEl.innerHTML = '<div class="ms-muted ms-text-sm">Nothing pending. Nice work.</div>';
         } else {
             attEl.innerHTML = top.map(t => {
-                const meta = [t.urgency, t.date && t.date !== 'Not set' ? t.date : null]
+                const due = parseTaskDueDate(t);
+                const overdue = due && due < today;
+                const meta = [t.urgency, t.date && t.date !== 'Not set' ? t.date : 'No deadline']
                     .filter(Boolean).join(' · ');
                 return `
                     <div class="attention-item">
                         <span class="attention-item__dot" style="background: ${colors[t.urgency] || colors.Normal}"></span>
                         <div class="attention-item__body">
                             <div class="attention-item__title" dir="auto">${escapeHtml(t.title)}</div>
-                            <div class="attention-item__meta">${escapeHtml(meta)}</div>
+                            <div class="attention-item__meta">${escapeHtml(meta)}${overdue ? ' · <span class="attention-item__late">past the deadline</span>' : ''}</div>
                         </div>
                     </div>`;
             }).join('');
@@ -3257,12 +3275,18 @@ const ONBOARDING_STEPS = [
 if (IS_WEB) ONBOARDING_STEPS.splice(ONBOARDING_STEPS.findIndex(st => st.id === 'ai'), 1);
 
 function renderOnboarding(status) {
-    const hidden = localStorage.getItem(onboardingKey('hidden')) === '1';
+    const hiddenHere = localStorage.getItem(onboardingKey('hidden')) === '1';
     const doneFlags = ONBOARDING_STEPS.map(step => step.isDone(status));
     const doneCount = doneFlags.filter(Boolean).length;
 
-    // Nothing left to do, or the user hid it: stay out of the way.
-    if (hidden || doneCount === ONBOARDING_STEPS.length) { onboardingEl.hidden = true; return; }
+    // Finished once (or hidden) = gone for good, saved on the account. The
+    // steps are worked out from what exists NOW, so without this deleting
+    // every question brought the whole guide back (30/9).
+    if (!status.guideDone && (hiddenHere || doneCount === ONBOARDING_STEPS.length)) {
+        status.guideDone = true;
+        ipcRenderer.invoke('mark-guide-done', true).catch(() => {});
+    }
+    if (status.guideDone) { onboardingEl.hidden = true; return; }
     onboardingEl.hidden = false;
     onboardingBarEl.style.width = `${Math.round((doneCount / ONBOARDING_STEPS.length) * 100)}%`;
 
@@ -3314,13 +3338,52 @@ async function refreshOnboarding() {
     const status = await ipcRenderer.invoke('get-onboarding-status').catch(() => null);
     if (!status || status.error) return; // couldn't check - leave it as it was
     renderOnboarding(status);
+    renderHomeStudy(status);
+}
+
+// The Study line on Home - only when the guide is gone (while it's there,
+// its own steps already say "make questions" / "start practicing").
+function renderHomeStudy(status) {
+    const box = document.getElementById('home-study');
+    if (!box) return;
+    box.hidden = !onboardingEl.hidden;
+    if (box.hidden) return;
+    const title = document.getElementById('home-study-title');
+    const sub = document.getElementById('home-study-sub');
+    const btn = document.getElementById('home-study-btn');
+    btn.className = 'btn-primary';
+    if (!status.questions) {
+        title.textContent = 'No practice questions yet';
+        if (!status.files) {
+            sub.textContent = 'Upload a course file first - the AI writes practice questions from it.';
+            btn.textContent = 'Upload files';
+            btn.onclick = () => { document.getElementById('nav-materials').click(); setTimeout(() => openUploadPicker('files'), 60); };
+        } else {
+            sub.textContent = 'Pick one of your files and the AI writes questions from it. You look them over before they\'re added.';
+            btn.textContent = 'Make questions';
+            btn.onclick = () => goAndClick('nav-study', 'generate-study-btn');
+        }
+    } else if (status.dueCount > 0) {
+        title.textContent = `${status.dueCount} question${status.dueCount === 1 ? '' : 's'} ready to practice`;
+        sub.textContent = 'Smart practice picks what\'s due and what\'s closest to an exam.';
+        btn.textContent = 'Start practicing';
+        btn.onclick = () => goAndClick('nav-study', 'start-study-btn');
+    } else {
+        title.textContent = 'All caught up';
+        sub.textContent = 'Nothing to practice right now - questions come back on the day they\'re due.';
+        btn.textContent = 'Open Study';
+        btn.className = 'btn-secondary';
+        btn.onclick = () => document.getElementById('nav-study').click();
+    }
 }
 
 const onboardingHideBtn = document.getElementById('onboarding-hide');
 if (onboardingHideBtn) {
     onboardingHideBtn.onclick = () => {
         localStorage.setItem(onboardingKey('hidden'), '1');
+        ipcRenderer.invoke('mark-guide-done', true).catch(() => {});
         onboardingEl.hidden = true;
+        refreshOnboarding();   // the Study line takes its place
         toast.info('Hidden. You can bring it back from Settings.');
     };
 }
@@ -3330,6 +3393,7 @@ if (showOnboardingBtn) {
     showOnboardingBtn.onclick = async () => {
         localStorage.removeItem(onboardingKey('hidden'));
         localStorage.removeItem(onboardingKey('skipAi'));
+        await ipcRenderer.invoke('mark-guide-done', false).catch(() => {});
         document.getElementById('nav-home').click();
         await refreshOnboarding();
         if (onboardingEl.hidden) toast.success("You've already done every step - nothing left in the guide.");
@@ -3982,7 +4046,7 @@ const studyState = {
     index: 0,
     confidence: null,
     startedAt: null,
-    session: { reviewed: 0, correct: 0, overconfident: 0 }
+    session: { reviewed: 0, correct: 0, lucky: 0, overconfident: 0 }
 };
 
 // Sessions survive leaving the screen and closing the app.
@@ -4053,10 +4117,22 @@ const OUTCOMES_BY_MODE = {
 
 const MODE_LABELS = { recall: 'Remember', practice: 'Solve', explain: 'Explain' };
 const MODE_PROMPTS = {
-    recall: 'Think of your answer. How sure are you?',
-    practice: 'Read the problem. How sure are you that you can solve it?',
-    explain: 'Plan your explanation. How sure are you?'
+    recall: 'How sure are you? This also checks your answer.',
+    practice: 'How sure are you? This also checks your result.',
+    explain: 'How sure are you? This also checks your explanation.'
 };
+const TYPE_PLACEHOLDERS = {
+    recall: 'Write your answer - a sentence or two is enough',
+    practice: 'Your final result (the working can stay on paper)',
+    explain: 'Explain it in a few sentences'
+};
+// The AI's verdict -> the outcome the server's schedule understands.
+const VERDICT_TO_OUTCOME = {
+    recall:   { correct: 'got_it', partial: 'partial', wrong: 'missed' },
+    practice: { correct: 'solved', partial: 'stuck',   wrong: 'wrong' },
+    explain:  { correct: 'got_it', partial: 'partial', wrong: 'missed' }
+};
+const VERDICT_TITLES = { correct: 'Correct', partial: 'Partly right', wrong: 'Not quite' };
 const ANSWER_PROMPTS = {
     recall: 'How did you do?',
     practice: 'Solve it on paper, then tell the truth:',
@@ -4512,7 +4588,8 @@ async function startStudySession(resume = null, scope = null) {
     const scopeLabel = document.getElementById('study-scope-label');
     if (scopeLabel) scopeLabel.textContent = scope ? `· ${scope.label}` : '· Smart practice';
     studyState.index = resume ? Math.min(resume.index, items.length - 1) : 0;
-    studyState.session = resume ? resume.session : { reviewed: 0, correct: 0, overconfident: 0 };
+    studyState.session = resume ? resume.session : { reviewed: 0, correct: 0, lucky: 0, overconfident: 0 };
+    if (!Array.isArray(studyState.session.sureWrong)) studyState.session.sureWrong = [];
 
     clearManageSelection();
     document.getElementById('study-home').hidden = true;
@@ -4530,6 +4607,14 @@ function renderStudyCard() {
 
     studyState.confidence = null;
     studyState.startedAt = Date.now();
+    studyState.aiOutcome = null;
+    const typed = document.getElementById('study-typed-answer');
+    if (typed) {
+        typed.value = '';
+        typed.placeholder = TYPE_PLACEHOLDERS[item.mode] || TYPE_PLACEHOLDERS.recall;
+        typed.disabled = false;
+    }
+    document.querySelectorAll('.confidence-btn, #study-dont-know-btn').forEach(b => { b.disabled = false; });
 
     const total = studyState.queue.length;
     document.getElementById('study-position').textContent = `${studyState.index + 1} / ${total}`;
@@ -4544,6 +4629,17 @@ function renderStudyCard() {
     else catBadge.hidden = true;
 
     document.getElementById('study-question').textContent = item.question;
+    // Last time: sure, and wrong. Say so - that's the whole point of the list.
+    const last = Array.isArray(item.reviews) && item.reviews.length ? item.reviews[item.reviews.length - 1] : null;
+    let sureFlag = document.getElementById('study-sure-flag');
+    if (!sureFlag) {
+        sureFlag = document.createElement('div');
+        sureFlag.id = 'study-sure-flag';
+        sureFlag.className = 'study-sure-flag';
+        document.getElementById('study-question').before(sureFlag);
+    }
+    sureFlag.textContent = 'Last time you were sure about this - and got it wrong.';
+    sureFlag.hidden = !(last && last.confidence === 'sure' && last.wasCorrect === false);
     document.getElementById('study-confidence-prompt').textContent = MODE_PROMPTS[item.mode] || MODE_PROMPTS.recall;
 
     document.getElementById('study-confidence-step').hidden = false;
@@ -4558,20 +4654,103 @@ function confidenceHintKey() { return `mindsync.confidenceHintSeen.${currentUser
 
 // Step 1 -> 2: confidence is locked in before anything is revealed.
 document.querySelectorAll('.confidence-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
         const seen = Number(localStorage.getItem(confidenceHintKey()) || 0);
         if (seen < CONFIDENCE_HINT_TIMES) localStorage.setItem(confidenceHintKey(), String(seen + 1));
         studyState.confidence = btn.dataset.confidence;
-        revealAnswer();
+        const item = studyState.queue[studyState.index];
+        const typed = document.getElementById('study-typed-answer');
+        const text = typed ? typed.value.trim() : '';
+        if (!item || !text) { revealAnswer(); return; }   // answered in the head
+
+        // Typed: the AI checks it. The buttons stay put (no jump), just busy.
+        const buttons = document.querySelectorAll('.confidence-btn, #study-dont-know-btn');
+        buttons.forEach(b => { b.disabled = true; });
+        typed.disabled = true;
+        const prompt = document.getElementById('study-confidence-prompt');
+        const promptText = prompt.textContent;
+        prompt.textContent = 'Checking your answer…';
+        const res = await ipcRenderer.invoke('grade-study-answer', {
+            question: item.question, expected: item.answer || item.mySolution || '', mode: item.mode, userAnswer: text
+        }).catch(e => ({ error: e.message }));
+        prompt.textContent = promptText;
+        if (studyState.queue[studyState.index] !== item) return;   // stopped meanwhile
+        revealAnswer(res && !res.error ? { ...res, typed: text } : { failed: (res && res.error) || 'no answer', typed: text });
     });
 });
 
-function revealAnswer() {
+// "I don't know": straight to the answer. No check (nothing to check), and no
+// "How did you do?" - it's already known how it went. Saved as not known
+// (missed / wrong), so it comes back soon.
+const dontKnowBtn = document.getElementById('study-dont-know-btn');
+if (dontKnowBtn) dontKnowBtn.onclick = () => {
     const item = studyState.queue[studyState.index];
     if (!item) return;
+    studyState.confidence = 'dont_know';
+    revealAnswer({ dontKnow: true });
+    // The stored answer is a quote from the material - often long, with an
+    // intro. Ask for the short direct one (or a solution when there's none).
+    const stored = (item.answer || item.mySolution || '').trim();
+    if (!stored || stored.length > SHORT_ENOUGH) fetchShortAnswer(item);
+};
+const SHORT_ENOUGH = 200;
+
+async function fetchShortAnswer(item) {
+    const index = studyState.index;
+    const box = document.getElementById('study-short-answer');
+    const text = document.getElementById('study-short-answer-text');
+    if (!box || !text) return;
+    box.hidden = false;
+    box.classList.add('is-loading');
+    text.textContent = 'Getting a short answer…';
+    const res = await ipcRenderer.invoke('grade-study-answer', {
+        question: item.question, expected: item.answer || item.mySolution || '', mode: item.mode, explainOnly: true
+    }).catch(() => null);
+    if (studyState.index !== index || studyState.queue[index] !== item) return;   // moved on meanwhile
+    box.classList.remove('is-loading');
+    if (res && res.answer) {
+        text.textContent = res.answer;
+        document.getElementById('study-answer').classList.add('study-answer--source');
+    } else {
+        box.hidden = true;   // the material's answer below is still there
+    }
+}
+
+// check: null (answered in the head), { verdict, feedback, typed } from the
+// AI, { failed, typed } when the check couldn't run (then: mark yourself),
+// or { dontKnow: true } ("I don't know" - no check, no self-marking).
+function revealAnswer(check = null) {
+    const item = studyState.queue[studyState.index];
+    if (!item) return;
+    const verdictBox = document.getElementById('study-verdict');
+    const nextRow = document.getElementById('study-next-row');
+    const dontKnow = !!(check && check.dontKnow);
+    const outcomeMap = VERDICT_TO_OUTCOME[item.mode] || VERDICT_TO_OUTCOME.recall;
+    studyState.aiOutcome = dontKnow ? outcomeMap.wrong
+        : (check && check.verdict ? outcomeMap[check.verdict] : null);
+    if (verdictBox) {
+        verdictBox.hidden = !check || dontKnow;
+        verdictBox.className = 'study-verdict' + (check && check.verdict ? ` study-verdict--${check.verdict}` : '');
+        if (check) {
+            document.getElementById('study-verdict-title').textContent = check.verdict
+                ? VERDICT_TITLES[check.verdict]
+                : 'Couldn\'t check it right now - mark yourself below';
+            document.getElementById('study-verdict-feedback').textContent = check.verdict ? (check.feedback || '') : '';
+            document.getElementById('study-verdict-yours').textContent = `You wrote: ${check.typed}`;
+        }
+    }
+    const shortBox = document.getElementById('study-short-answer');
+    if (shortBox) {
+        const short = check && check.verdict && check.answer ? check.answer : '';
+        shortBox.hidden = !short;
+        shortBox.classList.remove('is-loading');
+        document.getElementById('study-short-answer-text').textContent = short;
+    }
+    // With a short answer above, the material's quote is the source - smaller.
+    document.getElementById('study-answer').classList.toggle('study-answer--source', !!(check && check.answer));
 
     const answerEl = document.getElementById('study-answer');
-    const labelEl = document.querySelector('.study-answer-label');
+    const labelEl = document.getElementById('study-material-label');
 
     // Practice items: show the student's own saved solution if there is one,
     // and always offer the editor. "Work it through on paper" with nothing
@@ -4603,9 +4782,14 @@ function revealAnswer() {
             if (item.solutionSource === 'ai') {
                 labelEl.innerHTML = `<span class="ai-answer-flag">${icon('info', { size: 13 })} AI-generated solution — worth checking</span>`;
             } else {
-                labelEl.textContent = item.sourceFile
-                    ? `From your material — ${item.sourceFile}`
-                    : 'From your material';
+                labelEl.textContent = 'From your material';
+                if (item.sourceFile) {
+                    // <bdi>: a Hebrew name inside an English line keeps its order
+                    // ("הרצאה 3", not "3 הרצאה").
+                    const b = document.createElement('bdi');
+                    b.textContent = fileLabel(item.sourceFile);
+                    labelEl.append(' — ', b);
+                }
             }
         }
     } else {
@@ -4629,7 +4813,17 @@ function revealAnswer() {
 
     row.querySelectorAll('.outcome-btn').forEach(b => {
         b.onclick = () => submitReview(b.dataset.outcome);
+        // The AI's call is marked; "Next" accepts it, any button overrides it.
+        b.classList.toggle('is-suggested', b.dataset.outcome === studyState.aiOutcome);
     });
+    if (nextRow) nextRow.hidden = !studyState.aiOutcome;
+    const outcomePrompt = document.getElementById('study-outcome-prompt');
+    if (studyState.aiOutcome) outcomePrompt.textContent = 'The check says:';
+    // "I don't know": nothing to choose - "Got it" would make no sense.
+    row.hidden = dontKnow;
+    const overrideHint = document.getElementById('study-override-hint');
+    if (overrideHint) overrideHint.hidden = dontKnow;
+    if (dontKnow) outcomePrompt.textContent = 'Marked as "didn\'t know" - it comes back tomorrow.';
 
     document.getElementById('study-confidence-step').hidden = true;
     document.getElementById('study-answer-step').hidden = false;
@@ -4651,13 +4845,19 @@ async function submitReview(outcome) {
     studyState.session.reviewed += 1;
     if (res.item && res.item.reviews) {
         const last = res.item.reviews[res.item.reviews.length - 1];
-        if (last && last.wasCorrect) studyState.session.correct += 1;
+        // Right while guessing = luck, not knowledge: counted apart, so
+        // "Knew it" only holds what you actually knew.
+        if (last && last.wasCorrect) {
+            if (studyState.confidence === 'guessing') studyState.session.lucky = (studyState.session.lucky || 0) + 1;
+            else studyState.session.correct += 1;
+        }
     }
 
     // Name the overconfidence at the moment it happens. Buried in a stats
     // screen a week later it teaches nothing.
     if (res.wasOverconfident) {
         studyState.session.overconfident += 1;
+        if (!studyState.session.sureWrong.includes(item.question)) studyState.session.sureWrong.push(item.question);
         toast.warning('You were sure about that one. It will come back soon.', 'Sure but wrong');
     }
 
@@ -4682,7 +4882,24 @@ function endStudySession() {
     const s = studyState.session;
     document.getElementById('summary-reviewed').textContent = s.reviewed;
     document.getElementById('summary-correct').textContent = s.correct;
+    const luckyEl = document.getElementById('summary-lucky');
+    if (luckyEl) {
+        const n = s.lucky || 0;
+        luckyEl.hidden = n === 0;
+        luckyEl.textContent = n === 1
+            ? '1 more was right while you were guessing. That doesn\'t count as knowing it - it comes back tomorrow to check.'
+            : `${n} more were right while you were guessing. That doesn't count as knowing them - they come back tomorrow to check.`;
+    }
     document.getElementById('summary-overconfident').textContent = s.overconfident;
+
+    const swBox = document.getElementById('summary-surewrong');
+    const swList = document.getElementById('summary-surewrong-list');
+    const sureWrong = s.sureWrong || [];
+    if (swBox && swList) {
+        swList.innerHTML = '';
+        sureWrong.forEach(q => { const li = document.createElement('li'); li.dir = 'auto'; li.textContent = q; swList.append(li); });
+        swBox.hidden = sureWrong.length === 0;
+    }
 
     const msg = document.getElementById('summary-message');
     if (s.reviewed === 0) msg.textContent = '';
@@ -4698,6 +4915,9 @@ const startStudyBtn = document.getElementById('start-study-btn');
 // would arrive as the `resume` argument and send a fresh session down the
 // resume path with no ids - throwing, so the button appeared to do nothing.
 if (startStudyBtn) startStudyBtn.onclick = () => startStudySession();
+
+const studyNextBtn = document.getElementById('study-next-btn');
+if (studyNextBtn) studyNextBtn.onclick = () => { if (studyState.aiOutcome) submitReview(studyState.aiOutcome); };
 
 const endStudyBtn = document.getElementById('end-study-btn');
 if (endStudyBtn) endStudyBtn.onclick = endStudySession;

@@ -159,6 +159,16 @@
                 <div class="onboarding__progress"><div class="onboarding__bar" id="onboarding-bar"></div></div>
                 <ol class="onboarding__steps" id="onboarding-steps"></ol>
             </div>
+            <!-- Study on Home (30/9): one line saying where practice stands -
+                 no questions yet / N ready / all caught up - with the button
+                 that goes there. Shown when the guide isn't (renderHomeStudy). -->
+            <div class="card home-study" id="home-study" hidden>
+                <div class="home-study__text">
+                    <div class="home-study__title" id="home-study-title"></div>
+                    <div class="home-study__sub" id="home-study-sub"></div>
+                </div>
+                <button class="btn-primary" id="home-study-btn"></button>
+            </div>
 
             <div class="focus-section">
                 <div class="next-up-card">
@@ -543,15 +553,19 @@
 
                     <div class="study-question" id="study-question" dir="auto"></div>
 
-                    <!-- Step 1: state confidence BEFORE the answer is shown -->
+                    <!-- Step 1: write the answer, then say how sure you are. The
+                         confidence button also sends the answer to be checked by
+                         the AI (29/9) - one tap, no extra step. Left empty = the
+                         old way: answer in your head and mark yourself. -->
                     <div id="study-confidence-step">
-                        <div class="study-prompt" id="study-confidence-prompt">Think of your answer. How sure are you?</div>
-                        <!-- Shown only for a user's first few answers: the "say how
-                             sure you are BEFORE you see it" step is unfamiliar, and
-                             testers didn't know why they were being asked. -->
+                        <textarea id="study-typed-answer" class="input-field study-typed-answer" dir="auto" rows="3"
+                            placeholder="Write your answer - a sentence or two is enough"></textarea>
+                        <div class="study-prompt" id="study-confidence-prompt">How sure are you? This also checks your answer.</div>
                         <p class="confidence-hint" id="study-confidence-hint" hidden>
-                            Answer in your head first, then pick one - before you see the answer.
-                            Later, MindSync shows you where "I'm sure" was right and where it wasn't.
+                            Write your answer, then press how sure you are - the AI checks it.
+                            MindSync remembers what you were sure about and got wrong, and brings it back first.
+                            You can also leave it empty, answer in your head and mark yourself.
+                            No idea at all? Press "I don't know" - you'll see the answer and it comes back tomorrow.
                         </p>
                         <div class="confidence-row">
                             <button class="confidence-btn confidence-btn--sure" data-confidence="sure">
@@ -561,14 +575,30 @@
                                 <strong>I think so</strong><span>Fairly likely</span>
                             </button>
                             <button class="confidence-btn confidence-btn--guess" data-confidence="guessing">
-                                <strong>Guessing</strong><span>Not really</span>
+                                <strong>Guessing</strong><span>I have a guess</span>
                             </button>
                         </div>
+                        <!-- Not knowing is its own answer: no check, no "How did you
+                             do?" (you can't have "got it"). Shows the answer and
+                             marks it as not known - it comes back soon. -->
+                        <button class="study-dont-know" id="study-dont-know-btn" type="button">I don't know - show me the answer</button>
                     </div>
 
                     <!-- Step 2: reveal + self-grade -->
                     <div id="study-answer-step" hidden>
-                        <div class="study-answer-label">Answer</div>
+                        <!-- The AI's check of what was typed (hidden when answered in the head) -->
+                        <div class="study-verdict" id="study-verdict" hidden>
+                            <div class="study-verdict__title" id="study-verdict-title"></div>
+                            <div class="study-verdict__feedback" id="study-verdict-feedback" dir="auto"></div>
+                            <div class="study-verdict__yours" id="study-verdict-yours" dir="auto"></div>
+                        </div>
+                        <!-- The AI's short, direct answer - the stored one is a quote
+                             from the material, which often opens with an intro. -->
+                        <div class="study-short-answer" id="study-short-answer" hidden>
+                            <div class="study-answer-label">The answer</div>
+                            <div class="study-short-answer__text" id="study-short-answer-text" dir="auto"></div>
+                        </div>
+                        <div class="study-answer-label" id="study-material-label">Answer</div>
                         <div class="study-answer" id="study-answer" dir="auto"></div>
 
                         <!-- Practice items have no model-written answer, so the
@@ -585,6 +615,10 @@
 
                         <div class="study-prompt" id="study-outcome-prompt">How did you do?</div>
                         <div class="outcome-row" id="study-outcome-row"></div>
+                        <div class="study-next-row" id="study-next-row" hidden>
+                            <span class="settings-hint" id="study-override-hint">Think the check got it wrong? Pick the right one above instead.</span>
+                            <button class="btn-primary" id="study-next-btn">Next</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -599,7 +633,10 @@
                             <div class="metric__value ms-tabular" id="summary-reviewed">0</div>
                         </div>
                         <div class="card metric">
-                            <div class="metric__label">Correct</div>
+                            <!-- "Knew it" = right AND said sure / think so. A right
+                                 answer while guessing is luck, not knowledge (30/9) -
+                                 counted apart, in #summary-lucky below. -->
+                            <div class="metric__label">Knew it</div>
                             <div class="metric__value ms-tabular" id="summary-correct">0</div>
                         </div>
                         <div class="card metric">
@@ -608,6 +645,11 @@
                         </div>
                     </div>
                     <div id="summary-message" class="settings-hint"></div>
+                    <div id="summary-lucky" class="settings-hint" hidden></div>
+                    <div class="summary-surewrong" id="summary-surewrong" hidden>
+                        <div class="summary-surewrong__title">You were sure about these - and got them wrong. They come back first next time:</div>
+                        <ul class="summary-surewrong__list" id="summary-surewrong-list"></ul>
+                    </div>
                     <button class="btn-primary" id="summary-done-btn">Done</button>
                 </div>
             </div>
