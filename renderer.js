@@ -172,6 +172,38 @@ if (authLogoutBtn) {
     };
 }
 
+// Delete account: one dialog that says what goes and asks the password.
+// A wrong password keeps you logged in and lets you try again.
+const authDeleteBtn = document.getElementById('auth-delete-account-btn');
+if (authDeleteBtn) {
+    authDeleteBtn.onclick = async () => {
+        for (;;) {
+            const password = await promptDialog(
+                'Delete your account?',
+                'This deletes your account and everything in it: tasks, calendar items, files, summaries and questions. It can\'t be undone.' +
+                (IS_WEB ? ' Google Calendar is disconnected; what was already added there stays in your Google account.' : '') +
+                ' Enter your password to confirm.',
+                '', { type: 'password', confirmText: 'Delete account', danger: true });
+            if (password === null) return;           // cancelled
+            if (!password) continue;                 // empty: ask again
+            authDeleteBtn.disabled = true;
+            const res = await ipcRenderer.invoke('auth-delete-account', password).catch(e => ({ error: e.message }));
+            authDeleteBtn.disabled = false;
+            if (res && res.success) {
+                toast.success('Your account and its data were deleted.', 'Account deleted');
+                if (authForm) authForm.reset();
+                setAuthMode('register');
+                if (authLoading) authLoading.hidden = true;
+                if (authFormWrap) authFormWrap.hidden = false;
+                document.body.classList.add('auth-pending');
+                return;
+            }
+            toast.error((res && res.error) || 'Please try again.', 'Could not delete the account');
+            if (!/password/i.test((res && res.error) || '')) return;
+        }
+    };
+}
+
 // A saved token isn't proof it still works, so this asks the server rather
 // than trusting the file existing - see main.js's auth-get-session handler.
 (async () => {

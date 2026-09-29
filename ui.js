@@ -148,7 +148,8 @@
     // Electron does not implement window.prompt() at all - it returns
     // undefined rather than a string, which silently breaks any code that
     // depends on it. This is a real, styled replacement.
-    window.promptDialog = function (title, message, defaultValue = '') {
+    // options: { type: 'password', confirmText, danger } - all optional.
+    window.promptDialog = function (title, message, defaultValue = '', options = {}) {
         return new Promise((resolve) => {
             const backdrop = document.createElement('div');
             backdrop.className = 'ms-modal-backdrop';
@@ -162,11 +163,11 @@
                     </div>
                     <div class="ms-modal__body">
                         ${message ? `<div style="margin-bottom: var(--space-3);" dir="auto">${escapeHtml(message)}</div>` : ''}
-                        <input type="text" class="ms-input" dir="auto" value="${escapeHtml(defaultValue)}" />
+                        <input type="${options.type === 'password' ? 'password' : 'text'}" class="ms-input" dir="auto" value="${escapeHtml(defaultValue)}" ${options.type === 'password' ? 'autocomplete="current-password"' : ''} />
                     </div>
                     <div class="ms-modal__footer">
                         <button class="ms-btn ms-btn--secondary" data-action="cancel">Cancel</button>
-                        <button class="ms-btn ms-btn--primary" data-action="confirm">OK</button>
+                        <button class="ms-btn ${options.danger ? 'ms-btn--danger' : 'ms-btn--primary'}" data-action="confirm">${escapeHtml(options.confirmText || 'OK')}</button>
                     </div>
                 </div>
             `;

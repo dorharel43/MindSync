@@ -1841,6 +1841,19 @@ ipcMain.handle('auth-logout', async () => {
   return { success: true };
 });
 
+// Deletes the account and all its data on the server (asks the password
+// again), then ends the session here. Copies this app put in the person's
+// own Google Calendar stay there - that calendar is theirs.
+ipcMain.handle('auth-delete-account', async (event, password) => {
+  try {
+    await api.deleteMe(String(password || ''));
+    authClient.clearSession();
+    return { success: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
 // =====================================
 // Profile
 // =====================================
