@@ -109,6 +109,7 @@ function bootApp(user) {
     if (typeof loadAndRenderWeeklyBoard === 'function') loadAndRenderWeeklyBoard();
     if (typeof loadStudyHome === 'function') loadStudyHome();
     if (typeof loadAiSettings === 'function') loadAiSettings();
+    if (IS_WEB) refreshGoogleState();
 }
 
 if (authForm) {
@@ -188,6 +189,91 @@ if (authLogoutBtn) {
     if (authLoading) authLoading.hidden = true;
     if (authFormWrap) authFormWrap.hidden = false;
 })();
+
+// ==========================================
+// 0b. Google Calendar - web version
+// ==========================================
+// Desktop: unchanged - the app signs in to Google the first time something
+// is synced. Web (window.MINDSYNC_WEB, set by web-shim.js): every account
+// connects its own Google Calendar once. Until then the "Also add to Google
+// Calendar" boxes start unticked, and ticking one opens Google's page right
+// there - nobody has to find the setting first.
+const IS_WEB = !!window.MINDSYNC_WEB;
+let googleState = IS_WEB ? null : { configured: true, connected: true };
+
+async function refreshGoogleState() {
+    if (!IS_WEB) return googleState;
+    googleState = await ipcRenderer.invoke('google-status').catch(() => null) || { configured: false, connected: false };
+    renderGoogleCard();
+    return googleState;
+}
+const googleConnected = () => !!(googleState && googleState.connected);
+
+// Must run straight from a click (it opens Google's window). Resolves to
+// true once connected.
+async function connectGoogle() {
+    const res = await ipcRenderer.invoke('google-connect');
+    googleState = res || googleState;
+    renderGoogleCard();
+    if (googleConnected()) toast.success('Your MindSync events can now go to Google Calendar too.', 'Google Calendar connected');
+    else if (res && res.error) toast.error(res.error, 'Could not connect Google Calendar');
+    return googleConnected();
+}
+
+// A "also add to Google Calendar" checkbox: ticking it while not connected
+// connects first; if that doesn't happen, the box goes back to unticked.
+function wireGoogleCheckbox(box) {
+    if (!IS_WEB || !box) return;
+    box.addEventListener('change', async () => {
+        if (!box.checked || googleConnected()) return;
+        if (googleState && !googleState.configured) {
+            box.checked = false;
+            toast.info('Google Calendar isn\'t available yet.');
+            return;
+        }
+        box.checked = await connectGoogle();
+    });
+}
+
+function renderGoogleCard() {
+    const label = document.getElementById('google-status-label');
+    const connectBtn = document.getElementById('google-connect-btn');
+    const disconnectBtn = document.getElementById('google-disconnect-btn');
+    if (!IS_WEB || !label) return;
+    const s = googleState;
+    if (!s) { label.textContent = 'Checking…'; return; }
+    label.textContent = !s.configured ? 'Not available yet.'
+        : s.connected ? `Connected${s.email ? ' as ' + s.email : ''} ✓`
+        : 'Not connected.';
+    if (connectBtn) connectBtn.hidden = !s.configured || s.connected;
+    if (disconnectBtn) disconnectBtn.hidden = !s.connected;
+}
+
+if (IS_WEB) {
+    const connectBtn = document.getElementById('google-connect-btn');
+    const disconnectBtn = document.getElementById('google-disconnect-btn');
+    if (connectBtn) connectBtn.onclick = () => connectGoogle();
+    if (disconnectBtn) disconnectBtn.onclick = async () => {
+        const sure = await confirmDialog('Disconnect Google Calendar?',
+            'New events won\'t be added to Google anymore. What is already there stays - you can delete the "MindSync" calendar in Google Calendar if you don\'t want it.',
+            { confirmText: 'Disconnect' });
+        if (!sure) return;
+        const res = await ipcRenderer.invoke('google-disconnect');
+        if (res && res.error) toast.error(res.error);
+        await refreshGoogleState();
+    };
+    // Connected in another tab (or the Google window finished).
+    ipcRenderer.on('google-changed', () => refreshGoogleState());
+    // Came back from Google in the same tab (pop-ups were blocked).
+    const back = new URLSearchParams(location.search).get('google');
+    if (back) {
+        history.replaceState(null, '', location.pathname + location.hash);
+        setTimeout(() => {
+            if (back === 'connected') toast.success('Your MindSync events can now go to Google Calendar too.', 'Google Calendar connected');
+            else toast.error('Google Calendar was not connected. You can try again in Settings.');
+        }, 800);
+    }
+}
 
 // ==========================================
 // 1. Navigation
@@ -943,6 +1029,8 @@ function setEventModalMode(evt) {
     }
     if (syncLabel) syncLabel.textContent = evt ? 'Also in Google Calendar' : 'Also add to Google Calendar';
     if (evt && syncCheck) syncCheck.checked = !!evt.googleEventId;
+    // Web, not connected yet: start unticked (ticking it connects - see wireGoogleCheckbox).
+    if (IS_WEB && !evt && syncCheck && !googleConnected()) syncCheck.checked = false;
     if (saveEventBtn) saveEventBtn.textContent = evt ? 'Save changes' : 'Add';
 }
 
@@ -2315,6 +2403,8 @@ const syllabusIntro = document.getElementById('syllabus-intro');
 const syllabusCourse = document.getElementById('syllabus-course');
 const syllabusGoogle = document.getElementById('syllabus-google');
 const syllabusGoogleRow = document.getElementById('syllabus-google-row');
+wireGoogleCheckbox(syllabusGoogle);
+wireGoogleCheckbox(document.getElementById('sync-google-check'));
 const syllabusConfirm = document.getElementById('syllabus-confirm');
 const syllabusCancel = document.getElementById('syllabus-cancel');
 let syllabusState = null; // { file, items, saving }
@@ -3152,6 +3242,28 @@ if (showOnboardingBtn) {
 const navHomeForOnboarding = document.getElementById('nav-home');
 if (navHomeForOnboarding) navHomeForOnboarding.addEventListener('click', refreshOnboarding);
 
+// Web version: feedback goes to the server (POST /api/feedback, via the
+// 'send-feedback' channel). The desktop app has "Copy error log" instead.
+const feedbackBtn = document.getElementById('feedback-send-btn');
+if (feedbackBtn) {
+    feedbackBtn.onclick = async () => {
+        const box = document.getElementById('feedback-text');
+        const text = box ? box.value.trim() : '';
+        if (!text) { toast.info('Write something first.'); return; }
+        feedbackBtn.disabled = true;
+        try {
+            const res = await ipcRenderer.invoke('send-feedback', text);
+            if (res && res.error) throw new Error(res.error);
+            box.value = '';
+            toast.success('Thanks - it was sent.', 'Feedback');
+        } catch (err) {
+            toast.error(err.message, 'Could not send');
+        } finally {
+            feedbackBtn.disabled = false;
+        }
+    };
+}
+
 const copyLogBtn = document.getElementById('settings-copy-log-btn');
 if (copyLogBtn) {
     copyLogBtn.onclick = async () => {
@@ -3221,7 +3333,10 @@ if (generateWeeklyAiBtn) {
                 toast.error("Could not build a plan: " + parsed.error);
             } else if (newPlan.length > 0) {
                 
-                const syncToGoogle = await confirmDialog("Sync to Google Calendar?", "The new study blocks will also be added to your Google Calendar.", { confirmText: "Sync", cancelText: "Skip" });
+                // Web, not connected: don't ask - the blocks just stay in MindSync.
+                const syncToGoogle = (IS_WEB && !googleConnected())
+                    ? false
+                    : await confirmDialog("Sync to Google Calendar?", "The new study blocks will also be added to your Google Calendar.", { confirmText: "Sync", cancelText: "Skip" });
                 let syncErrors = [];
 
                 for (const planEvent of newPlan) {
