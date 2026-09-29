@@ -2096,7 +2096,7 @@ async function loadAndRenderFiles() {
             <div class="file-info">
                 <div class="file-icon">${icon('file')}</div>
                 <div>
-                    <div class="file-name">${escapeHtml(file.name)}</div>
+                    <div class="file-name" dir="auto">${escapeHtml(file.name)}</div>
                     <div class="file-meta">${escapeHtml(file.folder)}</div>
                 </div>
             </div>
@@ -2253,7 +2253,9 @@ async function runUploadBatch() {
         const read = await ipcRenderer.invoke('read-upload-file', f.path);
         if (!read || read.error) {
             failed++;
-            setUploadRowStatus(i, 'failed', "Couldn't read this file");
+            // Web: the server's reason ("too large", "storage is full"...) is
+            // already a plain sentence - show it instead of a generic one.
+            setUploadRowStatus(i, 'failed', IS_WEB && read && read.error ? read.error : "Couldn't read this file");
             continue;
         }
         const saved = await ipcRenderer.invoke('save-file', {
@@ -3574,18 +3576,28 @@ function pickOption(title, options) {
         backdrop.className = 'ms-modal-backdrop';
         backdrop.innerHTML = `
             <div class="ms-modal">
-                <div class="ms-modal__header"><h3 class="ms-modal__title">${title}</h3></div>
+                <div class="ms-modal__header"><h3 class="ms-modal__title"></h3></div>
                 <div class="ms-modal__body ms-modal__body--structured">
-                    <div class="option-list">
-                        ${options.map(o => `<button class="option-row" data-value="${o}">${o}</button>`).join('')}
-                    </div>
+                    <div class="option-list"></div>
                 </div>
                 <div class="ms-modal__footer">
                     <button class="btn-secondary" data-action="cancel">Cancel</button>
                 </div>
             </div>`;
+        // BUG FIX: the names were pasted into the HTML, so a file called
+        // 'סיכום חדו"א.pdf' broke the data-value="..." attribute at the " and
+        // picking it did nothing. Text is now set as text.
+        backdrop.querySelector('.ms-modal__title').textContent = title;
+        const list = backdrop.querySelector('.option-list');
         function close(v) { backdrop.remove(); resolve(v); }
-        backdrop.querySelectorAll('.option-row').forEach(b => b.onclick = () => close(b.dataset.value));
+        options.forEach(o => {
+            const b = document.createElement('button');
+            b.className = 'option-row';
+            b.dir = 'auto';
+            b.textContent = o;
+            b.onclick = () => close(o);
+            list.appendChild(b);
+        });
         backdrop.querySelector('[data-action="cancel"]').onclick = () => close(null);
         backdrop.onclick = (e) => { if (e.target === backdrop) close(null); };
         document.body.appendChild(backdrop);
