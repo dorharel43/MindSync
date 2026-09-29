@@ -313,8 +313,26 @@ if (IS_WEB) {
 const menuItems = document.querySelectorAll('.menu-item');
 const views = document.querySelectorAll('.view-section');
 
+// ---- Phone: the side menu is a drawer (CSS under 760px) ----
+const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+const mobileScrim = document.getElementById('mobile-scrim');
+function setMobileMenu(open) {
+    document.body.classList.toggle('mobile-menu-open', open);
+    if (mobileScrim) mobileScrim.hidden = !open;
+    if (mobileMenuBtn) mobileMenuBtn.setAttribute('aria-expanded', String(open));
+}
+if (mobileMenuBtn) mobileMenuBtn.onclick = () => setMobileMenu(!document.body.classList.contains('mobile-menu-open'));
+if (mobileScrim) mobileScrim.onclick = () => setMobileMenu(false);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.classList.contains('mobile-menu-open')) setMobileMenu(false); });
+const profileTrigger = document.getElementById('sidebar-profile-trigger');
+if (profileTrigger) profileTrigger.addEventListener('click', () => setMobileMenu(false));
+
 menuItems.forEach(item => {
     item.addEventListener('click', () => {
+        // Phone: picking a screen closes the drawer and names the screen.
+        setMobileMenu(false);
+        const topTitle = document.getElementById('mobile-topbar-title');
+        if (topTitle) topTitle.textContent = item.textContent.replace(/\d+/g, '').trim();
         // Floating bars are attached to the body, not to a view, so switching
         // screens has to take them down explicitly or they hover over
         // whatever comes next.
@@ -3154,7 +3172,9 @@ const ONBOARDING_STEPS = [
         id: 'ai',
         title: 'Connect the AI',
         text: 'The AI reads your files and writes your practice questions. It needs a free Google key - about a minute, no credit card.',
-        isDone: (st) => st.hasKey || localStorage.getItem(onboardingKey('skipAi')) === '1',
+        // Web: the AI key lives on the server - there is nothing to paste,
+        // so the step never shows (even if the server has no key).
+        isDone: (st) => IS_WEB || st.hasKey || localStorage.getItem(onboardingKey('skipAi')) === '1',
         render: (body) => {
             body.innerHTML = `
                 <div class="onboarding__key-row">
@@ -3229,6 +3249,8 @@ const ONBOARDING_STEPS = [
         actions: [{ label: 'Add to calendar', primary: true, run: () => goAndClick('nav-weekly', 'trigger-add-event') }]
     }
 ];
+// Web: no key to paste - the AI step is not part of the guide at all.
+if (IS_WEB) ONBOARDING_STEPS.splice(ONBOARDING_STEPS.findIndex(st => st.id === 'ai'), 1);
 
 function renderOnboarding(status) {
     const hidden = localStorage.getItem(onboardingKey('hidden')) === '1';

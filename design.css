@@ -1123,3 +1123,54 @@ html:not(.is-web) .web-only { display: none !important; }
   .study-way, .study-course__main { flex-direction: column; align-items: stretch; }
   .study-course__actions { justify-content: space-between; }
 }
+
+/* ==========================================================================
+   Phone layout (29/9). Under 760px the side menu can't sit next to the
+   content - it took most of the screen. It becomes a drawer opened from a
+   top bar; the content gets the full width with 16px sides.
+   ========================================================================== */
+.mobile-topbar, .mobile-scrim { display: none; }
+@media (max-width: 760px) {
+  body { flex-direction: column; height: 100dvh; }
+  .mobile-topbar {
+    display: flex; align-items: center; gap: 8px;
+    flex-shrink: 0; height: 52px; padding: 0 8px;
+    background: var(--bg-sidebar); border-bottom: 1px solid var(--border-color);
+  }
+  .mobile-topbar__title { font-weight: var(--font-semibold); color: var(--text-primary); }
+  .mobile-menu-btn { width: 40px; height: 40px; }
+  .sidebar {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 1001;
+    width: min(280px, 85vw);
+    transform: translateX(-100%); transition: transform .2s ease;
+    overflow-y: auto;
+  }
+  body.mobile-menu-open .sidebar { transform: none; box-shadow: 0 0 40px rgba(0, 0, 0, .25); }
+  .mobile-scrim:not([hidden]) { display: block; position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, .35); }
+  .main-content { padding: 16px 16px 48px; width: 100%; min-width: 0; }
+  .menu-item { min-height: 44px; }   /* finger-sized */
+
+  /* Planner: 7 columns side by side can't fit a phone - the days go one
+     under the other, each with its own header, today marked as on desktop. */
+  .weekly-board { grid-template-columns: 1fr; }
+  .day-column, body.dark-mode .day-column {
+    min-height: 0; border-left: none; border-top: 1px solid var(--border-color);
+    padding: 10px 12px;
+  }
+  .day-column:first-child { border-top: none; }
+  .day-column .day-header { padding: 0 0 6px; }
+  .day-column:not(:has(.task-card))::after { content: 'Nothing planned'; font-size: var(--text-xs); color: var(--text-tertiary, var(--text-secondary)); }
+  .day-column:not(:has(.task-card)) .day-header { padding-bottom: 2px; }
+  .week-nav { flex-wrap: wrap; row-gap: 8px; }
+  .week-nav__label { flex: 1; text-align: center; }
+  .week-nav__today { order: 5; margin-right: 0; }
+  .week-upcoming { order: 6; margin-left: auto; }
+
+  .shortcuts-card { display: none; }   /* no keyboard on a phone */
+
+  /* Home: "This week" and "Today's Timeline" one under the other */
+  .dashboard-grid { grid-template-columns: 1fr; }
+
+  /* Study numbers: the short explanations under them take too much room */
+  .metric__sub { display: none; }
+}

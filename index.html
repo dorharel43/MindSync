@@ -74,8 +74,16 @@
         </div>
     </div>
 
+    <!-- Phone only (CSS shows it under 760px): the side menu doesn't fit
+         next to the content, so it becomes a drawer behind this button. -->
+    <div class="mobile-topbar">
+        <button class="btn-icon mobile-menu-btn" id="mobile-menu-btn" aria-label="Open the menu" aria-expanded="false"><span data-icon="menu" data-icon-size="20"></span></button>
+        <span class="mobile-topbar__title" id="mobile-topbar-title">Home</span>
+    </div>
+    <div class="mobile-scrim" id="mobile-scrim" hidden></div>
+
     <!-- Sidebar -->
-    <div class="sidebar">
+    <div class="sidebar" id="app-sidebar">
         <!-- REAL FIX: repositioning tricks (centering, pinning) can't reduce
              total empty space - it's fixed (window height minus content
              height). What actually helps is real content. This mirrors
@@ -859,7 +867,7 @@
             <!-- Keyboard shortcuts reference. Shortcuts nobody can discover
                  may as well not exist, so they're listed here rather than
                  left to be found by accident. -->
-            <div class="card settings-card">
+            <div class="card settings-card shortcuts-card">
                 <h3 class="settings-title">Keyboard shortcuts</h3>
                 <div class="shortcut-list">
                     <div class="shortcut-row">
