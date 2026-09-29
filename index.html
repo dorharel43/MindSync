@@ -577,7 +577,13 @@
                             <div class="study-verdict__feedback" id="study-verdict-feedback" dir="auto"></div>
                             <div class="study-verdict__yours" id="study-verdict-yours" dir="auto"></div>
                         </div>
-                        <div class="study-answer-label">Answer</div>
+                        <!-- The AI's short, direct answer - the stored one is a quote
+                             from the material, which often opens with an intro. -->
+                        <div class="study-short-answer" id="study-short-answer" hidden>
+                            <div class="study-answer-label">The answer</div>
+                            <div class="study-short-answer__text" id="study-short-answer-text" dir="auto"></div>
+                        </div>
+                        <div class="study-answer-label" id="study-material-label">Answer</div>
                         <div class="study-answer" id="study-answer" dir="auto"></div>
 
                         <!-- Practice items have no model-written answer, so the

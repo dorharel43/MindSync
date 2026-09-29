@@ -4634,9 +4634,17 @@ function revealAnswer(check = null) {
             document.getElementById('study-verdict-yours').textContent = `You wrote: ${check.typed}`;
         }
     }
+    const shortBox = document.getElementById('study-short-answer');
+    if (shortBox) {
+        const short = check && check.verdict && check.answer ? check.answer : '';
+        shortBox.hidden = !short;
+        document.getElementById('study-short-answer-text').textContent = short;
+    }
+    // With a short answer above, the material's quote is the source - smaller.
+    document.getElementById('study-answer').classList.toggle('study-answer--source', !!(check && check.answer));
 
     const answerEl = document.getElementById('study-answer');
-    const labelEl = document.querySelector('.study-answer-label');
+    const labelEl = document.getElementById('study-material-label');
 
     // Practice items: show the student's own saved solution if there is one,
     // and always offer the editor. "Work it through on paper" with nothing
@@ -4668,9 +4676,14 @@ function revealAnswer(check = null) {
             if (item.solutionSource === 'ai') {
                 labelEl.innerHTML = `<span class="ai-answer-flag">${icon('info', { size: 13 })} AI-generated solution — worth checking</span>`;
             } else {
-                labelEl.textContent = item.sourceFile
-                    ? `From your material — ${fileLabel(item.sourceFile)}`
-                    : 'From your material';
+                labelEl.textContent = 'From your material';
+                if (item.sourceFile) {
+                    // <bdi>: a Hebrew name inside an English line keeps its order
+                    // ("הרצאה 3", not "3 הרצאה").
+                    const b = document.createElement('bdi');
+                    b.textContent = fileLabel(item.sourceFile);
+                    labelEl.append(' — ', b);
+                }
             }
         }
     } else {

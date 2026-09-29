@@ -2160,12 +2160,15 @@ ${expected ? 'Use the reference answer as the standard, but accept anything equi
 Question: ${question}
 ${expected ? `Reference answer (from the course material): ${expected}\n` : ''}Student's answer: ${userAnswer}
 
-Return ONLY JSON: {"verdict": "correct|partial|wrong", "feedback": "ONE short sentence in the SAME LANGUAGE as the question - what is missing or wrong; if correct, a small useful addition or 'exactly right'"}`;
-        const text = await aiProvider.generateText(prompt, { forceJson: true, maxTokens: 700, thinkingLevel: 'low', noFallback: true, timeoutMs: 30000 });
+Also write "answer": the correct answer to the question itself, short and direct - 1-2 sentences, in the SAME LANGUAGE as the question, no introduction ("There is another type of..."), just what answers it.${expected ? ' Base it on the reference answer.' : ''}
+
+Return ONLY JSON: {"verdict": "correct|partial|wrong", "feedback": "ONE short sentence in the SAME LANGUAGE as the question - what is missing or wrong; if correct, a small useful addition or 'exactly right'", "answer": "the short direct answer"}`;
+        const text = await aiProvider.generateText(prompt, { forceJson: true, maxTokens: 900, thinkingLevel: 'low', noFallback: true, timeoutMs: 30000 });
         const data = JSON.parse(extractJsonFromText(String(text)));
         const verdict = ['correct', 'partial', 'wrong'].includes(data.verdict) ? data.verdict : null;
         if (!verdict) return { error: 'The check did not come back clearly.' };
-        return { verdict, feedback: String(data.feedback || '').replace(/\s+/g, ' ').trim().slice(0, 300) };
+        const clean = (v, n) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
+        return { verdict, feedback: clean(data.feedback, 300), answer: clean(data.answer, 500) };
     } catch (err) {
         console.error('❌ grade-study-answer:', err.message);
         return { error: err.message };

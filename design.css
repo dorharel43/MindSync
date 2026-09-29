@@ -1207,3 +1207,6 @@ html:not(.is-web) .web-only { display: none !important; }
 .summary-surewrong__list li { padding: 6px 10px; background: var(--bg-card); border-radius: var(--radius-sm); text-align: start; }
 .summary-surewrong__list li + li { margin-top: 6px; }
 @media (max-width: 760px) { .study-next-row { flex-direction: column-reverse; align-items: stretch; } }
+.study-short-answer { margin-bottom: 14px; }
+.study-short-answer__text { font-size: var(--text-base); color: var(--text-primary); line-height: 1.55; }
+.study-answer.study-answer--source { font-size: var(--text-sm, 13px); color: var(--text-secondary); }
