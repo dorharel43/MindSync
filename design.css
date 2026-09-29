@@ -486,7 +486,7 @@ body.dark-mode .day-column {
     font-variant-numeric: tabular-nums;
     padding-right: 44px;
 }
-.task-repeat { opacity: 0.7; }
+.task-repeat { opacity: 0.7; white-space: nowrap; }
 .task-card__title {
     line-height: 1.35;
     overflow-wrap: break-word;

@@ -523,10 +523,11 @@ For every item return:
 
 A deadline given as a range ("להגיש בין 1.11 ל-5.11") -> use the LAST day.
 Also return "course": the course name as the document writes it (without the course number), or null.
+Also return "classesUntil": the date the weekly classes END, ONLY if the document writes it (the semester's end date, "סוף הסמסטר 15.1", or the date of the last lecture) - as {"day", "month", "year"}. Not written -> null. Never guess it.
 
 If the document has no exams and no submissions (lecture slides, notes, an exercise sheet with no due date), return {"course": null, "items": []}. For such a file, an empty list is the correct answer.
 
-Return ONLY JSON: {"course": "...", "items": [{"kind": "exam|assignment|class", "title": "...", "date": {"day": 1, "month": 1, "year": null}, "time": null, "durationMinutes": null, "weekday": null, "endTime": null, "sourceQuote": "..."}]}`;
+Return ONLY JSON: {"course": "...", "classesUntil": null, "items": [{"kind": "exam|assignment|class", "title": "...", "date": {"day": 1, "month": 1, "year": null}, "time": null, "durationMinutes": null, "weekday": null, "endTime": null, "sourceQuote": "..."}]}`;
 }
 
 // {day, month, year} (or "YYYY-MM-DD" / "DD.MM(.YYYY)") -> "YYYY-MM-DD", or
@@ -676,6 +677,11 @@ ipcMain.handle('read-syllabus', async (event, file = {}) => {
         // uses the file's folder, a course the user already has, or the
         // file name, in that order.
         const course = String((parsed && parsed.course) || '').trim().slice(0, 80);
+        // When the weekly classes stop, if the file says so. Only kept when
+        // that date is actually written in the file's text (or the text
+        // couldn't be read well enough to check).
+        let classesUntil = resolveSyllabusDate(parsed && parsed.classesUntil, now);
+        if (classesUntil && sourceText.trim().length >= 200 && dateAppearsInText(classesUntil, sourceText) === false && !usedPdf) classesUntil = null;
 
         // What's already in the app, so importing the same syllabus twice
         // doesn't add everything twice.
@@ -720,6 +726,7 @@ ipcMain.handle('read-syllabus', async (event, file = {}) => {
                 seen.add(key);
                 items.push({
                     kind, title, date: null, weekday, time: start, endTime: end,
+                    until: classesUntil,
                     durationMinutes: len && len >= 15 && len <= 720 ? len : null,
                     sourceQuote: quote, isPast: false, needsCheck: inText === false,
                     alreadyExists: (events || []).some(e => !e.date && e.day === weekday && e.time === start)
@@ -757,7 +764,7 @@ ipcMain.handle('read-syllabus', async (event, file = {}) => {
         const rank = (i) => (i.kind === 'class' ? '0' : '1') + (i.date || '9999');
         items.sort((a, b) => rank(a).localeCompare(rank(b)));
         console.log(`📅 read-syllabus: ${items.length} item(s) via ${usedPdf ? 'PDF' : 'text'} (${r.model})` + (rejected ? `, ${rejected} rejected` : ''));
-        return { course, items, usedPdf, model: r.model, modelLabel: aiProvider.modelLabel(r.model), rejected };
+        return { course, classesUntil, items, usedPdf, model: r.model, modelLabel: aiProvider.modelLabel(r.model), rejected };
     } catch (error) {
         console.error('❌ read-syllabus failed:', error.message);
         return { error: error.message };
@@ -787,6 +794,8 @@ ipcMain.handle('import-syllabus-items', async (event, items = [], options = {}) 
                 const evt = {
                     title: titleWithCourse(title, course),
                     day, date: null,           // null = repeats every week
+                    // ...until this date, when known (the semester's end).
+                    until: /^\d{4}-\d{2}-\d{2}$/.test(item.until || '') ? item.until : null,
                     time, type: 'lesson',
                     ...(item.durationMinutes ? { durationMinutes: item.durationMinutes } : {})
                 };
@@ -875,6 +884,33 @@ function detectHebrewDay(text) {
 // in Israel (UTC+2/+3) local midnight is still "yesterday" in UTC.
 function toLocalIsoDate(d) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// "... עד 15.1" / "until 15/1/2027" -> the last day a WEEKLY event repeats.
+// Returns { iso, phrase } or null. No year: the next time that date comes
+// round (today counts). Only numeric dates - "עד סוף הסמסטר" has no date.
+function extractUntilDate(text, now) {
+    const m = /(?<![א-ת\w])(?:עד|until)\s+(?:ה-?|ל-?|the\s+)?(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?(?![\d:])/i.exec(text);
+    if (!m) return null;
+    const dd = parseInt(m[1], 10);
+    const mm = parseInt(m[2], 10);
+    if (dd < 1 || dd > 31 || mm < 1 || mm > 12) return null;
+    const today = new Date(now); today.setHours(0, 0, 0, 0);
+    let yyyy = m[3] ? parseInt(m[3], 10) : today.getFullYear();
+    if (yyyy < 100) yyyy += 2000;
+    let d = new Date(yyyy, mm - 1, dd);
+    if (!m[3] && d < today) d = new Date(yyyy + 1, mm - 1, dd);
+    if (d.getDate() !== dd) return null; // 31/2 and similar
+    return { iso: toLocalIsoDate(d), phrase: m[0] };
+}
+
+// Google's rule for a weekly event, optionally ending on `until`
+// (YYYY-MM-DD, inclusive). RFC 5545 wants UNTIL in UTC when the start has a
+// time zone; the end of that day in UTC is after any class on it.
+function weeklyRule(until) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(until || '')
+        ? `RRULE:FREQ=WEEKLY;UNTIL=${until.replace(/-/g, '')}T235959Z`
+        : 'RRULE:FREQ=WEEKLY';
 }
 
 function resolveRelativeDate(text, now) {
@@ -1208,6 +1244,23 @@ ipcMain.handle('parse-smart-event', async (event, freeText) => {
         const now = new Date();
         const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+        // "כל יום רביעי ב-8:30 עד 15.1": the date after עד is when a WEEKLY
+        // event stops. Read it first - otherwise it would become the event's
+        // own date. On a one-time event "עד 26.10" is its deadline, so it is
+        // only taken as an end date when the rest reads as weekly (said
+        // "every", or a class on a weekday) and names no other date.
+        let untilIso = null;
+        const untilHit = extractUntilDate(freeText, now);
+        if (untilHit) {
+            const rest = freeText.replace(untilHit.phrase, ' ');
+            const restSaysEvery = /(?<![א-ת])ב?כל\s+(?:(?:ה)?שבוע|(?:יום\s+)?(?:ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת))(?![א-ת])/.test(rest) || /\bevery\b|\bweekly\b/i.test(rest);
+            const classOnDay = !!detectHebrewDay(rest) && classifyEventByKeywords(rest) === 'lesson';
+            if ((restSaysEvery || classOnDay) && !resolveRelativeDate(rest, now)) {
+                freeText = rest;
+                untilIso = untilHit.iso;
+            }
+        }
+
         const hebrewDayMap = {
             'ראשון': 0, 'שני': 1, 'שלישי': 2, 'רביעי': 3, 'חמישי': 4, 'שישי': 5, 'שבת': 6
         };
@@ -1449,6 +1502,8 @@ Return ONLY this JSON, with no other text: {"type": "one_of_the_four"}`;
             title: cleanTitle,
             day: targetDayName,
             date: weekly ? null : toLocalIsoDate(targetDate),
+            // Always sent, so editing a weekly item and dropping "עד ..." clears it.
+            until: weekly ? untilIso : null,
             time: targetTime,
             type: eventType
         }];
@@ -1518,6 +1573,9 @@ ipcMain.handle('generate-weekly-plan', async (event, currentTasks, currentEvents
         }
         (currentEvents || []).forEach(evt => {
             if (evt.date && !horizonDates[evt.date]) return;
+            // A weekly class that has ended (its `until` is before today)
+            // doesn't take up time any more.
+            if (!evt.date && evt.until && evt.until < toLocalIsoDate(today)) return;
             if (!occupied[evt.day]) return;
             const [h, m] = String(evt.time || '00:00').split(':').map(Number);
             const start = h * 60 + (m || 0);
@@ -2532,7 +2590,7 @@ async function syncToGoogleCalendar(evtData) {
                     description: 'Created via MindSync AI 🧠',
                     start: { dateTime: startDate.toISOString(), timeZone: 'Asia/Jerusalem' },
                     end: { dateTime: endDate.toISOString(), timeZone: 'Asia/Jerusalem' },
-                    ...(dateMatch ? {} : { recurrence: ['RRULE:FREQ=WEEKLY'] })
+                    ...(dateMatch ? {} : { recurrence: [weeklyRule(evtData.until)] })
                 },
             }, { timeout: 15000 });
 
@@ -2648,10 +2706,11 @@ ipcMain.handle('update-event', async (event, id, changes = {}, options = {}) => 
     if (!before) return { error: 'That calendar item no longer exists.' };
 
     const updates = {};
-    for (const key of ['title', 'day', 'date', 'time', 'type', 'durationMinutes']) {
+    for (const key of ['title', 'day', 'date', 'until', 'time', 'type', 'durationMinutes']) {
       if (changes[key] !== undefined) updates[key] = changes[key];
     }
     if (updates.date === '') updates.date = null; // '' would fail the server's YYYY-MM-DD check
+    if (updates.until === '') updates.until = null;
     // A block the planner placed becomes YOURS once you edit it - otherwise
     // the next "Plan study time" would sweep your change away. (Undo passes
     // the original value back explicitly.)

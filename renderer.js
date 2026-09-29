@@ -619,7 +619,18 @@ function localIsoDate(d) {
 }
 
 function eventOccursOn(evt, date) {
-    return evt.date ? evt.date === localIsoDate(date) : evt.day === WEEKDAY_NAMES[date.getDay()];
+    if (evt.date) return evt.date === localIsoDate(date);
+    // Weekly: every week on its day, up to and including `until` if it has one.
+    if (evt.until && localIsoDate(date) > evt.until) return false;
+    return evt.day === WEEKDAY_NAMES[date.getDay()];
+}
+
+// "2027-01-15" -> "15/1" when it's within the coming year (no doubt which
+// one is meant, and it fits a narrow Planner column), else "15/1/2027".
+function untilLabel(iso) {
+    const [y, m, d] = String(iso).split('-').map(Number);
+    const days = (new Date(y, m - 1, d) - new Date()) / 86400000;
+    return days > -60 && days < 330 ? `${d}/${m}` : `${d}/${m}/${y}`;
 }
 
 // Sunday of the week `offset` weeks away from this one (0 = this week).
@@ -883,7 +894,7 @@ function renderWeeklyBoard() {
                     <button class="btn-icon edit-weekly-btn" title="${weekly ? 'Edit - changes it in every week' : 'Edit'}" aria-label="Edit">${icon('edit')}</button>
                     <button class="btn-icon btn-icon--danger delete-weekly-btn" title="${weekly ? 'Delete - removes it from every week' : 'Delete from calendar'}" aria-label="Delete from calendar">${icon('trash')}</button>
                 </div>
-                <div class="task-time">${escapeHtml(evt.time)}${weekly ? ' <span class="task-repeat" title="Every week">↻</span>' : ''}</div>
+                <div class="task-time">${escapeHtml(evt.time)}${weekly ? ` <span class="task-repeat" title="${evt.until ? `Every week until ${untilLabel(evt.until)}` : 'Every week'}">↻${evt.until ? ` until ${untilLabel(evt.until)}` : ''}</span>` : ''}</div>
                 <div class="task-card__title" dir="auto">${escapeHtml(evt.title)}</div>
             `;
 
@@ -1005,7 +1016,9 @@ function eventToSentence(evt) {
         return `${evt.title} ב-${d}.${m}.${y} ${at}`;
     }
     const dayIdx = EVENT_DAYS.indexOf(evt.day);
-    return `${evt.title} כל יום ${HEBREW_DAY_NAMES[dayIdx >= 0 ? dayIdx : 0]} ${at}`;
+    // The year is always written, so a date early next year isn't misread.
+    const until = evt.until ? (() => { const [y, m, d] = evt.until.split('-').map(Number); return ` עד ${d}.${m}.${y}`; })() : '';
+    return `${evt.title} כל יום ${HEBREW_DAY_NAMES[dayIdx >= 0 ? dayIdx : 0]} ${at}${until}`;
 }
 
 // Switches the one modal between "add" (evt = null) and "edit this item".
@@ -1025,7 +1038,7 @@ function setEventModalMode(evt) {
             ? 'A class, an exam, anything at a set time - write it the way you\'d say it.'
             : evt.date
                 ? 'Change the words - a new time, date or name - and save.'
-                : 'This repeats every week, so a change applies to every week. Change the words - a new time, day or name - and save.';
+                : 'This repeats every week, so a change applies to every week. Change the words - a new time, day or name, or "עד 15.1" to stop it on a date - and save.';
     }
     if (syncLabel) syncLabel.textContent = evt ? 'Also in Google Calendar' : 'Also add to Google Calendar';
     if (evt && syncCheck) syncCheck.checked = !!evt.googleEventId;
@@ -1069,6 +1082,7 @@ async function saveEventEdit(text) {
             title: newTitle,
             day: parsed.day,
             date: parsed.date || null,
+            until: parsed.until || null,
             time: parsed.time,
             // Same name -> same type. Re-classifying an unchanged title could
             // only turn a correct type into a wrong one.
@@ -1077,6 +1091,7 @@ async function saveEventEdit(text) {
 
         const unchanged = ['title', 'day', 'time', 'type'].every(k => changes[k] === before[k])
             && (changes.date || null) === (before.date || null)
+            && (changes.until || null) === (before.until || null)
             && syncToGoogle === !!before.googleEventId;
         if (unchanged) {
             closeAddEventModal();
@@ -1116,6 +1131,7 @@ async function saveEventEdit(text) {
             title: p.title,
             day: p.day,
             date: p.date || null,
+            until: p.until || null,
             time: p.time,
             type: p.type,
             durationMinutes: p.durationMinutes ?? null,
@@ -1130,7 +1146,7 @@ async function saveEventEdit(text) {
 
 function describeEvent(evt) {
     // Says plainly whether it's once (with the date) or every week.
-    let when = `every ${evt.day}`;
+    let when = `every ${evt.day}${evt.until ? ` until ${untilLabel(evt.until)}` : ''}`;
     if (evt.date) {
         const [y, m, d] = evt.date.split('-').map(Number);
         when = `${evt.day} ${shortDate(new Date(y, m - 1, d))}`;
@@ -2416,7 +2432,7 @@ const SYLLABUS_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const SYLLABUS_DAY_SHORT = { Sunday: 'Sun', Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat' };
 function syllabusDateLabel(item) {
     if (item.kind === 'class') {
-        return `Every ${SYLLABUS_DAY_SHORT[item.weekday] || item.weekday} ${item.time}${item.endTime ? `–${item.endTime}` : ''}`;
+        return `Every ${SYLLABUS_DAY_SHORT[item.weekday] || item.weekday} ${item.time}${item.endTime ? `–${item.endTime}` : ''}${item.until ? ` until ${untilLabel(item.until)}` : ''}`;
     }
     if (!item.date) return 'No date in the file';
     const [y, m, d] = item.date.split('-').map(Number);
@@ -2439,9 +2455,16 @@ function syllabusNote(item) {
     if (item.kind === 'assignment' && !item.date) return { text: 'The dates aren\'t in the syllabus - add each one when it\'s published.', blocked: true };
     if (item.kind === 'class') {
         if (item.alreadyExists) return { text: 'Already in your Planner at that time' };
-        // Not ticked by default: a weekly class repeats with no end date, and
-        // an old syllabus (last semester) would fill every week from now on.
-        return { text: 'Repeats every week in the Planner. Tick it if this is this semester\'s timetable.', soft: true };
+        // The file says when the semester ends: ticked, and it stops then -
+        // unless that date has passed (an old syllabus).
+        if (item.until && item.until < localIsoDate(new Date())) {
+            return { text: `These classes ended on ${untilLabel(item.until)} - this looks like an older semester.`, soft: true };
+        }
+        if (item.until) return null;
+        // No end date in the file: not ticked by default - a weekly class
+        // with no end fills every week from now on. One box to say until when.
+        if (item.untilError) return { text: item.untilError, soft: true, askUntil: true };
+        return { text: 'Repeats every week. Write until when (e.g. "15.1"), or just tick it to keep it with no end date.', soft: true, askUntil: true };
     }
     if (item.alreadyExists) return { text: 'Already in MindSync' };
     if (item.isPast) return { text: 'Already passed' };
@@ -2472,7 +2495,8 @@ function renderSyllabusList() {
     syllabusList.innerHTML = '';
     syllabusState.items.forEach((item, index) => {
         const note = syllabusNote(item);
-        const row = document.createElement(note && note.askDate ? 'div' : 'label');
+        const asks = note && (note.askDate || note.askUntil);
+        const row = document.createElement(asks ? 'div' : 'label');
         row.className = 'syllabus-row' + (note && note.blocked ? ' is-blocked' : '');
 
         const box = document.createElement('input');
@@ -2507,22 +2531,37 @@ function renderSyllabusList() {
         }
         // Exam with no date: write it right here, in your own words ("12.2",
         // "מועד א 12.2 מועד ב 5.3") - read the same way as everywhere else.
-        if (note && note.askDate) {
+        if (asks) {
             const wrap = document.createElement('span');
             wrap.className = 'syllabus-row__date';
             const input = document.createElement('input');
             input.className = 'input-field';
             input.dir = 'auto';
             input.maxLength = 200;
-            input.placeholder = 'לדוגמה: 12.2';
-            input.value = item.dateText || '';
+            input.placeholder = note.askUntil ? 'עד: לדוגמה 15.1' : 'לדוגמה: 12.2';
+            input.value = (note.askUntil ? item.untilText : item.dateText) || '';
             const set = document.createElement('button');
             set.className = 'btn-secondary btn-sm';
             set.type = 'button';
-            set.textContent = 'Set date';
+            set.textContent = note.askUntil ? 'Set end' : 'Set date';
             const apply = async () => {
                 const text = input.value.trim();
                 if (!text) return;
+                if (note.askUntil) {
+                    item.untilText = text;
+                    set.disabled = true;
+                    const r = await ipcRenderer.invoke('parse-exam-dates', text).catch(e => ({ error: e.message }));
+                    set.disabled = false;
+                    if (!r || r.error || !r.exams || !r.exams.length) {
+                        item.untilError = (r && r.error) || 'Couldn\'t tell the date. Try writing it like "15.1".';
+                    } else {
+                        item.until = r.exams[0].date;
+                        item.untilError = null;
+                        item.checked = true;
+                    }
+                    renderSyllabusList();
+                    return;
+                }
                 item.dateText = text;
                 set.disabled = true;
                 const r = await ipcRenderer.invoke('parse-exam-dates', text).catch(e => ({ error: e.message }));
@@ -2607,7 +2646,7 @@ async function confirmSyllabusImport() {
     const picked = state.items.filter(i => i.checked);
     if (!picked.length) return;
     const course = syllabusCourse.value.trim();
-    const syncToGoogle = !!(syllabusGoogle && syllabusGoogle.checked && picked.some(i => i.kind === 'exam'));
+    const syncToGoogle = !!(syllabusGoogle && syllabusGoogle.checked && picked.some(i => i.kind === 'exam' || i.kind === 'class'));
 
     state.saving = true;
     syllabusConfirm.disabled = true;
@@ -2616,7 +2655,7 @@ async function confirmSyllabusImport() {
     let res;
     try {
         res = await ipcRenderer.invoke('import-syllabus-items',
-            picked.map(({ kind, title, date, time, durationMinutes, weekday, endTime }) => ({ kind, title, date, time, durationMinutes, weekday, endTime })),
+            picked.map(({ kind, title, date, until, time, durationMinutes, weekday, endTime }) => ({ kind, title, date, until, time, durationMinutes, weekday, endTime })),
             { course, syncToGoogle });
     } catch (e) {
         res = { created: { events: [], tasks: [] }, errors: [e.message], syncErrors: [] };
