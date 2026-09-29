@@ -1230,3 +1230,32 @@ html:not(.is-web) .web-only { display: none !important; }
 @media (max-width: 760px) { .home-study { flex-direction: column; align-items: stretch; } }
 .summary-lucky { margin-top: 6px; }
 .attention-item__late { color: var(--status-danger); font-weight: var(--font-medium); }
+/* ---- Progress: exam readiness (30/9) ---- */
+.progress-section-title { margin: 22px 0 10px; }
+.progress-section-title:first-of-type { margin-top: 4px; }
+.progress-section-title[hidden] { display: none; }
+.readiness { padding: 16px 18px; }
+.readiness-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: var(--text-xs); color: var(--text-secondary); margin: 4px 0 6px; }
+.readiness-legend[hidden] { display: none; }
+.readiness-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.rd-dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.rd-known { background: var(--status-success); }
+.rd-shaky { background: var(--status-warning); }
+.rd-not { background: var(--status-danger); }
+.rd-unseen { background: var(--border-strong); }
+.readiness-row { padding: 14px 0; border-top: 1px solid var(--border-color); }
+.readiness-row:first-child { border-top: 0; }
+.readiness-row__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.readiness-row__name { font-weight: var(--font-semibold); color: var(--text-primary); }
+.readiness-row__pct { margin-inline-start: auto; font-weight: var(--font-semibold); font-size: var(--text-lg); color: var(--text-primary); }
+.readiness-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--bg-subtle); margin: 8px 0 10px; }
+.readiness-bar__seg { height: 100%; }
+.readiness-row__foot { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.readiness-row__text { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); line-height: 1.5; }
+.readiness-row__foot .btn-primary, .readiness-row__foot .btn-secondary { flex-shrink: 0; }
+.readiness-empty { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 6px 0; }
+.readiness-empty p { margin: 0; }
+.study-to-progress { margin-top: 18px; }
+@media (max-width: 760px) {
+  .readiness-row__foot, .readiness-empty { flex-direction: column; align-items: stretch; }
+}
