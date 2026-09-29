@@ -1210,3 +1210,14 @@ html:not(.is-web) .web-only { display: none !important; }
 .study-short-answer { margin-bottom: 14px; }
 .study-short-answer__text { font-size: var(--text-base); color: var(--text-primary); line-height: 1.55; }
 .study-answer.study-answer--source { font-size: var(--text-sm, 13px); color: var(--text-secondary); }
+/* "I don't know" (30/9): a quiet full-width link under the confidence
+   buttons - a different kind of answer, not a fourth level of sure. */
+.study-dont-know {
+    display: block; width: 100%; margin-top: 10px; padding: 10px;
+    background: none; border: 1px dashed var(--border-strong); border-radius: var(--radius-lg);
+    color: var(--text-secondary); font: inherit; font-size: var(--text-sm); cursor: pointer;
+}
+.study-dont-know:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+.study-dont-know:disabled { opacity: .55; cursor: progress; }
+.outcome-row[hidden] { display: none; }
+.study-short-answer.is-loading .study-short-answer__text { color: var(--text-secondary); font-style: italic; }

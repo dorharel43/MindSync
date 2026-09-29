@@ -4550,7 +4550,7 @@ function renderStudyCard() {
         typed.placeholder = TYPE_PLACEHOLDERS[item.mode] || TYPE_PLACEHOLDERS.recall;
         typed.disabled = false;
     }
-    document.querySelectorAll('.confidence-btn').forEach(b => { b.disabled = false; });
+    document.querySelectorAll('.confidence-btn, #study-dont-know-btn').forEach(b => { b.disabled = false; });
 
     const total = studyState.queue.length;
     document.getElementById('study-position').textContent = `${studyState.index + 1} / ${total}`;
@@ -4600,7 +4600,7 @@ document.querySelectorAll('.confidence-btn').forEach(btn => {
         if (!item || !text) { revealAnswer(); return; }   // answered in the head
 
         // Typed: the AI checks it. The buttons stay put (no jump), just busy.
-        const buttons = document.querySelectorAll('.confidence-btn');
+        const buttons = document.querySelectorAll('.confidence-btn, #study-dont-know-btn');
         buttons.forEach(b => { b.disabled = true; });
         typed.disabled = true;
         const prompt = document.getElementById('study-confidence-prompt');
@@ -4615,16 +4615,57 @@ document.querySelectorAll('.confidence-btn').forEach(btn => {
     });
 });
 
+// "I don't know": straight to the answer. No check (nothing to check), and no
+// "How did you do?" - it's already known how it went. Saved as not known
+// (missed / wrong), so it comes back soon.
+const dontKnowBtn = document.getElementById('study-dont-know-btn');
+if (dontKnowBtn) dontKnowBtn.onclick = () => {
+    const item = studyState.queue[studyState.index];
+    if (!item) return;
+    studyState.confidence = 'dont_know';
+    revealAnswer({ dontKnow: true });
+    // The stored answer is a quote from the material - often long, with an
+    // intro. Ask for the short direct one (or a solution when there's none).
+    const stored = (item.answer || item.mySolution || '').trim();
+    if (!stored || stored.length > SHORT_ENOUGH) fetchShortAnswer(item);
+};
+const SHORT_ENOUGH = 200;
+
+async function fetchShortAnswer(item) {
+    const index = studyState.index;
+    const box = document.getElementById('study-short-answer');
+    const text = document.getElementById('study-short-answer-text');
+    if (!box || !text) return;
+    box.hidden = false;
+    box.classList.add('is-loading');
+    text.textContent = 'Getting a short answer…';
+    const res = await ipcRenderer.invoke('grade-study-answer', {
+        question: item.question, expected: item.answer || item.mySolution || '', mode: item.mode, explainOnly: true
+    }).catch(() => null);
+    if (studyState.index !== index || studyState.queue[index] !== item) return;   // moved on meanwhile
+    box.classList.remove('is-loading');
+    if (res && res.answer) {
+        text.textContent = res.answer;
+        document.getElementById('study-answer').classList.add('study-answer--source');
+    } else {
+        box.hidden = true;   // the material's answer below is still there
+    }
+}
+
 // check: null (answered in the head), { verdict, feedback, typed } from the
-// AI, or { failed, typed } when the check couldn't run (then: mark yourself).
+// AI, { failed, typed } when the check couldn't run (then: mark yourself),
+// or { dontKnow: true } ("I don't know" - no check, no self-marking).
 function revealAnswer(check = null) {
     const item = studyState.queue[studyState.index];
     if (!item) return;
     const verdictBox = document.getElementById('study-verdict');
     const nextRow = document.getElementById('study-next-row');
-    studyState.aiOutcome = check && check.verdict ? (VERDICT_TO_OUTCOME[item.mode] || VERDICT_TO_OUTCOME.recall)[check.verdict] : null;
+    const dontKnow = !!(check && check.dontKnow);
+    const outcomeMap = VERDICT_TO_OUTCOME[item.mode] || VERDICT_TO_OUTCOME.recall;
+    studyState.aiOutcome = dontKnow ? outcomeMap.wrong
+        : (check && check.verdict ? outcomeMap[check.verdict] : null);
     if (verdictBox) {
-        verdictBox.hidden = !check;
+        verdictBox.hidden = !check || dontKnow;
         verdictBox.className = 'study-verdict' + (check && check.verdict ? ` study-verdict--${check.verdict}` : '');
         if (check) {
             document.getElementById('study-verdict-title').textContent = check.verdict
@@ -4638,6 +4679,7 @@ function revealAnswer(check = null) {
     if (shortBox) {
         const short = check && check.verdict && check.answer ? check.answer : '';
         shortBox.hidden = !short;
+        shortBox.classList.remove('is-loading');
         document.getElementById('study-short-answer-text').textContent = short;
     }
     // With a short answer above, the material's quote is the source - smaller.
@@ -4713,6 +4755,11 @@ function revealAnswer(check = null) {
     if (nextRow) nextRow.hidden = !studyState.aiOutcome;
     const outcomePrompt = document.getElementById('study-outcome-prompt');
     if (studyState.aiOutcome) outcomePrompt.textContent = 'The check says:';
+    // "I don't know": nothing to choose - "Got it" would make no sense.
+    row.hidden = dontKnow;
+    const overrideHint = document.getElementById('study-override-hint');
+    if (overrideHint) overrideHint.hidden = dontKnow;
+    if (dontKnow) outcomePrompt.textContent = 'Marked as "didn\'t know" - it comes back tomorrow.';
 
     document.getElementById('study-confidence-step').hidden = true;
     document.getElementById('study-answer-step').hidden = false;

@@ -2147,8 +2147,25 @@ ipcMain.handle('grade-study-answer', async (event, payload = {}) => {
         const question = String(payload.question || '').slice(0, 2000);
         const expected = String(payload.expected || '').slice(0, 4000);
         const userAnswer = String(payload.userAnswer || '').trim().slice(0, 3000);
-        if (!question || !userAnswer) return { error: 'Nothing to check.' };
         const solve = payload.mode === 'practice';
+        const clean = (v, n) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
+
+        // "I don't know": nothing to judge - just the short, direct answer,
+        // since the stored one is a quote that often opens with an intro.
+        if (payload.explainOnly) {
+            if (!question) return { error: 'No question.' };
+            const explainPrompt = `A university student did not know the answer to this practice question. Give the correct answer, short and direct: 1-2 sentences${solve ? ' (the final result and the key step)' : ''}, in the SAME LANGUAGE as the question, no introduction ("There is another type of..."), just what answers it.
+${expected ? 'Base it on the reference answer from the course material.' : 'There is no reference answer: work it out yourself.'}
+
+Question: ${question}
+${expected ? `Reference answer (from the course material): ${expected}\n` : ''}
+Return ONLY JSON: {"answer": "the short direct answer"}`;
+            const out = await aiProvider.generateText(explainPrompt, { forceJson: true, maxTokens: 700, thinkingLevel: 'low', noFallback: true, timeoutMs: 30000 });
+            const answer = clean(JSON.parse(extractJsonFromText(String(out))).answer, 500);
+            return answer ? { answer } : { error: 'No answer came back.' };
+        }
+
+        if (!question || !userAnswer) return { error: 'Nothing to check.' };
         const prompt = `You check a university student's answer to a practice question. Judge the MEANING, not the wording: a short answer that has the key idea is correct; a different but valid method is correct.
 ${solve ? 'This is a problem to solve. The student may give only the final result - judge that result.' : ''}
 Verdicts:
@@ -2167,7 +2184,6 @@ Return ONLY JSON: {"verdict": "correct|partial|wrong", "feedback": "ONE short se
         const data = JSON.parse(extractJsonFromText(String(text)));
         const verdict = ['correct', 'partial', 'wrong'].includes(data.verdict) ? data.verdict : null;
         if (!verdict) return { error: 'The check did not come back clearly.' };
-        const clean = (v, n) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
         return { verdict, feedback: clean(data.feedback, 300), answer: clean(data.answer, 500) };
     } catch (err) {
         console.error('❌ grade-study-answer:', err.message);

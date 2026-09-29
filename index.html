@@ -555,6 +555,7 @@
                             Write your answer, then press how sure you are - the AI checks it.
                             MindSync remembers what you were sure about and got wrong, and brings it back first.
                             You can also leave it empty, answer in your head and mark yourself.
+                            No idea at all? Press "I don't know" - you'll see the answer and it comes back tomorrow.
                         </p>
                         <div class="confidence-row">
                             <button class="confidence-btn confidence-btn--sure" data-confidence="sure">
@@ -564,9 +565,13 @@
                                 <strong>I think so</strong><span>Fairly likely</span>
                             </button>
                             <button class="confidence-btn confidence-btn--guess" data-confidence="guessing">
-                                <strong>Guessing</strong><span>Not really</span>
+                                <strong>Guessing</strong><span>I have a guess</span>
                             </button>
                         </div>
+                        <!-- Not knowing is its own answer: no check, no "How did you
+                             do?" (you can't have "got it"). Shows the answer and
+                             marks it as not known - it comes back soon. -->
+                        <button class="study-dont-know" id="study-dont-know-btn" type="button">I don't know - show me the answer</button>
                     </div>
 
                     <!-- Step 2: reveal + self-grade -->
