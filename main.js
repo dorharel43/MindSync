@@ -2137,6 +2137,41 @@ ipcMain.handle('submit-study-review', async (event, id, payload) => {
     try { return await api.submitStudyReview(id, payload); } catch (err) { return { error: err.message }; }
 });
 
+// Checks what the student TYPED against the question (and the stored answer,
+// when there is one). Replaces "grade yourself", which students do kindly -
+// and the "sure but wrong" list is only worth something if the grading is
+// honest. One short request (a "light" job on the web's daily allowance).
+// Returns { verdict: 'correct' | 'partial' | 'wrong', feedback } or { error }.
+ipcMain.handle('grade-study-answer', async (event, payload = {}) => {
+    try {
+        const question = String(payload.question || '').slice(0, 2000);
+        const expected = String(payload.expected || '').slice(0, 4000);
+        const userAnswer = String(payload.userAnswer || '').trim().slice(0, 3000);
+        if (!question || !userAnswer) return { error: 'Nothing to check.' };
+        const solve = payload.mode === 'practice';
+        const prompt = `You check a university student's answer to a practice question. Judge the MEANING, not the wording: a short answer that has the key idea is correct; a different but valid method is correct.
+${solve ? 'This is a problem to solve. The student may give only the final result - judge that result.' : ''}
+Verdicts:
+- "correct": the key idea (or the right result) is there.
+- "partial": on the right track, but something important is missing or slightly wrong.
+- "wrong": wrong, or does not answer the question.
+${expected ? 'Use the reference answer as the standard, but accept anything equivalent.' : 'There is no reference answer: work out the correct answer yourself first, then judge.'}
+
+Question: ${question}
+${expected ? `Reference answer (from the course material): ${expected}\n` : ''}Student's answer: ${userAnswer}
+
+Return ONLY JSON: {"verdict": "correct|partial|wrong", "feedback": "ONE short sentence in the SAME LANGUAGE as the question - what is missing or wrong; if correct, a small useful addition or 'exactly right'"}`;
+        const text = await aiProvider.generateText(prompt, { forceJson: true, maxTokens: 700, thinkingLevel: 'low', noFallback: true, timeoutMs: 30000 });
+        const data = JSON.parse(extractJsonFromText(String(text)));
+        const verdict = ['correct', 'partial', 'wrong'].includes(data.verdict) ? data.verdict : null;
+        if (!verdict) return { error: 'The check did not come back clearly.' };
+        return { verdict, feedback: String(data.feedback || '').replace(/\s+/g, ' ').trim().slice(0, 300) };
+    } catch (err) {
+        console.error('❌ grade-study-answer:', err.message);
+        return { error: err.message };
+    }
+});
+
 ipcMain.handle('delete-study-item', async (event, id) => {
     try { return await api.deleteStudyItem(id); } catch (err) { return { error: err.message }; }
 });

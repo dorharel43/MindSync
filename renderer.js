@@ -4053,10 +4053,22 @@ const OUTCOMES_BY_MODE = {
 
 const MODE_LABELS = { recall: 'Remember', practice: 'Solve', explain: 'Explain' };
 const MODE_PROMPTS = {
-    recall: 'Think of your answer. How sure are you?',
-    practice: 'Read the problem. How sure are you that you can solve it?',
-    explain: 'Plan your explanation. How sure are you?'
+    recall: 'How sure are you? This also checks your answer.',
+    practice: 'How sure are you? This also checks your result.',
+    explain: 'How sure are you? This also checks your explanation.'
 };
+const TYPE_PLACEHOLDERS = {
+    recall: 'Write your answer - a sentence or two is enough',
+    practice: 'Your final result (the working can stay on paper)',
+    explain: 'Explain it in a few sentences'
+};
+// The AI's verdict -> the outcome the server's schedule understands.
+const VERDICT_TO_OUTCOME = {
+    recall:   { correct: 'got_it', partial: 'partial', wrong: 'missed' },
+    practice: { correct: 'solved', partial: 'stuck',   wrong: 'wrong' },
+    explain:  { correct: 'got_it', partial: 'partial', wrong: 'missed' }
+};
+const VERDICT_TITLES = { correct: 'Correct', partial: 'Partly right', wrong: 'Not quite' };
 const ANSWER_PROMPTS = {
     recall: 'How did you do?',
     practice: 'Solve it on paper, then tell the truth:',
@@ -4513,6 +4525,7 @@ async function startStudySession(resume = null, scope = null) {
     if (scopeLabel) scopeLabel.textContent = scope ? `· ${scope.label}` : '· Smart practice';
     studyState.index = resume ? Math.min(resume.index, items.length - 1) : 0;
     studyState.session = resume ? resume.session : { reviewed: 0, correct: 0, overconfident: 0 };
+    if (!Array.isArray(studyState.session.sureWrong)) studyState.session.sureWrong = [];
 
     clearManageSelection();
     document.getElementById('study-home').hidden = true;
@@ -4530,6 +4543,14 @@ function renderStudyCard() {
 
     studyState.confidence = null;
     studyState.startedAt = Date.now();
+    studyState.aiOutcome = null;
+    const typed = document.getElementById('study-typed-answer');
+    if (typed) {
+        typed.value = '';
+        typed.placeholder = TYPE_PLACEHOLDERS[item.mode] || TYPE_PLACEHOLDERS.recall;
+        typed.disabled = false;
+    }
+    document.querySelectorAll('.confidence-btn').forEach(b => { b.disabled = false; });
 
     const total = studyState.queue.length;
     document.getElementById('study-position').textContent = `${studyState.index + 1} / ${total}`;
@@ -4544,6 +4565,17 @@ function renderStudyCard() {
     else catBadge.hidden = true;
 
     document.getElementById('study-question').textContent = item.question;
+    // Last time: sure, and wrong. Say so - that's the whole point of the list.
+    const last = Array.isArray(item.reviews) && item.reviews.length ? item.reviews[item.reviews.length - 1] : null;
+    let sureFlag = document.getElementById('study-sure-flag');
+    if (!sureFlag) {
+        sureFlag = document.createElement('div');
+        sureFlag.id = 'study-sure-flag';
+        sureFlag.className = 'study-sure-flag';
+        document.getElementById('study-question').before(sureFlag);
+    }
+    sureFlag.textContent = 'Last time you were sure about this - and got it wrong.';
+    sureFlag.hidden = !(last && last.confidence === 'sure' && last.wasCorrect === false);
     document.getElementById('study-confidence-prompt').textContent = MODE_PROMPTS[item.mode] || MODE_PROMPTS.recall;
 
     document.getElementById('study-confidence-step').hidden = false;
@@ -4558,17 +4590,50 @@ function confidenceHintKey() { return `mindsync.confidenceHintSeen.${currentUser
 
 // Step 1 -> 2: confidence is locked in before anything is revealed.
 document.querySelectorAll('.confidence-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
         const seen = Number(localStorage.getItem(confidenceHintKey()) || 0);
         if (seen < CONFIDENCE_HINT_TIMES) localStorage.setItem(confidenceHintKey(), String(seen + 1));
         studyState.confidence = btn.dataset.confidence;
-        revealAnswer();
+        const item = studyState.queue[studyState.index];
+        const typed = document.getElementById('study-typed-answer');
+        const text = typed ? typed.value.trim() : '';
+        if (!item || !text) { revealAnswer(); return; }   // answered in the head
+
+        // Typed: the AI checks it. The buttons stay put (no jump), just busy.
+        const buttons = document.querySelectorAll('.confidence-btn');
+        buttons.forEach(b => { b.disabled = true; });
+        typed.disabled = true;
+        const prompt = document.getElementById('study-confidence-prompt');
+        const promptText = prompt.textContent;
+        prompt.textContent = 'Checking your answer…';
+        const res = await ipcRenderer.invoke('grade-study-answer', {
+            question: item.question, expected: item.answer || item.mySolution || '', mode: item.mode, userAnswer: text
+        }).catch(e => ({ error: e.message }));
+        prompt.textContent = promptText;
+        if (studyState.queue[studyState.index] !== item) return;   // stopped meanwhile
+        revealAnswer(res && !res.error ? { ...res, typed: text } : { failed: (res && res.error) || 'no answer', typed: text });
     });
 });
 
-function revealAnswer() {
+// check: null (answered in the head), { verdict, feedback, typed } from the
+// AI, or { failed, typed } when the check couldn't run (then: mark yourself).
+function revealAnswer(check = null) {
     const item = studyState.queue[studyState.index];
     if (!item) return;
+    const verdictBox = document.getElementById('study-verdict');
+    const nextRow = document.getElementById('study-next-row');
+    studyState.aiOutcome = check && check.verdict ? (VERDICT_TO_OUTCOME[item.mode] || VERDICT_TO_OUTCOME.recall)[check.verdict] : null;
+    if (verdictBox) {
+        verdictBox.hidden = !check;
+        verdictBox.className = 'study-verdict' + (check && check.verdict ? ` study-verdict--${check.verdict}` : '');
+        if (check) {
+            document.getElementById('study-verdict-title').textContent = check.verdict
+                ? VERDICT_TITLES[check.verdict]
+                : 'Couldn\'t check it right now - mark yourself below';
+            document.getElementById('study-verdict-feedback').textContent = check.verdict ? (check.feedback || '') : '';
+            document.getElementById('study-verdict-yours').textContent = `You wrote: ${check.typed}`;
+        }
+    }
 
     const answerEl = document.getElementById('study-answer');
     const labelEl = document.querySelector('.study-answer-label');
@@ -4604,7 +4669,7 @@ function revealAnswer() {
                 labelEl.innerHTML = `<span class="ai-answer-flag">${icon('info', { size: 13 })} AI-generated solution — worth checking</span>`;
             } else {
                 labelEl.textContent = item.sourceFile
-                    ? `From your material — ${item.sourceFile}`
+                    ? `From your material — ${fileLabel(item.sourceFile)}`
                     : 'From your material';
             }
         }
@@ -4629,7 +4694,12 @@ function revealAnswer() {
 
     row.querySelectorAll('.outcome-btn').forEach(b => {
         b.onclick = () => submitReview(b.dataset.outcome);
+        // The AI's call is marked; "Next" accepts it, any button overrides it.
+        b.classList.toggle('is-suggested', b.dataset.outcome === studyState.aiOutcome);
     });
+    if (nextRow) nextRow.hidden = !studyState.aiOutcome;
+    const outcomePrompt = document.getElementById('study-outcome-prompt');
+    if (studyState.aiOutcome) outcomePrompt.textContent = 'The check says:';
 
     document.getElementById('study-confidence-step').hidden = true;
     document.getElementById('study-answer-step').hidden = false;
@@ -4658,6 +4728,7 @@ async function submitReview(outcome) {
     // screen a week later it teaches nothing.
     if (res.wasOverconfident) {
         studyState.session.overconfident += 1;
+        if (!studyState.session.sureWrong.includes(item.question)) studyState.session.sureWrong.push(item.question);
         toast.warning('You were sure about that one. It will come back soon.', 'Sure but wrong');
     }
 
@@ -4684,6 +4755,15 @@ function endStudySession() {
     document.getElementById('summary-correct').textContent = s.correct;
     document.getElementById('summary-overconfident').textContent = s.overconfident;
 
+    const swBox = document.getElementById('summary-surewrong');
+    const swList = document.getElementById('summary-surewrong-list');
+    const sureWrong = s.sureWrong || [];
+    if (swBox && swList) {
+        swList.innerHTML = '';
+        sureWrong.forEach(q => { const li = document.createElement('li'); li.dir = 'auto'; li.textContent = q; swList.append(li); });
+        swBox.hidden = sureWrong.length === 0;
+    }
+
     const msg = document.getElementById('summary-message');
     if (s.reviewed === 0) msg.textContent = '';
     else if (s.overconfident > 0) {
@@ -4698,6 +4778,9 @@ const startStudyBtn = document.getElementById('start-study-btn');
 // would arrive as the `resume` argument and send a fresh session down the
 // resume path with no ids - throwing, so the button appeared to do nothing.
 if (startStudyBtn) startStudyBtn.onclick = () => startStudySession();
+
+const studyNextBtn = document.getElementById('study-next-btn');
+if (studyNextBtn) studyNextBtn.onclick = () => { if (studyState.aiOutcome) submitReview(studyState.aiOutcome); };
 
 const endStudyBtn = document.getElementById('end-study-btn');
 if (endStudyBtn) endStudyBtn.onclick = endStudySession;

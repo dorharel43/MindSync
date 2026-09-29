@@ -543,15 +543,18 @@
 
                     <div class="study-question" id="study-question" dir="auto"></div>
 
-                    <!-- Step 1: state confidence BEFORE the answer is shown -->
+                    <!-- Step 1: write the answer, then say how sure you are. The
+                         confidence button also sends the answer to be checked by
+                         the AI (29/9) - one tap, no extra step. Left empty = the
+                         old way: answer in your head and mark yourself. -->
                     <div id="study-confidence-step">
-                        <div class="study-prompt" id="study-confidence-prompt">Think of your answer. How sure are you?</div>
-                        <!-- Shown only for a user's first few answers: the "say how
-                             sure you are BEFORE you see it" step is unfamiliar, and
-                             testers didn't know why they were being asked. -->
+                        <textarea id="study-typed-answer" class="input-field study-typed-answer" dir="auto" rows="3"
+                            placeholder="Write your answer - a sentence or two is enough"></textarea>
+                        <div class="study-prompt" id="study-confidence-prompt">How sure are you? This also checks your answer.</div>
                         <p class="confidence-hint" id="study-confidence-hint" hidden>
-                            Answer in your head first, then pick one - before you see the answer.
-                            Later, MindSync shows you where "I'm sure" was right and where it wasn't.
+                            Write your answer, then press how sure you are - the AI checks it.
+                            MindSync remembers what you were sure about and got wrong, and brings it back first.
+                            You can also leave it empty, answer in your head and mark yourself.
                         </p>
                         <div class="confidence-row">
                             <button class="confidence-btn confidence-btn--sure" data-confidence="sure">
@@ -568,6 +571,12 @@
 
                     <!-- Step 2: reveal + self-grade -->
                     <div id="study-answer-step" hidden>
+                        <!-- The AI's check of what was typed (hidden when answered in the head) -->
+                        <div class="study-verdict" id="study-verdict" hidden>
+                            <div class="study-verdict__title" id="study-verdict-title"></div>
+                            <div class="study-verdict__feedback" id="study-verdict-feedback" dir="auto"></div>
+                            <div class="study-verdict__yours" id="study-verdict-yours" dir="auto"></div>
+                        </div>
                         <div class="study-answer-label">Answer</div>
                         <div class="study-answer" id="study-answer" dir="auto"></div>
 
@@ -585,6 +594,10 @@
 
                         <div class="study-prompt" id="study-outcome-prompt">How did you do?</div>
                         <div class="outcome-row" id="study-outcome-row"></div>
+                        <div class="study-next-row" id="study-next-row" hidden>
+                            <span class="settings-hint" id="study-override-hint">Think the check got it wrong? Pick the right one above instead.</span>
+                            <button class="btn-primary" id="study-next-btn">Next</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -608,6 +621,10 @@
                         </div>
                     </div>
                     <div id="summary-message" class="settings-hint"></div>
+                    <div class="summary-surewrong" id="summary-surewrong" hidden>
+                        <div class="summary-surewrong__title">You were sure about these - and got them wrong. They come back first next time:</div>
+                        <ul class="summary-surewrong__list" id="summary-surewrong-list"></ul>
+                    </div>
                     <button class="btn-primary" id="summary-done-btn">Done</button>
                 </div>
             </div>
