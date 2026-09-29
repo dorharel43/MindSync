@@ -1,3 +1,6 @@
+// Language (i18n.js, loaded before this file). If it's missing, English.
+if (!window.I18N) window.I18N = { lang: 'en', isRtl: false, t: (s, v) => (v ? String(s).replace(/\{(\w+)\}/g, (m, k) => (k in v ? v[k] : m)) : s), setLang() {}, translate() {} };
+if (!window.t) window.t = window.I18N.t;
 const { ipcRenderer, clipboard } = require('electron');
 
 // A task's urgency is classified by AI in the background now (see main.js's
@@ -422,6 +425,12 @@ if (themeBtnSidebar) themeBtnSidebar.addEventListener('click', toggleTheme);
 if (darkToggleSettings) darkToggleSettings.addEventListener('click', toggleTheme);
 document.querySelectorAll('[data-appearance]').forEach((btn) => {
     btn.addEventListener('click', () => setAppearance(btn.dataset.appearance));
+});
+
+// Language (i18n.js): switching reloads the page in the other language.
+document.querySelectorAll('[data-lang]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.lang === I18N.lang);
+    btn.addEventListener('click', () => { if (btn.dataset.lang !== I18N.lang) I18N.setLang(btn.dataset.lang); });
 });
 document.querySelectorAll('.theme-option').forEach((btn) => {
     btn.addEventListener('click', () => applyTheme(btn.dataset.themeValue));
@@ -3258,7 +3267,7 @@ async function loadAndRenderHome() {
                 <div class="timeline-content">
                     <div class="dot ${isNext ? 'active' : ''}" style="${isNext ? '' : `background-color: ${dotColor};`}"></div>
                     <span class="timeline-title" dir="auto">${escapeHtml(evt.title)}</span>
-                    ${isNext ? '<span class="tag-active" style="margin-left:8px;">Next</span>' : ''}
+                    ${isNext ? '<span class="tag-active" style="margin-inline-start:8px;">Next</span>' : ''}
                 </div>
                 <div class="timeline-time">${evt.time}</div>
             `;
@@ -3735,7 +3744,7 @@ setInterval(async () => {
 
             // אם נשארו בין 0 ל-10 דקות, ועוד לא התרענו - תקפיץ התראה!
             if (diffMinutes > 0 && diffMinutes <= 10 && !notifiedEvents.has(evt.id)) {
-                showNotification('Starting soon', `${evt.title} starts at ${evt.time}`);
+                showNotification(t('Starting soon'), t(`${evt.title} starts at ${evt.time}`));
                 notifiedEvents.add(evt.id); // מסמנים שהתרענו כדי לא להציק שוב
             }
         }
@@ -4631,7 +4640,7 @@ function renderCalibration(cal, totalReviews, trendByConfidence) {
                 </div>
                 <div class="cal-track">
                     <div class="cal-fill cal-${tone}" style="width:${b.accuracy}%"></div>
-                    <div class="cal-ideal" style="left:${r.ideal}%" title="Well-calibrated: about ${r.ideal}%"></div>
+                    <div class="cal-ideal" style="inset-inline-start:${r.ideal}%" title="Well-calibrated: about ${r.ideal}%"></div>
                 </div>
                 <div class="cal-row__note ms-text-xs ms-muted">${b.correct} of ${b.total}</div>
                 ${trendNote}
@@ -4835,7 +4844,7 @@ async function fetchShortAnswer(item) {
     if (!box || !text) return;
     box.hidden = false;
     box.classList.add('is-loading');
-    text.textContent = 'Getting a short answer…';
+    text.textContent = t('Getting a short answer…');
     const res = await ipcRenderer.invoke('grade-study-answer', {
         question: item.question, expected: item.answer || item.mySolution || '', mode: item.mode, explainOnly: true
     }).catch(() => null);
@@ -4869,7 +4878,7 @@ function revealAnswer(check = null) {
                 ? VERDICT_TITLES[check.verdict]
                 : 'Couldn\'t check it right now - mark yourself below';
             document.getElementById('study-verdict-feedback').textContent = check.verdict ? (check.feedback || '') : '';
-            document.getElementById('study-verdict-yours').textContent = `You wrote: ${check.typed}`;
+            document.getElementById('study-verdict-yours').textContent = `${t('You wrote:')} ${check.typed}`;
         }
     }
     const shortBox = document.getElementById('study-short-answer');
@@ -4926,11 +4935,11 @@ function revealAnswer(check = null) {
             }
         }
     } else {
-        answerEl.textContent = item.mode === 'practice'
+        answerEl.textContent = t(item.mode === 'practice'
             ? (item.mySolution
                 ? 'Compare what you did against your saved solution below.'
                 : 'No stored solution yet. Solve it, then save your working below so it\'s here next time.')
-            : 'No passage was stored for this one — check your notes.';
+            : 'No passage was stored for this one — check your notes.');
         answerEl.classList.add('study-answer--none');
         if (labelEl) labelEl.textContent = item.mode === 'practice' ? 'How to check' : 'No stored answer';
     }

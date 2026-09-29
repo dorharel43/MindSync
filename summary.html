@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Summary</title>
+    <script src="i18n.js"></script>
+    <script src="i18n-he.js"></script>
     <link rel="stylesheet" href="tokens.css">
     <link rel="stylesheet" href="themes.css">
     <link rel="stylesheet" href="ui-kit.css">
@@ -83,7 +85,7 @@
            sideways instead of wrapping - wrapped code is misleading. */
         .sum-content pre.code-block {
             direction: ltr;
-            text-align: left;
+            text-align: start;
             background: var(--hover-bg);
             border: 1px solid var(--border-color);
             border-radius: var(--radius-md);
@@ -140,7 +142,7 @@
     </div>
 
     <div class="sum-body">
-        <div class="sum-content" id="sum-content"></div>
+        <div class="sum-content" id="sum-content" translate="no"></div>
     </div>
 
     <script src="summary.js"></script>
