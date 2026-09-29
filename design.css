@@ -486,7 +486,7 @@ body.dark-mode .day-column {
     font-variant-numeric: tabular-nums;
     padding-right: 44px;
 }
-.task-repeat { opacity: 0.7; }
+.task-repeat { opacity: 0.7; white-space: nowrap; }
 .task-card__title {
     line-height: 1.35;
     overflow-wrap: break-word;
@@ -1083,3 +1083,11 @@ body.auth-pending #auth-screen { background: var(--bg-sidebar); }
 .syllabus-row__date { display: flex; gap: 6px; margin-top: 6px; max-width: 320px; }
 .syllabus-row__date .input-field { height: 28px; flex: 1; min-width: 0; }
 .syllabus-row.is-blocked:has(.syllabus-row__date) { opacity: 1; }
+
+/* ---------- Desktop app vs web version ----------
+   html.is-web is set by the web version (web/web-shim.js in the server repo).
+   Focus mode, the AI key and the log file only exist in the desktop app;
+   the feedback box only in the web version. */
+.is-web .desktop-only { display: none !important; }
+html:not(.is-web) .web-only { display: none !important; }
+#feedback-text { width: 100%; resize: vertical; margin-top: 4px; }

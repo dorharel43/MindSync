@@ -109,6 +109,7 @@ function bootApp(user) {
     if (typeof loadAndRenderWeeklyBoard === 'function') loadAndRenderWeeklyBoard();
     if (typeof loadStudyHome === 'function') loadStudyHome();
     if (typeof loadAiSettings === 'function') loadAiSettings();
+    if (IS_WEB) refreshGoogleState();
 }
 
 if (authForm) {
@@ -171,6 +172,38 @@ if (authLogoutBtn) {
     };
 }
 
+// Delete account: one dialog that says what goes and asks the password.
+// A wrong password keeps you logged in and lets you try again.
+const authDeleteBtn = document.getElementById('auth-delete-account-btn');
+if (authDeleteBtn) {
+    authDeleteBtn.onclick = async () => {
+        for (;;) {
+            const password = await promptDialog(
+                'Delete your account?',
+                'This deletes your account and everything in it: tasks, calendar items, files, summaries and questions. It can\'t be undone.' +
+                (IS_WEB ? ' Google Calendar is disconnected; what was already added there stays in your Google account.' : '') +
+                ' Enter your password to confirm.',
+                '', { type: 'password', confirmText: 'Delete account', danger: true });
+            if (password === null) return;           // cancelled
+            if (!password) continue;                 // empty: ask again
+            authDeleteBtn.disabled = true;
+            const res = await ipcRenderer.invoke('auth-delete-account', password).catch(e => ({ error: e.message }));
+            authDeleteBtn.disabled = false;
+            if (res && res.success) {
+                toast.success('Your account and its data were deleted.', 'Account deleted');
+                if (authForm) authForm.reset();
+                setAuthMode('register');
+                if (authLoading) authLoading.hidden = true;
+                if (authFormWrap) authFormWrap.hidden = false;
+                document.body.classList.add('auth-pending');
+                return;
+            }
+            toast.error((res && res.error) || 'Please try again.', 'Could not delete the account');
+            if (!/password/i.test((res && res.error) || '')) return;
+        }
+    };
+}
+
 // A saved token isn't proof it still works, so this asks the server rather
 // than trusting the file existing - see main.js's auth-get-session handler.
 (async () => {
@@ -188,6 +221,91 @@ if (authLogoutBtn) {
     if (authLoading) authLoading.hidden = true;
     if (authFormWrap) authFormWrap.hidden = false;
 })();
+
+// ==========================================
+// 0b. Google Calendar - web version
+// ==========================================
+// Desktop: unchanged - the app signs in to Google the first time something
+// is synced. Web (window.MINDSYNC_WEB, set by web-shim.js): every account
+// connects its own Google Calendar once. Until then the "Also add to Google
+// Calendar" boxes start unticked, and ticking one opens Google's page right
+// there - nobody has to find the setting first.
+const IS_WEB = !!window.MINDSYNC_WEB;
+let googleState = IS_WEB ? null : { configured: true, connected: true };
+
+async function refreshGoogleState() {
+    if (!IS_WEB) return googleState;
+    googleState = await ipcRenderer.invoke('google-status').catch(() => null) || { configured: false, connected: false };
+    renderGoogleCard();
+    return googleState;
+}
+const googleConnected = () => !!(googleState && googleState.connected);
+
+// Must run straight from a click (it opens Google's window). Resolves to
+// true once connected.
+async function connectGoogle() {
+    const res = await ipcRenderer.invoke('google-connect');
+    googleState = res || googleState;
+    renderGoogleCard();
+    if (googleConnected()) toast.success('Your MindSync events can now go to Google Calendar too.', 'Google Calendar connected');
+    else if (res && res.error) toast.error(res.error, 'Could not connect Google Calendar');
+    return googleConnected();
+}
+
+// A "also add to Google Calendar" checkbox: ticking it while not connected
+// connects first; if that doesn't happen, the box goes back to unticked.
+function wireGoogleCheckbox(box) {
+    if (!IS_WEB || !box) return;
+    box.addEventListener('change', async () => {
+        if (!box.checked || googleConnected()) return;
+        if (googleState && !googleState.configured) {
+            box.checked = false;
+            toast.info('Google Calendar isn\'t available yet.');
+            return;
+        }
+        box.checked = await connectGoogle();
+    });
+}
+
+function renderGoogleCard() {
+    const label = document.getElementById('google-status-label');
+    const connectBtn = document.getElementById('google-connect-btn');
+    const disconnectBtn = document.getElementById('google-disconnect-btn');
+    if (!IS_WEB || !label) return;
+    const s = googleState;
+    if (!s) { label.textContent = 'Checking…'; return; }
+    label.textContent = !s.configured ? 'Not available yet.'
+        : s.connected ? `Connected${s.email ? ' as ' + s.email : ''} ✓`
+        : 'Not connected.';
+    if (connectBtn) connectBtn.hidden = !s.configured || s.connected;
+    if (disconnectBtn) disconnectBtn.hidden = !s.connected;
+}
+
+if (IS_WEB) {
+    const connectBtn = document.getElementById('google-connect-btn');
+    const disconnectBtn = document.getElementById('google-disconnect-btn');
+    if (connectBtn) connectBtn.onclick = () => connectGoogle();
+    if (disconnectBtn) disconnectBtn.onclick = async () => {
+        const sure = await confirmDialog('Disconnect Google Calendar?',
+            'New events won\'t be added to Google anymore. What is already there stays - you can delete the "MindSync" calendar in Google Calendar if you don\'t want it.',
+            { confirmText: 'Disconnect' });
+        if (!sure) return;
+        const res = await ipcRenderer.invoke('google-disconnect');
+        if (res && res.error) toast.error(res.error);
+        await refreshGoogleState();
+    };
+    // Connected in another tab (or the Google window finished).
+    ipcRenderer.on('google-changed', () => refreshGoogleState());
+    // Came back from Google in the same tab (pop-ups were blocked).
+    const back = new URLSearchParams(location.search).get('google');
+    if (back) {
+        history.replaceState(null, '', location.pathname + location.hash);
+        setTimeout(() => {
+            if (back === 'connected') toast.success('Your MindSync events can now go to Google Calendar too.', 'Google Calendar connected');
+            else toast.error('Google Calendar was not connected. You can try again in Settings.');
+        }, 800);
+    }
+}
 
 // ==========================================
 // 1. Navigation
@@ -533,7 +651,18 @@ function localIsoDate(d) {
 }
 
 function eventOccursOn(evt, date) {
-    return evt.date ? evt.date === localIsoDate(date) : evt.day === WEEKDAY_NAMES[date.getDay()];
+    if (evt.date) return evt.date === localIsoDate(date);
+    // Weekly: every week on its day, up to and including `until` if it has one.
+    if (evt.until && localIsoDate(date) > evt.until) return false;
+    return evt.day === WEEKDAY_NAMES[date.getDay()];
+}
+
+// "2027-01-15" -> "15/1" when it's within the coming year (no doubt which
+// one is meant, and it fits a narrow Planner column), else "15/1/2027".
+function untilLabel(iso) {
+    const [y, m, d] = String(iso).split('-').map(Number);
+    const days = (new Date(y, m - 1, d) - new Date()) / 86400000;
+    return days > -60 && days < 330 ? `${d}/${m}` : `${d}/${m}/${y}`;
 }
 
 // Sunday of the week `offset` weeks away from this one (0 = this week).
@@ -797,7 +926,7 @@ function renderWeeklyBoard() {
                     <button class="btn-icon edit-weekly-btn" title="${weekly ? 'Edit - changes it in every week' : 'Edit'}" aria-label="Edit">${icon('edit')}</button>
                     <button class="btn-icon btn-icon--danger delete-weekly-btn" title="${weekly ? 'Delete - removes it from every week' : 'Delete from calendar'}" aria-label="Delete from calendar">${icon('trash')}</button>
                 </div>
-                <div class="task-time">${escapeHtml(evt.time)}${weekly ? ' <span class="task-repeat" title="Every week">↻</span>' : ''}</div>
+                <div class="task-time">${escapeHtml(evt.time)}${weekly ? ` <span class="task-repeat" title="${evt.until ? `Every week until ${untilLabel(evt.until)}` : 'Every week'}">↻${evt.until ? ` until ${untilLabel(evt.until)}` : ''}</span>` : ''}</div>
                 <div class="task-card__title" dir="auto">${escapeHtml(evt.title)}</div>
             `;
 
@@ -919,7 +1048,9 @@ function eventToSentence(evt) {
         return `${evt.title} ב-${d}.${m}.${y} ${at}`;
     }
     const dayIdx = EVENT_DAYS.indexOf(evt.day);
-    return `${evt.title} כל יום ${HEBREW_DAY_NAMES[dayIdx >= 0 ? dayIdx : 0]} ${at}`;
+    // The year is always written, so a date early next year isn't misread.
+    const until = evt.until ? (() => { const [y, m, d] = evt.until.split('-').map(Number); return ` עד ${d}.${m}.${y}`; })() : '';
+    return `${evt.title} כל יום ${HEBREW_DAY_NAMES[dayIdx >= 0 ? dayIdx : 0]} ${at}${until}`;
 }
 
 // Switches the one modal between "add" (evt = null) and "edit this item".
@@ -939,10 +1070,12 @@ function setEventModalMode(evt) {
             ? 'A class, an exam, anything at a set time - write it the way you\'d say it.'
             : evt.date
                 ? 'Change the words - a new time, date or name - and save.'
-                : 'This repeats every week, so a change applies to every week. Change the words - a new time, day or name - and save.';
+                : 'This repeats every week, so a change applies to every week. Change the words - a new time, day or name, or "עד 15.1" to stop it on a date - and save.';
     }
     if (syncLabel) syncLabel.textContent = evt ? 'Also in Google Calendar' : 'Also add to Google Calendar';
     if (evt && syncCheck) syncCheck.checked = !!evt.googleEventId;
+    // Web, not connected yet: start unticked (ticking it connects - see wireGoogleCheckbox).
+    if (IS_WEB && !evt && syncCheck && !googleConnected()) syncCheck.checked = false;
     if (saveEventBtn) saveEventBtn.textContent = evt ? 'Save changes' : 'Add';
 }
 
@@ -981,6 +1114,7 @@ async function saveEventEdit(text) {
             title: newTitle,
             day: parsed.day,
             date: parsed.date || null,
+            until: parsed.until || null,
             time: parsed.time,
             // Same name -> same type. Re-classifying an unchanged title could
             // only turn a correct type into a wrong one.
@@ -989,6 +1123,7 @@ async function saveEventEdit(text) {
 
         const unchanged = ['title', 'day', 'time', 'type'].every(k => changes[k] === before[k])
             && (changes.date || null) === (before.date || null)
+            && (changes.until || null) === (before.until || null)
             && syncToGoogle === !!before.googleEventId;
         if (unchanged) {
             closeAddEventModal();
@@ -1028,6 +1163,7 @@ async function saveEventEdit(text) {
             title: p.title,
             day: p.day,
             date: p.date || null,
+            until: p.until || null,
             time: p.time,
             type: p.type,
             durationMinutes: p.durationMinutes ?? null,
@@ -1042,7 +1178,7 @@ async function saveEventEdit(text) {
 
 function describeEvent(evt) {
     // Says plainly whether it's once (with the date) or every week.
-    let when = `every ${evt.day}`;
+    let when = `every ${evt.day}${evt.until ? ` until ${untilLabel(evt.until)}` : ''}`;
     if (evt.date) {
         const [y, m, d] = evt.date.split('-').map(Number);
         when = `${evt.day} ${shortDate(new Date(y, m - 1, d))}`;
@@ -2008,7 +2144,7 @@ async function loadAndRenderFiles() {
             <div class="file-info">
                 <div class="file-icon">${icon('file')}</div>
                 <div>
-                    <div class="file-name">${escapeHtml(file.name)}</div>
+                    <div class="file-name" dir="auto">${escapeHtml(file.name)}</div>
                     <div class="file-meta">${escapeHtml(file.folder)}</div>
                 </div>
             </div>
@@ -2165,7 +2301,9 @@ async function runUploadBatch() {
         const read = await ipcRenderer.invoke('read-upload-file', f.path);
         if (!read || read.error) {
             failed++;
-            setUploadRowStatus(i, 'failed', "Couldn't read this file");
+            // Web: the server's reason ("too large", "storage is full"...) is
+            // already a plain sentence - show it instead of a generic one.
+            setUploadRowStatus(i, 'failed', IS_WEB && read && read.error ? read.error : "Couldn't read this file");
             continue;
         }
         const saved = await ipcRenderer.invoke('save-file', {
@@ -2315,6 +2453,8 @@ const syllabusIntro = document.getElementById('syllabus-intro');
 const syllabusCourse = document.getElementById('syllabus-course');
 const syllabusGoogle = document.getElementById('syllabus-google');
 const syllabusGoogleRow = document.getElementById('syllabus-google-row');
+wireGoogleCheckbox(syllabusGoogle);
+wireGoogleCheckbox(document.getElementById('sync-google-check'));
 const syllabusConfirm = document.getElementById('syllabus-confirm');
 const syllabusCancel = document.getElementById('syllabus-cancel');
 let syllabusState = null; // { file, items, saving }
@@ -2324,7 +2464,7 @@ const SYLLABUS_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const SYLLABUS_DAY_SHORT = { Sunday: 'Sun', Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat' };
 function syllabusDateLabel(item) {
     if (item.kind === 'class') {
-        return `Every ${SYLLABUS_DAY_SHORT[item.weekday] || item.weekday} ${item.time}${item.endTime ? `–${item.endTime}` : ''}`;
+        return `Every ${SYLLABUS_DAY_SHORT[item.weekday] || item.weekday} ${item.time}${item.endTime ? `–${item.endTime}` : ''}${item.until ? ` until ${untilLabel(item.until)}` : ''}`;
     }
     if (!item.date) return 'No date in the file';
     const [y, m, d] = item.date.split('-').map(Number);
@@ -2347,9 +2487,16 @@ function syllabusNote(item) {
     if (item.kind === 'assignment' && !item.date) return { text: 'The dates aren\'t in the syllabus - add each one when it\'s published.', blocked: true };
     if (item.kind === 'class') {
         if (item.alreadyExists) return { text: 'Already in your Planner at that time' };
-        // Not ticked by default: a weekly class repeats with no end date, and
-        // an old syllabus (last semester) would fill every week from now on.
-        return { text: 'Repeats every week in the Planner. Tick it if this is this semester\'s timetable.', soft: true };
+        // The file says when the semester ends: ticked, and it stops then -
+        // unless that date has passed (an old syllabus).
+        if (item.until && item.until < localIsoDate(new Date())) {
+            return { text: `These classes ended on ${untilLabel(item.until)} - this looks like an older semester.`, soft: true };
+        }
+        if (item.until) return null;
+        // No end date in the file: not ticked by default - a weekly class
+        // with no end fills every week from now on. One box to say until when.
+        if (item.untilError) return { text: item.untilError, soft: true, askUntil: true };
+        return { text: 'Repeats every week. Write until when (e.g. "15.1"), or just tick it to keep it with no end date.', soft: true, askUntil: true };
     }
     if (item.alreadyExists) return { text: 'Already in MindSync' };
     if (item.isPast) return { text: 'Already passed' };
@@ -2380,7 +2527,8 @@ function renderSyllabusList() {
     syllabusList.innerHTML = '';
     syllabusState.items.forEach((item, index) => {
         const note = syllabusNote(item);
-        const row = document.createElement(note && note.askDate ? 'div' : 'label');
+        const asks = note && (note.askDate || note.askUntil);
+        const row = document.createElement(asks ? 'div' : 'label');
         row.className = 'syllabus-row' + (note && note.blocked ? ' is-blocked' : '');
 
         const box = document.createElement('input');
@@ -2415,22 +2563,37 @@ function renderSyllabusList() {
         }
         // Exam with no date: write it right here, in your own words ("12.2",
         // "מועד א 12.2 מועד ב 5.3") - read the same way as everywhere else.
-        if (note && note.askDate) {
+        if (asks) {
             const wrap = document.createElement('span');
             wrap.className = 'syllabus-row__date';
             const input = document.createElement('input');
             input.className = 'input-field';
             input.dir = 'auto';
             input.maxLength = 200;
-            input.placeholder = 'לדוגמה: 12.2';
-            input.value = item.dateText || '';
+            input.placeholder = note.askUntil ? 'עד: לדוגמה 15.1' : 'לדוגמה: 12.2';
+            input.value = (note.askUntil ? item.untilText : item.dateText) || '';
             const set = document.createElement('button');
             set.className = 'btn-secondary btn-sm';
             set.type = 'button';
-            set.textContent = 'Set date';
+            set.textContent = note.askUntil ? 'Set end' : 'Set date';
             const apply = async () => {
                 const text = input.value.trim();
                 if (!text) return;
+                if (note.askUntil) {
+                    item.untilText = text;
+                    set.disabled = true;
+                    const r = await ipcRenderer.invoke('parse-exam-dates', text).catch(e => ({ error: e.message }));
+                    set.disabled = false;
+                    if (!r || r.error || !r.exams || !r.exams.length) {
+                        item.untilError = (r && r.error) || 'Couldn\'t tell the date. Try writing it like "15.1".';
+                    } else {
+                        item.until = r.exams[0].date;
+                        item.untilError = null;
+                        item.checked = true;
+                    }
+                    renderSyllabusList();
+                    return;
+                }
                 item.dateText = text;
                 set.disabled = true;
                 const r = await ipcRenderer.invoke('parse-exam-dates', text).catch(e => ({ error: e.message }));
@@ -2515,7 +2678,7 @@ async function confirmSyllabusImport() {
     const picked = state.items.filter(i => i.checked);
     if (!picked.length) return;
     const course = syllabusCourse.value.trim();
-    const syncToGoogle = !!(syllabusGoogle && syllabusGoogle.checked && picked.some(i => i.kind === 'exam'));
+    const syncToGoogle = !!(syllabusGoogle && syllabusGoogle.checked && picked.some(i => i.kind === 'exam' || i.kind === 'class'));
 
     state.saving = true;
     syllabusConfirm.disabled = true;
@@ -2524,7 +2687,7 @@ async function confirmSyllabusImport() {
     let res;
     try {
         res = await ipcRenderer.invoke('import-syllabus-items',
-            picked.map(({ kind, title, date, time, durationMinutes, weekday, endTime }) => ({ kind, title, date, time, durationMinutes, weekday, endTime })),
+            picked.map(({ kind, title, date, until, time, durationMinutes, weekday, endTime }) => ({ kind, title, date, until, time, durationMinutes, weekday, endTime })),
             { course, syncToGoogle });
     } catch (e) {
         res = { created: { events: [], tasks: [] }, errors: [e.message], syncErrors: [] };
@@ -3152,6 +3315,28 @@ if (showOnboardingBtn) {
 const navHomeForOnboarding = document.getElementById('nav-home');
 if (navHomeForOnboarding) navHomeForOnboarding.addEventListener('click', refreshOnboarding);
 
+// Web version: feedback goes to the server (POST /api/feedback, via the
+// 'send-feedback' channel). The desktop app has "Copy error log" instead.
+const feedbackBtn = document.getElementById('feedback-send-btn');
+if (feedbackBtn) {
+    feedbackBtn.onclick = async () => {
+        const box = document.getElementById('feedback-text');
+        const text = box ? box.value.trim() : '';
+        if (!text) { toast.info('Write something first.'); return; }
+        feedbackBtn.disabled = true;
+        try {
+            const res = await ipcRenderer.invoke('send-feedback', text);
+            if (res && res.error) throw new Error(res.error);
+            box.value = '';
+            toast.success('Thanks - it was sent.', 'Feedback');
+        } catch (err) {
+            toast.error(err.message, 'Could not send');
+        } finally {
+            feedbackBtn.disabled = false;
+        }
+    };
+}
+
 const copyLogBtn = document.getElementById('settings-copy-log-btn');
 if (copyLogBtn) {
     copyLogBtn.onclick = async () => {
@@ -3221,7 +3406,10 @@ if (generateWeeklyAiBtn) {
                 toast.error("Could not build a plan: " + parsed.error);
             } else if (newPlan.length > 0) {
                 
-                const syncToGoogle = await confirmDialog("Sync to Google Calendar?", "The new study blocks will also be added to your Google Calendar.", { confirmText: "Sync", cancelText: "Skip" });
+                // Web, not connected: don't ask - the blocks just stay in MindSync.
+                const syncToGoogle = (IS_WEB && !googleConnected())
+                    ? false
+                    : await confirmDialog("Sync to Google Calendar?", "The new study blocks will also be added to your Google Calendar.", { confirmText: "Sync", cancelText: "Skip" });
                 let syncErrors = [];
 
                 for (const planEvent of newPlan) {
@@ -3459,18 +3647,28 @@ function pickOption(title, options) {
         backdrop.className = 'ms-modal-backdrop';
         backdrop.innerHTML = `
             <div class="ms-modal">
-                <div class="ms-modal__header"><h3 class="ms-modal__title">${title}</h3></div>
+                <div class="ms-modal__header"><h3 class="ms-modal__title"></h3></div>
                 <div class="ms-modal__body ms-modal__body--structured">
-                    <div class="option-list">
-                        ${options.map(o => `<button class="option-row" data-value="${o}">${o}</button>`).join('')}
-                    </div>
+                    <div class="option-list"></div>
                 </div>
                 <div class="ms-modal__footer">
                     <button class="btn-secondary" data-action="cancel">Cancel</button>
                 </div>
             </div>`;
+        // BUG FIX: the names were pasted into the HTML, so a file called
+        // 'סיכום חדו"א.pdf' broke the data-value="..." attribute at the " and
+        // picking it did nothing. Text is now set as text.
+        backdrop.querySelector('.ms-modal__title').textContent = title;
+        const list = backdrop.querySelector('.option-list');
         function close(v) { backdrop.remove(); resolve(v); }
-        backdrop.querySelectorAll('.option-row').forEach(b => b.onclick = () => close(b.dataset.value));
+        options.forEach(o => {
+            const b = document.createElement('button');
+            b.className = 'option-row';
+            b.dir = 'auto';
+            b.textContent = o;
+            b.onclick = () => close(o);
+            list.appendChild(b);
+        });
         backdrop.querySelector('[data-action="cancel"]').onclick = () => close(null);
         backdrop.onclick = (e) => { if (e.target === backdrop) close(null); };
         document.body.appendChild(backdrop);

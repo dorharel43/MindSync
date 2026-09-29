@@ -165,6 +165,7 @@ module.exports = {
   // User document itself (see routes/auth.js), not a separate Profile.
   getMe: () => request('GET', '/auth/me'),
   updateMe: (updates) => request('PUT', '/auth/me', updates),
+  deleteMe: (password) => request('DELETE', '/auth/me', { password }),
 
   // ---- Stats: removed with /api/stats (XP/levels/streak dropped server-side) ----
 
