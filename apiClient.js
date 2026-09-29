@@ -180,6 +180,8 @@ module.exports = {
     const params = new URLSearchParams();
     if (opts.limit) params.set('limit', opts.limit);
     if (opts.category) params.set('category', opts.category);
+    if (opts.sourceFile) params.set('sourceFile', opts.sourceFile);
+    if (opts.all) params.set('all', '1');
     const qs = params.toString();
     return withIdAliases(await request('GET', `/study/due${qs ? '?' + qs : ''}`));
   },
@@ -187,6 +189,7 @@ module.exports = {
     const params = new URLSearchParams();
     if (opts.category) params.set('category', opts.category);
     if (opts.mode) params.set('mode', opts.mode);
+    if (opts.light) params.set('light', '1');
     const qs = params.toString();
     return withIdAliases(await request('GET', `/study${qs ? '?' + qs : ''}`));
   },
