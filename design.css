@@ -1091,3 +1091,35 @@ body.auth-pending #auth-screen { background: var(--bg-sidebar); }
 .is-web .desktop-only { display: none !important; }
 html:not(.is-web) .web-only { display: none !important; }
 #feedback-text { width: 100%; resize: vertical; margin-top: 4px; }
+
+/* ---- Study: "Smart practice" + "Practice one course" (29/9) ---------------
+   Each way to practice says what it does in one line - users don't explore. */
+.metric__sub { font-size: var(--text-xs); color: var(--text-tertiary, var(--text-secondary)); margin-top: 2px; }
+.study-way, .study-courses { margin-bottom: 16px; }
+.study-way { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.study-way__text { min-width: 0; }
+.study-way__text .section-title { margin: 0 0 4px; }
+.study-way__text .settings-hint { margin: 0; max-width: 620px; }
+.study-way #start-study-btn { flex-shrink: 0; }
+.study-courses__list { margin-top: 12px; }
+.study-course { padding: 12px 0; }
+.study-course + .study-course { border-top: 1px solid var(--border-color); }
+.study-course__main { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.study-course__top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.study-course__name { font-weight: var(--font-medium); color: var(--text-primary); }
+.study-course__exam { font-size: var(--text-xs); font-weight: var(--font-medium); color: var(--text-secondary); background: var(--bg-subtle); padding: 2px 8px; border-radius: var(--radius-sm); white-space: nowrap; }
+.study-course__exam.is-soon { color: var(--status-warning); background: var(--status-warning-bg); }
+.study-course__meta { font-size: var(--text-sm, 13px); color: var(--text-secondary); margin-top: 2px; }
+.study-course__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.study-course__files-btn { background: none; border: 0; padding: 4px 6px; color: var(--text-secondary); font: inherit; font-size: var(--text-sm, 13px); cursor: pointer; border-radius: 6px; }
+.study-course__files-btn:hover { color: var(--text-primary); background: var(--active-bg); }
+.study-course__files { margin: 8px 0 0 12px; padding-left: 12px; border-left: 2px solid var(--border-color); }
+.study-file { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+.study-file__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); text-align: left; }
+.study-file__count { font-size: var(--text-xs); color: var(--text-secondary); flex-shrink: 0; }
+.study-start-hint { margin: -8px 0 16px; }
+.study-scope { color: var(--text-secondary); }
+@media (max-width: 640px) {
+  .study-way, .study-course__main { flex-direction: column; align-items: stretch; }
+  .study-course__actions { justify-content: space-between; }
+}

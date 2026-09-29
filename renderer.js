@@ -3979,6 +3979,7 @@ function saveSessionProgress() {
             ids: studyState.queue.map(i => i.id),
             index: studyState.index,
             session: studyState.session,
+            scope: studyState.scope || null,
             savedAt: Date.now()
         }));
     } catch (e) { /* storage full or unavailable - not worth failing over */ }
@@ -4037,7 +4038,14 @@ const ANSWER_PROMPTS = {
 };
 
 async function loadStudyHome() {
-    const stats = await ipcRenderer.invoke('get-study-stats');
+    // The question list (light: no review history) comes with the stats, for
+    // the per-file rows under each course. Kept for "My questions" too, so
+    // that screen opens without waiting.
+    const [stats, items] = await Promise.all([
+        ipcRenderer.invoke('get-study-stats'),
+        ipcRenderer.invoke('get-study-items', { light: true }).catch(() => null)
+    ]);
+    if (Array.isArray(items)) studyItemsCache = items;
     if (!stats) return;
 
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
@@ -4061,15 +4069,16 @@ async function loadStudyHome() {
             banner.hidden = false;
             const remaining = resume.ids.length - resume.index;
             document.getElementById('resume-banner-detail').textContent =
-                `You stopped at question ${resume.index + 1} of ${resume.ids.length} — ${remaining} left.`;
+                `${resume.scope ? `${resume.scope.label}: ` : 'Smart practice: '}you stopped at question ${resume.index + 1} of ${resume.ids.length} — ${remaining} left.`;
         } else {
             banner.hidden = true;
         }
     }
 
     renderStudyExams(stats.subjects || []);
+    renderStudyCourses(stats.subjects || [], studyItemsCache || []);
     const startBtn = document.getElementById('start-study-btn');
-    if (startBtn) startBtn.textContent = stats.dueCount > 0 ? `Practice now · ${stats.dueCount}` : 'Practice now';
+    if (startBtn) startBtn.textContent = stats.dueCount > 0 ? `Start smart practice · ${stats.dueCount} ready` : 'Start smart practice';
     renderCalibration(stats.calibration, stats.reviewsAllTime, stats.trendByConfidence);
     renderConfidentlyWrong(stats.confidentlyWrong);
     renderAttentionList('underconfident-panel', stats.underconfidentItems,
@@ -4119,7 +4128,9 @@ function renderStudyExams(subjects) {
         row.append(name, whenEl);
         list.appendChild(row);
     });
-    list.hidden = withExam.length === 0;
+    // The exam dates now show on each course in "Practice one course"; this
+    // card only asks about a missing one.
+    list.hidden = true;
 
     // The course to ask about: most questions first; never "Uncategorized",
     // never one the user said has no exam.
@@ -4132,7 +4143,115 @@ function renderStudyExams(subjects) {
         ask.hidden = !next;
         if (next) document.getElementById('study-exam-ask-q').textContent = `When is your ${isolate(next.category)} exam?`;
     }
-    box.hidden = withExam.length === 0 && !next;
+    box.hidden = !next;
+}
+
+// ---- "Practice one course" -------------------------------------------------
+// One row per course: when its exam is, what's ready now, a Practice button,
+// and its files (practice just one). Courses come from the server's stats
+// (nearest exam first); files from the question list.
+let studyItemsCache = null;
+const studyCourseOf = (i) => String(i.category || '').trim() || 'Uncategorized';
+// "תרגול 2.pdf" -> "תרגול 2". Hebrew next to ".pdf" flips on screen
+// ("pdf.2 תרגול"), and the extension says nothing anyway.
+const fileLabel = (name) => String(name || '').replace(/\.(pdf|txt|md|docx?|pptx?)$/i, '');
+const openStudyCourses = new Set();   // which courses have their files open
+
+function renderStudyCourses(subjects, items) {
+    const box = document.getElementById('study-courses');
+    const list = document.getElementById('study-courses-list');
+    if (!box || !list) return;
+    list.innerHTML = '';
+    box.hidden = subjects.length === 0;
+
+    subjects.forEach(s => {
+        const row = document.createElement('div');
+        row.className = 'study-course';
+
+        const top = document.createElement('div');
+        top.className = 'study-course__top';
+        const name = document.createElement('span');
+        name.className = 'study-course__name';
+        name.dir = 'auto';
+        name.textContent = s.category === 'Uncategorized' ? 'No course' : s.category;
+        top.append(name);
+        if (s.exam) {
+            const [y, m, d] = s.exam.date.split('-').map(Number);
+            const when = s.exam.daysLeft === 0 ? 'Exam today' : s.exam.daysLeft === 1 ? 'Exam tomorrow' : `Exam in ${s.exam.daysLeft} days`;
+            const exam = document.createElement('span');
+            exam.className = 'study-course__exam' + (s.exam.daysLeft <= 7 ? ' is-soon' : '');
+            exam.textContent = `${when} · ${WEEKDAY_NAMES[new Date(y, m - 1, d).getDay()].slice(0, 3)} ${d}/${m}`;
+            exam.title = s.exam.title;
+            top.append(exam);
+        }
+
+        const meta = document.createElement('div');
+        meta.className = 'study-course__meta';
+        const ready = s.due || 0;
+        meta.textContent = `${ready ? `${ready} ready now` : 'Nothing due now'} · ${s.items} question${s.items === 1 ? '' : 's'}`;
+        meta.title = ready ? `${s.dueReviews || 0} to review again, ${s.newToday || 0} new for today` : 'Everything here was practiced recently - you can still practice it anyway.';
+
+        const practice = document.createElement('button');
+        practice.className = ready ? 'btn-primary btn-sm' : 'btn-secondary btn-sm';
+        practice.textContent = 'Practice';
+        practice.onclick = () => startStudySession(null, { category: s.category, label: name.textContent });
+
+        // Files of this course, most questions first.
+        const files = new Map();
+        items.filter(i => studyCourseOf(i) === s.category).forEach(i => {
+            const f = i.sourceFile || '';
+            files.set(f, (files.get(f) || 0) + 1);
+        });
+        const fileList = [...files.entries()].sort((a, b) => b[1] - a[1]);
+
+        const actions = document.createElement('div');
+        actions.className = 'study-course__actions';
+        if (fileList.length > 1 || (fileList.length === 1 && fileList[0][0])) {
+            const toggle = document.createElement('button');
+            toggle.className = 'study-course__files-btn';
+            const isOpen = openStudyCourses.has(s.category);
+            toggle.textContent = `${isOpen ? '▾' : '▸'} By file (${fileList.length})`;
+            toggle.setAttribute('aria-expanded', String(isOpen));
+            toggle.onclick = () => {
+                if (openStudyCourses.has(s.category)) openStudyCourses.delete(s.category); else openStudyCourses.add(s.category);
+                renderStudyCourses(subjects, items);
+            };
+            actions.append(toggle);
+        }
+        actions.append(practice);
+
+        const main = document.createElement('div');
+        main.className = 'study-course__main';
+        const info = document.createElement('div');
+        info.append(top, meta);
+        main.append(info, actions);
+        row.append(main);
+
+        if (openStudyCourses.has(s.category)) {
+            const fl = document.createElement('div');
+            fl.className = 'study-course__files';
+            fileList.forEach(([file, count]) => {
+                const fr = document.createElement('div');
+                fr.className = 'study-file';
+                const fn = document.createElement('span');
+                fn.className = 'study-file__name';
+                fn.dir = 'auto';
+                fn.textContent = file ? fileLabel(file) : 'Written by hand';
+                fn.title = file || '';
+                const fc = document.createElement('span');
+                fc.className = 'study-file__count';
+                fc.textContent = `${count} question${count === 1 ? '' : 's'}`;
+                const fb = document.createElement('button');
+                fb.className = 'btn-secondary btn-sm';
+                fb.textContent = 'Practice';
+                fb.onclick = () => startStudySession(null, { category: s.category, sourceFile: file, label: file ? fileLabel(file) : name.textContent });
+                fr.append(fn, fc, fb);
+                fl.append(fr);
+            });
+            row.append(fl);
+        }
+        list.append(row);
+    });
 }
 
 async function saveExamAnswer() {
@@ -4324,8 +4443,11 @@ function renderAttentionList(panelId, items, emptyMessage, tone) {
 }
 
 // ---- Session flow ----
-async function startStudySession(resume = null) {
+// scope: null = smart practice (everything, the app decides), or
+// { category, sourceFile?, label } = one course / one file.
+async function startStudySession(resume = null, scope = null) {
     let items;
+    if (resume && resume.scope) scope = resume.scope;
 
     if (resume && Array.isArray(resume.ids)) {
         // Re-fetch by id rather than trusting a stored copy: an item may have
@@ -4340,14 +4462,29 @@ async function startStudySession(resume = null) {
             return startStudySession();
         }
     } else {
-        items = await ipcRenderer.invoke('get-due-study-items', { limit: 20 });
+        const filter = scope ? { category: scope.category, ...(scope.sourceFile !== undefined ? { sourceFile: scope.sourceFile } : {}) } : {};
+        items = await ipcRenderer.invoke('get-due-study-items', { limit: 20, ...filter });
+        if ((!items || items.length === 0) && scope) {
+            // Nothing DUE in this course/file - say why, and offer the rest.
+            const ok = await confirmDialog(
+                `Nothing to practice in ${scope.label} right now`,
+                'You practiced these recently, so none is due yet. Spacing questions out is what makes you remember them longer. You can still go over them now - handy right before an exam.',
+                { confirmText: 'Practice anyway', cancelText: 'Not now' });
+            if (!ok) return;
+            items = await ipcRenderer.invoke('get-due-study-items', { limit: 20, all: true, ...filter });
+        }
         if (!items || items.length === 0) {
-            toast.info('Nothing is due right now. Create questions from a file, or come back later.', 'All caught up');
+            toast.info(scope
+                ? 'There are no questions here yet.'
+                : 'Nothing is due right now - you\'re up to date. Come back tomorrow, practice one course below, or make questions from a new file.', 'All caught up');
             return;
         }
     }
 
     studyState.queue = items;
+    studyState.scope = scope;
+    const scopeLabel = document.getElementById('study-scope-label');
+    if (scopeLabel) scopeLabel.textContent = scope ? `· ${scope.label}` : '· Smart practice';
     studyState.index = resume ? Math.min(resume.index, items.length - 1) : 0;
     studyState.session = resume ? resume.session : { reviewed: 0, correct: 0, overconfident: 0 };
 
@@ -4739,6 +4876,11 @@ if (manageStudyBtn) {
         document.getElementById('study-home').hidden = true;
         document.getElementById('study-review').hidden = true;
         document.getElementById('study-manage').hidden = false;
+        // The list loaded with the Study screen shows at once; a fresh copy
+        // replaces it a moment later. Before, the screen sat empty with no
+        // sign of loading while every question came from the server.
+        if (studyItemsCache) await loadManageList(false);
+        else renderSkeleton(document.getElementById('manage-list'), 4);
         await loadManageList();
     };
 }
@@ -4752,8 +4894,14 @@ if (closeManageBtn) {
     };
 }
 
-async function loadManageList() {
-    const items = await ipcRenderer.invoke('get-study-items', {});
+// refetch = false: filter the list already here (switching the file chip is
+// instant) instead of asking the server for every question again.
+async function loadManageList(refetch = true) {
+    if (refetch || !studyItemsCache) {
+        const fresh = await ipcRenderer.invoke('get-study-items', { light: true });
+        if (Array.isArray(fresh)) studyItemsCache = fresh;
+    }
+    const items = studyItemsCache || [];
     const listEl = document.getElementById('manage-list');
     const filtersEl = document.getElementById('manage-source-filters');
     if (!listEl) return;
@@ -4795,7 +4943,7 @@ async function loadManageList() {
                 ${src === 'all' ? 'All' : escapeHtml(src.length > 28 ? src.slice(0, 28) + '…' : src)}
             </button>`).join('');
         filtersEl.querySelectorAll('.filter-chip').forEach(chip => {
-            chip.onclick = () => { manageSourceFilter = chip.dataset.source; loadManageList(); };
+            chip.onclick = () => { manageSourceFilter = chip.dataset.source; loadManageList(false); };
         });
     }
 

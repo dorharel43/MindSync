@@ -335,14 +335,17 @@
                     <div class="card metric">
                         <div class="metric__label">Ready to practice</div>
                         <div class="metric__value ms-tabular" id="study-due-count">0</div>
+                        <div class="metric__sub">waiting for you now, all courses</div>
                     </div>
                     <div class="card metric">
                         <div class="metric__label">Questions</div>
                         <div class="metric__value ms-tabular" id="study-total-count">0</div>
+                        <div class="metric__sub">made from your files</div>
                     </div>
                     <div class="card metric">
                         <div class="metric__label">Answered so far</div>
                         <div class="metric__value ms-tabular" id="study-reviews-count">0</div>
+                        <div class="metric__sub">since you started</div>
                     </div>
                 </div>
 
@@ -377,10 +380,25 @@
                     </div>
                 </div>
 
+                <!-- Two ways to practice, each saying what it does. Users
+                     don't explore, so the screen has to explain itself. -->
+                <div class="card study-way">
+                    <div class="study-way__text">
+                        <h3 class="section-title">Smart practice</h3>
+                        <p class="settings-hint">The app picks for you, from all your courses: questions you're about to forget come back first, the course with the nearest exam comes first, and new questions are added a few a day so it never piles up.</p>
+                    </div>
+                    <button class="btn-primary btn-lg" id="start-study-btn">Start smart practice</button>
+                </div>
+
+                <div class="card study-courses" id="study-courses" hidden>
+                    <div class="study-way__text">
+                        <h3 class="section-title">Practice one course</h3>
+                        <p class="settings-hint">Pick a course - or one file inside it - to practice only that. "Ready now" is what's due today; you can always practice the rest too.</p>
+                    </div>
+                    <div class="study-courses__list" id="study-courses-list"></div>
+                </div>
+
                 <div class="study-start-row">
-                    <button class="btn-primary btn-lg" id="start-study-btn">
-                        Start practicing
-                    </button>
                     <button class="btn-secondary" id="generate-study-btn">
                         <span data-icon="file" data-icon-size="16"></span> Make questions from a file
                     </button>
@@ -388,6 +406,7 @@
                         <span data-icon="list" data-icon-size="16"></span> My questions
                     </button>
                 </div>
+                <p class="settings-hint study-start-hint">"Make questions" - the AI writes practice questions from a lecture or notes. "My questions" - see, edit or delete the ones you have.</p>
 
                 <!-- Sets expectations before the panels below, since three
                      of the four only surface a pattern across repeated
@@ -498,7 +517,7 @@
                     <div class="study-progress-fill" id="study-progress-fill"></div>
                 </div>
                 <div class="study-session-meta">
-                    <span id="study-position">1 / 10</span>
+                    <span><span id="study-position">1 / 10</span> <span class="study-scope" id="study-scope-label" dir="auto"></span></span>
                     <button class="btn-secondary btn-sm" id="end-study-btn">Stop</button>
                 </div>
 
