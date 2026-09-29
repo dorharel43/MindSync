@@ -1174,3 +1174,9 @@ html:not(.is-web) .web-only { display: none !important; }
   /* Study numbers: the short explanations under them take too much room */
   .metric__sub { display: none; }
 }
+
+/* ---- One line per action, on every screen (29/9) ---- */
+.screen-help { margin: 0 0 16px; padding: 10px 14px 10px 30px; background: var(--bg-subtle); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--text-sm, 13px); line-height: 1.55; }
+.screen-help li + li { margin-top: 2px; }
+.screen-help strong { color: var(--text-primary); font-weight: var(--font-medium); }
+.card-help { margin: -4px 0 12px; }

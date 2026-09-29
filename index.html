@@ -242,6 +242,10 @@
                 </div>
             </div>
 
+            <!-- How this screen works, in one line per action (29/9): users
+                 don't explore, and a phone has no hover for tooltips. -->
+            <ul class="screen-help"><li><strong>Add to calendar</strong> - write it the way you'd say it, e.g. <bdi dir="rtl">"שיעור סטטיסטיקה כל יום שני ב-10"</bdi> or <bdi dir="rtl">"מבחן ב-12.2 ב-9"</bdi>.</li><li><strong>Plan study time</strong> - finds free time this week for your open tasks and puts study blocks before their deadlines.</li><li><strong>↻</strong> repeats every week. The pencil on a card changes it, the bin deletes it.</li></ul>
+
             <!-- Which week is on the board. Events with a date show only in
                  their week; weekly ones (↻) show in every week. -->
             <div class="week-nav">
@@ -301,6 +305,7 @@
                 </div>
             </div>
 
+<ul class="screen-help"><li><strong>New task</strong> - write it in your own words; a date or <bdi dir="rtl">"מחר"</bdi> is enough, the rest is worked out for you.</li><li>On each task: the colour word is how urgent it is (tap to change), <strong>+</strong> splits it into steps, <strong>Done</strong> finishes it.</li><li><strong>Today</strong>, <strong>Urgent</strong> and <strong>Done</strong> above show only those.</li></ul>
             <div class="tasks-list">
             </div>
         </div>
@@ -310,7 +315,7 @@
             <div class="page-header flex-header">
                 <div>
                     <h2 class="page-title">Materials</h2>
-                    <div class="page-subtitle">Your course files. Summarize them, or pull the exams and deadlines out of a syllabus. One folder per course keeps things tidy.</div>
+                    <div class="page-subtitle">Your course files - summaries, practice questions, and the exams and deadlines from a syllabus.</div>
                 </div>
                 <div class="upload-buttons">
                     <button class="btn-primary btn-upload" data-upload-mode="files"><span data-icon="cloud"></span> Upload files</button>
@@ -318,6 +323,7 @@
                 </div>
             </div>
 
+<ul class="screen-help"><li>Make <strong>one folder per course</strong> - questions and exams are matched to the course by it.</li><li>On each file: <strong>Summarize</strong> writes a summary, <strong>Questions</strong> makes practice questions for Study, and <strong>Exams &amp; deadlines</strong> reads a syllabus - exams go to the Planner, submissions to Tasks.</li></ul>
             <h3 class="section-title">Folders</h3>
             <div class="materials-grid">
             </div>
@@ -644,6 +650,7 @@
                     <div class="card-header">
                         <h3 class="section-title">Workload by category</h3>
                     </div>
+                    <p class="settings-hint card-help">How your tasks split between courses, and how much of each is done.</p>
                     <div id="category-breakdown"></div>
                 </div>
 
@@ -652,6 +659,7 @@
                     <div class="card-header">
                         <h3 class="section-title">Needs attention</h3>
                     </div>
+                    <p class="settings-hint card-help">Open tasks - the most urgent and the nearest deadline first.</p>
                     <div id="attention-list"></div>
                 </div>
             </div>

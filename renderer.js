@@ -1789,7 +1789,7 @@ function renderTasksList() {
                     <div class="task-title-text" dir="auto">${escapeHtml(task.title)}</div>
                     <div class="task-meta-line">
                         <span class="task-meta-date">${icon('calendar')} ${escapeHtml(task.date || 'Not set')}</span>
-                        <select class="urgency-select" style="color: ${urgencyColor};">
+                        <select class="urgency-select" style="color: ${urgencyColor};" title="How urgent - tap to change" aria-label="How urgent">
                             <option value="Normal" ${task.urgency === 'Normal' ? 'selected' : ''}>Normal</option>
                             <option value="Medium" ${task.urgency === 'Medium' ? 'selected' : ''}>Medium</option>
                             <option value="High" ${task.urgency === 'High' ? 'selected' : ''}>High</option>
@@ -1806,7 +1806,7 @@ function renderTasksList() {
                 <div class="task-actions-col">
                     ${dest ? `<button class="go-to-related-btn" title="${dest.type === 'materials' ? `Open Materials — ${escapeHtml(dest.folderName)}` : 'Open in Study'}" aria-label="Go to related content">${icon(dest.type === 'materials' ? 'library' : 'brain')}</button>` : ''}
                     <button class="edit-task-btn" title="Edit task" aria-label="Edit task">${icon('edit')}</button>
-                    <button class="toggle-checklist-btn" title="Show checklist" aria-label="Show checklist">${hasChecklist ? icon('list') : icon('plus')}</button>
+                    <button class="toggle-checklist-btn" title="${hasChecklist ? 'Show the steps' : 'Split into steps'}" aria-label="${hasChecklist ? 'Show the steps' : 'Split into steps'}">${hasChecklist ? icon('list') : icon('plus')}</button>
                     <button class="complete-task-btn">${icon('check')} ${task.status === 'completed' ? 'Reopen' : 'Done'}</button>
                     <button class="delete-task-btn" title="Delete Task">${icon('trash')}</button>
                 </div>
@@ -2162,13 +2162,14 @@ async function loadAndRenderFiles() {
             <div class="file-info">
                 <div class="file-icon">${icon('file')}</div>
                 <div>
-                    <div class="file-name" dir="auto">${escapeHtml(file.name)}</div>
+                    <div class="file-name" dir="auto" title="${escapeHtml(file.name)}">${escapeHtml(fileLabel(file.name))}</div>
                     <div class="file-meta">${escapeHtml(file.folder)}</div>
                 </div>
             </div>
             <div class="file-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
                 <button class="btn-secondary btn-sm btn-extract" title="Reads a syllabus or assignment sheet: exams go to the Planner, submissions to Tasks">Exams & deadlines</button>
                 <button class="btn-secondary btn-sm btn-ai">${file.summary ? 'View summary' : 'Summarize'}</button>
+                <button class="btn-secondary btn-sm btn-questions" title="Makes practice questions from this file - you check them before they go into Study">Questions</button>
                 <button class="btn-icon btn-icon--danger delete-file-btn" title="Delete file" aria-label="Delete file">${icon('trash')}</button>
             </div>
         `;
@@ -2176,6 +2177,9 @@ async function loadAndRenderFiles() {
         // Opens (or brings to front) a separate, resizable summary window.
         // A saved summary shows instantly; otherwise it's generated there.
         fileItem.querySelector('.btn-ai').onclick = () => ipcRenderer.invoke('open-summary-window', file.id, file.name);
+        // Questions from here too - the file you're looking at is the obvious
+        // place to ask for them; before, it was only in Study.
+        fileItem.querySelector('.btn-questions').onclick = (e) => generateQuestionsFor(file, e.currentTarget);
         
         fileItem.querySelector('.delete-file-btn').onclick = async () => {
             const result = await ipcRenderer.invoke('delete-file', file.id); // Fixed: Pass ID directly without searching
@@ -4176,7 +4180,7 @@ let studyItemsCache = null;
 const studyCourseOf = (i) => String(i.category || '').trim() || 'Uncategorized';
 // "תרגול 2.pdf" -> "תרגול 2". Hebrew next to ".pdf" flips on screen
 // ("pdf.2 תרגול"), and the extension says nothing anyway.
-const fileLabel = (name) => String(name || '').replace(/\.(pdf|txt|md|docx?|pptx?)$/i, '');
+function fileLabel(name) { return String(name || '').replace(/\.(pdf|txt|md|docx?|pptx?)$/i, ''); }
 const openStudyCourses = new Set();   // which courses have their files open
 
 function renderStudyCourses(subjects, items) {
