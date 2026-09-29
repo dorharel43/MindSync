@@ -10,6 +10,9 @@
     <link rel="stylesheet" href="styles.css">
     <!-- Design layer (2026 refresh): loads last, so it decides how things look. -->
     <link rel="stylesheet" href="design.css">
+    <!-- Language first: sets right-to-left before anything paints (i18n.js). -->
+    <script src="i18n.js"></script>
+    <script src="i18n-he.js"></script>
     <script src="icons.js" defer></script>
     <script src="ui.js" defer></script>
     <script src="renderer.js" defer></script>
@@ -432,52 +435,7 @@
                 </div>
                 <p class="settings-hint study-start-hint">"Make questions" - the AI writes practice questions from a lecture or notes. "My questions" - see, edit or delete the ones you have.</p>
 
-                <!-- Sets expectations before the panels below, since three
-                     of the four only surface a pattern across repeated
-                     reviews of the SAME question - not the deck's total
-                     review count - and stay empty otherwise, which read as
-                     "broken" without this. -->
-                <p class="settings-hint" id="study-panels-hint" style="margin-bottom: var(--space-4);" hidden>
-                    These fill in as you answer the same questions more than once.
-                </p>
-
-                <!-- Each panel shows only once it has something to say
-                     (renderer.js updateStudyPanelsVisibility). -->
-                <div class="progress-columns" id="study-panels">
-                    <!-- The calibration panel: the differentiating feature -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3 class="section-title">How accurate is your "I'm sure"?</h3>
-                        </div>
-                        <div id="calibration-panel"></div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header">
-                            <h3 class="section-title">Sure, but wrong</h3>
-                        </div>
-                        <p class="settings-hint">You said "I'm sure" and got these wrong. Review them first.</p>
-                        <div id="confidently-wrong-panel"></div>
-                    </div>
-
-                    <!-- The inverse of "confidently wrong" - doubt that isn't earned. -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3 class="section-title">You know these better than you think</h3>
-                        </div>
-                        <p class="settings-hint">You keep getting these right, even when you're not sure.</p>
-                        <div id="underconfident-panel"></div>
-                    </div>
-
-                    <!-- Genuine difficulty - no miscalibration here, just hard material. -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3 class="section-title">Hard for you</h3>
-                        </div>
-                        <p class="settings-hint">You keep missing these. Go back to the material for them.</p>
-                        <div id="genuine-difficulty-panel"></div>
-                    </div>
-                </div>
+                <p class="settings-hint study-to-progress">How ready you are for each exam, and how reliable your "I'm sure" is: <a href="#" class="link-text" id="study-to-progress-link">see Progress</a>.</p>
             </div>
 
             <!-- Review generated questions before they enter the deck -->
@@ -551,7 +509,7 @@
                         <span class="ms-badge ms-badge--accent" id="study-category-badge" hidden></span>
                     </div>
 
-                    <div class="study-question" id="study-question" dir="auto"></div>
+                    <div class="study-question" id="study-question" translate="no" dir="auto"></div>
 
                     <!-- Step 1: write the answer, then say how sure you are. The
                          confidence button also sends the answer to be checked by
@@ -589,17 +547,17 @@
                         <!-- The AI's check of what was typed (hidden when answered in the head) -->
                         <div class="study-verdict" id="study-verdict" hidden>
                             <div class="study-verdict__title" id="study-verdict-title"></div>
-                            <div class="study-verdict__feedback" id="study-verdict-feedback" dir="auto"></div>
-                            <div class="study-verdict__yours" id="study-verdict-yours" dir="auto"></div>
+                            <div class="study-verdict__feedback" id="study-verdict-feedback" translate="no" dir="auto"></div>
+                            <div class="study-verdict__yours" id="study-verdict-yours" translate="no" dir="auto"></div>
                         </div>
                         <!-- The AI's short, direct answer - the stored one is a quote
                              from the material, which often opens with an intro. -->
                         <div class="study-short-answer" id="study-short-answer" hidden>
                             <div class="study-answer-label">The answer</div>
-                            <div class="study-short-answer__text" id="study-short-answer-text" dir="auto"></div>
+                            <div class="study-short-answer__text" id="study-short-answer-text" translate="no" dir="auto"></div>
                         </div>
                         <div class="study-answer-label" id="study-material-label">Answer</div>
-                        <div class="study-answer" id="study-answer" dir="auto"></div>
+                        <div class="study-answer" id="study-answer" translate="no" dir="auto"></div>
 
                         <!-- Practice items have no model-written answer, so the
                              student's own working becomes the stored solution. -->
@@ -659,10 +617,75 @@
             <div class="page-header">
                 <div>
                     <h2 class="page-title">Progress</h2>
-                    <div class="page-subtitle">Where your workload actually sits, and what needs attention first.</div>
+                    <div class="page-subtitle">How ready you are for each exam, how much you can trust your "I'm sure", and what's still open.</div>
                 </div>
             </div>
 
+            <!-- Exam readiness (30/9): one row per course, from the LAST answer
+                 to each question (server routes/study.js readinessOf). Lucky
+                 guesses don't count as knowing. Filled by renderReadiness(). -->
+            <h3 class="section-title progress-section-title">Exam readiness</h3>
+            <div class="card readiness" id="readiness-card">
+                <p class="settings-hint card-help">Where each course stands, by your last answer to each of its questions. A right answer while guessing doesn't count as knowing it.</p>
+                <div class="readiness-legend" id="readiness-legend">
+                    <span><i class="rd-dot rd-known"></i>Know it</span>
+                    <span><i class="rd-dot rd-shaky"></i>Shaky</span>
+                    <span><i class="rd-dot rd-not"></i>Don't know yet</span>
+                    <span><i class="rd-dot rd-unseen"></i>Not practiced</span>
+                </div>
+                <div id="readiness-list"></div>
+            </div>
+
+            <!-- Moved here from Study (30/9): what your answers say about you. -->
+            <h3 class="section-title progress-section-title" id="judgement-title">How well you judge what you know</h3>
+                <!-- Sets expectations before the panels below, since three
+                     of the four only surface a pattern across repeated
+                     reviews of the SAME question - not the deck's total
+                     review count - and stay empty otherwise, which read as
+                     "broken" without this. -->
+                <p class="settings-hint" id="study-panels-hint" style="margin-bottom: var(--space-4);" hidden>
+                    These fill in as you answer the same questions more than once.
+                </p>
+
+                <!-- Each panel shows only once it has something to say
+                     (renderer.js updateStudyPanelsVisibility). -->
+                <div class="progress-columns" id="study-panels">
+                    <!-- The calibration panel: the differentiating feature -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="section-title">How accurate is your "I'm sure"?</h3>
+                        </div>
+                        <div id="calibration-panel"></div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="section-title">Sure, but wrong</h3>
+                        </div>
+                        <p class="settings-hint">You said "I'm sure" and got these wrong. Review them first.</p>
+                        <div id="confidently-wrong-panel"></div>
+                    </div>
+
+                    <!-- The inverse of "confidently wrong" - doubt that isn't earned. -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="section-title">You know these better than you think</h3>
+                        </div>
+                        <p class="settings-hint">You keep getting these right, even when you're not sure.</p>
+                        <div id="underconfident-panel"></div>
+                    </div>
+
+                    <!-- Genuine difficulty - no miscalibration here, just hard material. -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="section-title">Hard for you</h3>
+                        </div>
+                        <p class="settings-hint">You keep missing these. Go back to the material for them.</p>
+                        <div id="genuine-difficulty-panel"></div>
+                    </div>
+                </div>
+
+            <h3 class="section-title progress-section-title">Tasks</h3>
             <div class="progress-top">
             <!-- BUG FIX: this whole section (level, XP bar, Total XP, Streak)
                  depended on /api/stats, which was removed server-side along
@@ -817,6 +840,18 @@
                         <button class="filter-chip" data-appearance="light">Light</button>
                         <button class="filter-chip" data-appearance="dark">Dark</button>
                         <button class="filter-chip" data-appearance="system">System</button>
+                    </div>
+                </div>
+                <!-- Language (30/9): i18n.js. Hebrew also flips the layout. The
+                     button names stay in their own language (translate="no"). -->
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-row__title">Language</div>
+                        <div class="settings-hint settings-hint--inline">The app's language. Hebrew also turns the layout right-to-left.</div>
+                    </div>
+                    <div class="filter-group" id="language-picker" role="group" aria-label="Language" translate="no">
+                        <button class="filter-chip" data-lang="en" lang="en" dir="ltr">English</button>
+                        <button class="filter-chip" data-lang="he" lang="he" dir="rtl">עברית</button>
                     </div>
                 </div>
             </div>

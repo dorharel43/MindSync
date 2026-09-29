@@ -144,7 +144,7 @@
 
 /* Slate's dark sidebar (light mode only - in dark mode everything is dark
    already): its text and controls take the inverse colours. */
-[data-theme="slate"] body:not(.dark-mode) .sidebar { border-right-color: #2b3a4f; }
+[data-theme="slate"] body:not(.dark-mode) .sidebar { border-inline-end-color: #2b3a4f; }
 [data-theme="slate"] body:not(.dark-mode) .logo { color: #f1f5f9; }
 [data-theme="slate"] body:not(.dark-mode) .logo-mark { background: #e2e8f0; color: #1e293b; }
 [data-theme="slate"] body:not(.dark-mode) .menu-item { color: #94a3b8; }

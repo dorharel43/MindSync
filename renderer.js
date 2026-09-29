@@ -1,3 +1,6 @@
+// Language (i18n.js, loaded before this file). If it's missing, English.
+if (!window.I18N) window.I18N = { lang: 'en', isRtl: false, t: (s, v) => (v ? String(s).replace(/\{(\w+)\}/g, (m, k) => (k in v ? v[k] : m)) : s), setLang() {}, translate() {} };
+if (!window.t) window.t = window.I18N.t;
 const { ipcRenderer, clipboard } = require('electron');
 
 // A task's urgency is classified by AI in the background now (see main.js's
@@ -422,6 +425,12 @@ if (themeBtnSidebar) themeBtnSidebar.addEventListener('click', toggleTheme);
 if (darkToggleSettings) darkToggleSettings.addEventListener('click', toggleTheme);
 document.querySelectorAll('[data-appearance]').forEach((btn) => {
     btn.addEventListener('click', () => setAppearance(btn.dataset.appearance));
+});
+
+// Language (i18n.js): switching reloads the page in the other language.
+document.querySelectorAll('[data-lang]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.lang === I18N.lang);
+    btn.addEventListener('click', () => { if (btn.dataset.lang !== I18N.lang) I18N.setLang(btn.dataset.lang); });
 });
 document.querySelectorAll('.theme-option').forEach((btn) => {
     btn.addEventListener('click', () => applyTheme(btn.dataset.themeValue));
@@ -2859,7 +2868,136 @@ document.querySelectorAll('.modal-overlay').forEach(modal => {
 async function loadAndRenderProgress() {
     const progressView = document.getElementById('view-progress');
     if (!progressView) return;
-    await renderProgressInsights();
+    await Promise.all([renderLearningProgress(), renderProgressInsights()]);
+}
+
+// Learning part of Progress (30/9): exam readiness per course, then the
+// panels about how well you judge what you know (moved here from Study).
+async function renderLearningProgress() {
+    const stats = await ipcRenderer.invoke('get-study-stats').catch(() => null);
+    if (!stats || stats.error) return;
+    renderReadiness(stats.subjects || []);
+    renderCalibration(stats.calibration, stats.reviewsAllTime, stats.trendByConfidence);
+    renderConfidentlyWrong(stats.confidentlyWrong);
+    renderAttentionList('underconfident-panel', stats.underconfidentItems,
+        'Nothing here yet — no pattern of doubting yourself on things you actually know.', 'good');
+    renderAttentionList('genuine-difficulty-panel', stats.genuineDifficultyItems,
+        'Nothing flagged as genuinely hard right now.', 'warn');
+    updateStudyPanelsVisibility(stats);
+}
+
+// "Exam in 6 days · Thu 8/10" - shared by Study's course rows and Progress.
+function examChipText(exam) {
+    const [y, m, d] = exam.date.split('-').map(Number);
+    const when = exam.daysLeft === 0 ? 'Exam today' : exam.daysLeft === 1 ? 'Exam tomorrow' : `Exam in ${exam.daysLeft} days`;
+    return `${when} · ${WEEKDAY_NAMES[new Date(y, m - 1, d).getDay()].slice(0, 3)} ${d}/${m}`;
+}
+
+// What the numbers mean, in words - the student shouldn't have to work out
+// what "12 / 3 / 5 / 10" says about next Thursday.
+function readinessSentence(s) {
+    const r = s.readiness;
+    const parts = [];
+    if (r.unseen === r.total) {
+        parts.push('You haven\'t practiced this course yet.');
+    } else {
+        parts.push(`You know ${r.known} of ${r.total}.`);
+        if (r.sureWrong) parts.push(r.sureWrong === 1
+            ? '1 you were sure about turned out wrong - it comes first in practice.'
+            : `${r.sureWrong} you were sure about turned out wrong - they come first in practice.`);
+        if (r.shaky) parts.push(`${r.shaky} ${r.shaky === 1 ? 'is' : 'are'} shaky (partly right, or right by guessing).`);
+        if (r.unseen) parts.push(`${r.unseen} not practiced yet.`);
+    }
+    const toGo = r.total - r.known;
+    if (s.exam) {
+        if (toGo === 0) parts.push('You know all of it - keep it fresh until the exam.');
+        else if (s.exam.daysLeft <= 1) parts.push(`Before the exam, go over the ${toGo} you don't know for sure yet.`);
+        else {
+            const perDay = Math.ceil(toGo / (s.exam.daysLeft - 1));
+            parts.push(`To get through the other ${toGo} before the exam: about ${perDay} a day.`);
+        }
+    } else {
+        parts.push('No exam date yet - add it (Study or Planner) and practice is timed to it.');
+    }
+    return parts.join(' ');
+}
+
+function renderReadiness(subjects) {
+    const list = document.getElementById('readiness-list');
+    const legend = document.getElementById('readiness-legend');
+    if (!list) return;
+    list.innerHTML = '';
+    const withQuestions = subjects.filter(s => s.readiness && s.readiness.total > 0);
+    if (legend) legend.hidden = withQuestions.length === 0;
+    if (withQuestions.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'readiness-empty';
+        const p = document.createElement('p');
+        p.className = 'ms-muted ms-text-sm';
+        p.textContent = 'No practice questions yet. Make them from a course file, practice a little, and this shows how ready you are for each exam.';
+        const btn = document.createElement('button');
+        btn.className = 'btn-primary btn-sm';
+        btn.textContent = 'Make questions';
+        btn.onclick = () => goAndClick('nav-study', 'generate-study-btn');
+        empty.append(p, btn);
+        list.append(empty);
+        return;
+    }
+    withQuestions.forEach(s => {
+        const r = s.readiness;
+        const row = document.createElement('div');
+        row.className = 'readiness-row';
+
+        const head = document.createElement('div');
+        head.className = 'readiness-row__head';
+        const name = document.createElement('span');
+        name.className = 'readiness-row__name';
+        name.dir = 'auto';
+        name.textContent = s.category === 'Uncategorized' ? 'No course' : s.category;
+        const pct = document.createElement('span');
+        pct.className = 'readiness-row__pct ms-tabular';
+        pct.textContent = `${r.percent}%`;
+        pct.title = 'Share of this course\'s questions you know';
+        head.append(name);
+        if (s.exam) {
+            const exam = document.createElement('span');
+            exam.className = 'study-course__exam' + (s.exam.daysLeft <= 7 ? ' is-soon' : '');
+            exam.textContent = examChipText(s.exam);
+            exam.title = s.exam.title;
+            head.append(exam);
+        }
+        head.append(pct);
+
+        const bar = document.createElement('div');
+        bar.className = 'readiness-bar';
+        [['known', 'rd-known', 'Know it'], ['shaky', 'rd-shaky', 'Shaky'], ['notKnown', 'rd-not', 'Don\'t know yet'], ['unseen', 'rd-unseen', 'Not practiced']]
+            .forEach(([key, cls, label]) => {
+                if (!r[key]) return;
+                const seg = document.createElement('span');
+                seg.className = `readiness-bar__seg ${cls}`;
+                seg.style.width = `${(r[key] / r.total) * 100}%`;
+                seg.title = `${label}: ${r[key]}`;
+                bar.append(seg);
+            });
+
+        const text = document.createElement('p');
+        text.className = 'readiness-row__text';
+        text.textContent = readinessSentence(s);
+
+        const practice = document.createElement('button');
+        practice.className = (r.sureWrong || r.notKnown || s.due) ? 'btn-primary btn-sm' : 'btn-secondary btn-sm';
+        practice.textContent = 'Practice this course';
+        practice.onclick = () => {
+            document.getElementById('nav-study').click();
+            setTimeout(() => startStudySession(null, { category: s.category, label: name.textContent }), 60);
+        };
+
+        const foot = document.createElement('div');
+        foot.className = 'readiness-row__foot';
+        foot.append(text, practice);
+        row.append(head, bar, foot);
+        list.append(row);
+    });
 }
 
 // Builds the two lower panels of the Progress view from the task list. This
@@ -3129,7 +3267,7 @@ async function loadAndRenderHome() {
                 <div class="timeline-content">
                     <div class="dot ${isNext ? 'active' : ''}" style="${isNext ? '' : `background-color: ${dotColor};`}"></div>
                     <span class="timeline-title" dir="auto">${escapeHtml(evt.title)}</span>
-                    ${isNext ? '<span class="tag-active" style="margin-left:8px;">Next</span>' : ''}
+                    ${isNext ? '<span class="tag-active" style="margin-inline-start:8px;">Next</span>' : ''}
                 </div>
                 <div class="timeline-time">${evt.time}</div>
             `;
@@ -3606,7 +3744,7 @@ setInterval(async () => {
 
             // אם נשארו בין 0 ל-10 דקות, ועוד לא התרענו - תקפיץ התראה!
             if (diffMinutes > 0 && diffMinutes <= 10 && !notifiedEvents.has(evt.id)) {
-                showNotification('Starting soon', `${evt.title} starts at ${evt.time}`);
+                showNotification(t('Starting soon'), t(`${evt.title} starts at ${evt.time}`));
                 notifiedEvents.add(evt.id); // מסמנים שהתרענו כדי לא להציק שוב
             }
         }
@@ -4278,11 +4416,9 @@ function renderStudyCourses(subjects, items) {
         name.textContent = s.category === 'Uncategorized' ? 'No course' : s.category;
         top.append(name);
         if (s.exam) {
-            const [y, m, d] = s.exam.date.split('-').map(Number);
-            const when = s.exam.daysLeft === 0 ? 'Exam today' : s.exam.daysLeft === 1 ? 'Exam tomorrow' : `Exam in ${s.exam.daysLeft} days`;
             const exam = document.createElement('span');
             exam.className = 'study-course__exam' + (s.exam.daysLeft <= 7 ? ' is-soon' : '');
-            exam.textContent = `${when} · ${WEEKDAY_NAMES[new Date(y, m - 1, d).getDay()].slice(0, 3)} ${d}/${m}`;
+            exam.textContent = examChipText(s.exam);
             exam.title = s.exam.title;
             top.append(exam);
         }
@@ -4434,7 +4570,13 @@ function updateStudyPanelsVisibility(stats) {
     if (panels) panels.hidden = !any;
     const hint = document.getElementById('study-panels-hint');
     if (hint) hint.hidden = any || !(stats.reviewsAllTime > 0);
+    // Progress: the section title only when there's something under it.
+    const title = document.getElementById('judgement-title');
+    if (title) title.hidden = !any && (!hint || hint.hidden);
 }
+
+const studyToProgressLink = document.getElementById('study-to-progress-link');
+if (studyToProgressLink) studyToProgressLink.onclick = (e) => { e.preventDefault(); document.getElementById('nav-progress').click(); };
 
 // One-time fix for questions made before the course came from the folder:
 // their course is the FILE's name ("הרצאה 3 - התפלגות נורמלית"), which never
@@ -4498,7 +4640,7 @@ function renderCalibration(cal, totalReviews, trendByConfidence) {
                 </div>
                 <div class="cal-track">
                     <div class="cal-fill cal-${tone}" style="width:${b.accuracy}%"></div>
-                    <div class="cal-ideal" style="left:${r.ideal}%" title="Well-calibrated: about ${r.ideal}%"></div>
+                    <div class="cal-ideal" style="inset-inline-start:${r.ideal}%" title="Well-calibrated: about ${r.ideal}%"></div>
                 </div>
                 <div class="cal-row__note ms-text-xs ms-muted">${b.correct} of ${b.total}</div>
                 ${trendNote}
@@ -4702,7 +4844,7 @@ async function fetchShortAnswer(item) {
     if (!box || !text) return;
     box.hidden = false;
     box.classList.add('is-loading');
-    text.textContent = 'Getting a short answer…';
+    text.textContent = t('Getting a short answer…');
     const res = await ipcRenderer.invoke('grade-study-answer', {
         question: item.question, expected: item.answer || item.mySolution || '', mode: item.mode, explainOnly: true
     }).catch(() => null);
@@ -4736,7 +4878,7 @@ function revealAnswer(check = null) {
                 ? VERDICT_TITLES[check.verdict]
                 : 'Couldn\'t check it right now - mark yourself below';
             document.getElementById('study-verdict-feedback').textContent = check.verdict ? (check.feedback || '') : '';
-            document.getElementById('study-verdict-yours').textContent = `You wrote: ${check.typed}`;
+            document.getElementById('study-verdict-yours').textContent = `${t('You wrote:')} ${check.typed}`;
         }
     }
     const shortBox = document.getElementById('study-short-answer');
@@ -4793,11 +4935,11 @@ function revealAnswer(check = null) {
             }
         }
     } else {
-        answerEl.textContent = item.mode === 'practice'
+        answerEl.textContent = t(item.mode === 'practice'
             ? (item.mySolution
                 ? 'Compare what you did against your saved solution below.'
                 : 'No stored solution yet. Solve it, then save your working below so it\'s here next time.')
-            : 'No passage was stored for this one — check your notes.';
+            : 'No passage was stored for this one — check your notes.');
         answerEl.classList.add('study-answer--none');
         if (labelEl) labelEl.textContent = item.mode === 'practice' ? 'How to check' : 'No stored answer';
     }
