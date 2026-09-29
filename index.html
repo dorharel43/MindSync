@@ -159,6 +159,16 @@
                 <div class="onboarding__progress"><div class="onboarding__bar" id="onboarding-bar"></div></div>
                 <ol class="onboarding__steps" id="onboarding-steps"></ol>
             </div>
+            <!-- Study on Home (30/9): one line saying where practice stands -
+                 no questions yet / N ready / all caught up - with the button
+                 that goes there. Shown when the guide isn't (renderHomeStudy). -->
+            <div class="card home-study" id="home-study" hidden>
+                <div class="home-study__text">
+                    <div class="home-study__title" id="home-study-title"></div>
+                    <div class="home-study__sub" id="home-study-sub"></div>
+                </div>
+                <button class="btn-primary" id="home-study-btn"></button>
+            </div>
 
             <div class="focus-section">
                 <div class="next-up-card">
@@ -623,7 +633,10 @@
                             <div class="metric__value ms-tabular" id="summary-reviewed">0</div>
                         </div>
                         <div class="card metric">
-                            <div class="metric__label">Correct</div>
+                            <!-- "Knew it" = right AND said sure / think so. A right
+                                 answer while guessing is luck, not knowledge (30/9) -
+                                 counted apart, in #summary-lucky below. -->
+                            <div class="metric__label">Knew it</div>
                             <div class="metric__value ms-tabular" id="summary-correct">0</div>
                         </div>
                         <div class="card metric">
@@ -632,6 +645,7 @@
                         </div>
                     </div>
                     <div id="summary-message" class="settings-hint"></div>
+                    <div id="summary-lucky" class="settings-hint" hidden></div>
                     <div class="summary-surewrong" id="summary-surewrong" hidden>
                         <div class="summary-surewrong__title">You were sure about these - and got them wrong. They come back first next time:</div>
                         <ul class="summary-surewrong__list" id="summary-surewrong-list"></ul>

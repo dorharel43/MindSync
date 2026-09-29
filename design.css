@@ -1221,3 +1221,12 @@ html:not(.is-web) .web-only { display: none !important; }
 .study-dont-know:disabled { opacity: .55; cursor: progress; }
 .outcome-row[hidden] { display: none; }
 .study-short-answer.is-loading .study-short-answer__text { color: var(--text-secondary); font-style: italic; }
+/* Study line on Home (30/9) */
+.home-study { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; margin-bottom: 16px; }
+.home-study[hidden] { display: none; }
+.home-study__title { font-weight: var(--font-semibold); color: var(--text-primary); }
+.home-study__sub { font-size: var(--text-sm); color: var(--text-secondary); margin-top: 2px; }
+.home-study .btn-primary, .home-study .btn-secondary { flex-shrink: 0; }
+@media (max-width: 760px) { .home-study { flex-direction: column; align-items: stretch; } }
+.summary-lucky { margin-top: 6px; }
+.attention-item__late { color: var(--status-danger); font-weight: var(--font-medium); }

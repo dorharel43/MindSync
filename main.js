@@ -2892,20 +2892,30 @@ ipcMain.handle('get-onboarding-status', async () => {
   // getting-started guide. Any failure -> report it, and the guide stays hidden.
   let failed = false;
   const safe = (p, fallback) => p.catch(() => { failed = true; return fallback; });
-  const [files, stats, events, tasks] = await Promise.all([
+  const [files, stats, events, tasks, me] = await Promise.all([
     safe(api.getFilesLight(), []),
     safe(api.getStudyStats(), null),
     safe(api.getEvents(), []),
-    safe(api.getTasks(), [])
+    safe(api.getTasks(), []),
+    safe(api.getMe(), null)
   ]);
   if (failed) return { error: 'unavailable' };
   return {
+    // Finished (or hidden) once = never again, even after deleting every
+    // question or on a new computer. Stored on the account.
+    guideDone: Boolean(me && me.guideDone),
+    dueCount: stats ? stats.dueCount || 0 : 0,
     hasKey: Boolean(aiProvider.readConfig().geminiKey),
     files: (files || []).length,
     questions: stats ? stats.totalItems || 0 : 0,
     reviews: stats ? stats.reviewsAllTime || 0 : 0,
     calendarItems: (events || []).length + (tasks || []).length
   };
+});
+
+ipcMain.handle('mark-guide-done', async (event, done = true) => {
+  try { await api.updateMe({ guideDone: done !== false }); return true; }
+  catch (err) { return { error: err.message }; }
 });
 
 ipcMain.handle('get-files-light', async () => {
