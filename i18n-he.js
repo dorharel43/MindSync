@@ -284,7 +284,13 @@
         '1 file in this course has no questions yet.': 'לקובץ אחד בקורס הזה עוד אין שאלות.',
         // Sidebar: My courses (30/9)
         // Email (30/9)
-        'Forgot password?': 'שכחת את הסיסמה?', 'Confirm your email': 'אישור כתובת המייל', 'Send it again': 'שליחה שוב',
+        'Forgot password?': 'שכחת את הסיסמה?',
+        // Settings layout (30/9)
+        'Your account, how the app looks, connections and help.': 'החשבון שלך, המראה של האפליקציה, חיבורים ועזרה.',
+        'Account': 'חשבון', 'Connections': 'חיבורים', 'Help & feedback': 'עזרה ומשוב', 'Delete data': 'מחיקת נתונים',
+        'Password': 'סיסמה', 'Changing it logs you out on every other device.': 'שינוי הסיסמה מנתק את כל המכשירים האחרים.',
+        "Your email isn't confirmed yet. Confirming it lets you reset your password if you forget it.": 'כתובת המייל עוד לא אושרה. אחרי האישור אפשר יהיה לאפס את הסיסמה אם היא תישכח.',
+        'Send the link again': 'שליחת הקישור שוב', 'Confirm your email': 'אישור כתובת המייל', 'Send it again': 'שליחה שוב',
         'We sent a link to your email when you signed up. Confirming it lets you reset your password if you forget it.': 'בהרשמה נשלח למייל שלך קישור לאישור. אחרי האישור אפשר יהיה לאפס את הסיסמה אם היא תישכח.',
         'Your email is already confirmed.': 'כתובת המייל כבר מאושרת.', 'Sent. Check your inbox (and the spam folder).': 'נשלח. כדאי לבדוק את תיבת הדואר (וגם את הספאם).',
         'Confirmation email': 'מייל אישור',

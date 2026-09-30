@@ -1405,3 +1405,62 @@ html:not(.is-web) .web-only { display: none !important; }
 .auth-forgot { display: inline-block; margin-top: 6px; font-size: var(--text-xs); color: var(--accent-text); text-decoration: none; }
 .auth-forgot:hover { text-decoration: underline; }
 .auth-forgot[hidden] { display: none; }
+
+/* ---------- Settings layout (30/9): groups, account header, danger last ---------- */
+.settings-group-title {
+    font-size: var(--text-xs);
+    font-weight: var(--font-semibold);
+    color: var(--text-tertiary);
+    text-transform: none;
+    letter-spacing: 0.01em;
+    margin: 22px 2px 8px;
+}
+.page-header + .settings-group-title, .page-header + * + .settings-group-title { margin-top: 4px; }
+.settings-group-title--danger { color: var(--status-danger); }
+#view-settings .settings-card + .settings-card { margin-top: 0; }
+.account-head { display: flex; align-items: center; gap: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border-color); }
+.account-head .profile-details { min-width: 0; flex: 1; }
+.account-head .profile-name-large { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-email { font-size: var(--text-xs); color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: start; }
+.account-head__actions { display: flex; gap: 8px; flex-shrink: 0; }
+.account-notice {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    background: var(--status-info-bg);
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+}
+.account-notice[hidden] { display: none; }
+.account-notice > [data-icon] { color: var(--status-info); display: inline-flex; }
+.account-notice__text { flex: 1; min-width: 200px; }
+.btn-link {
+    border: 0; background: none; padding: 0; font: inherit; font-size: var(--text-sm);
+    font-weight: var(--font-medium); color: var(--accent-text); cursor: pointer;
+}
+.btn-link:hover { text-decoration: underline; }
+.btn-link[disabled] { opacity: .6; cursor: default; text-decoration: none; }
+.account-card .settings-row:first-of-type { padding-top: 12px; }
+.settings-row--stacked textarea { width: 100%; margin: 0; }
+.settings-row--stacked > .btn-sm { align-self: flex-end; }
+.settings-details { border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 0; }
+.settings-details > summary {
+    cursor: pointer; font-size: var(--text-sm); font-weight: var(--font-medium); color: var(--text-primary);
+    list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.settings-details > summary::-webkit-details-marker { display: none; }
+.settings-details > summary::before { content: '▸'; color: var(--text-tertiary); font-size: 11px; }
+[dir="rtl"] .settings-details > summary::before { content: '◂'; }
+.settings-details[open] > summary::before { content: '▾'; }
+.settings-details[open] > summary { margin-bottom: 6px; }
+.settings-card--danger { border-color: color-mix(in srgb, var(--status-danger) 35%, var(--border-color)); }
+@media (max-width: 560px) {
+    .account-head { flex-wrap: wrap; }
+    .account-head__actions { width: 100%; }
+    .account-head__actions .btn-sm { flex: 1; }
+    #view-settings .settings-row:not(.settings-row--stacked) { flex-wrap: wrap; }
+}
