@@ -117,9 +117,32 @@ if (authToggleLink) {
 let currentUserId = null;
 let currentProfile = { name: '', degree: '' };   // from loadProfile (30/9) // used to keep per-user UI preferences apart on a shared machine
 
+// Arrived from "Open MindSync" on the email-confirmed page (web, 30/9):
+// /app/#verified=<account id>. This browser may be logged in to ANOTHER
+// account (a phone that has the main account open) - then say so, instead
+// of silently showing an account that isn't the one just confirmed.
+function handleVerifiedLink(user) {
+    if (!window.MINDSYNC_WEB) return;
+    const m = /(?:^|[#&])verified=([a-f0-9]{24})(?:&|$)/i.exec(location.hash || '');
+    if (!m) return;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* old browser */ }
+    if (m[1] === currentUserId) {
+        toast.success('Your email is confirmed.');
+        return;
+    }
+    const who = user && user.email ? user.email : '';
+    setTimeout(() => showActionToast(
+        `${t('The email you just confirmed belongs to a different account.')}${who ? ` ${t('You\'re logged in here as {email}.', { email: isolate(who) })}` : ''}`,
+        t('Log in to the other account'),
+        () => { const b = document.getElementById('auth-logout-btn'); if (b) b.click(); },
+        { title: t('Email confirmed'), duration: 30000 }
+    ), 400);
+}
+
 function bootApp(user) {
     document.body.classList.remove('auth-pending');
     currentUserId = user && (user.id || user._id) ? String(user.id || user._id) : null;
+    handleVerifiedLink(user);
     if (typeof refreshOnboarding === 'function') refreshOnboarding();
 
     // Full profile fields (including the Settings page ones) come from
@@ -1537,7 +1560,7 @@ function showActionToast(message, actionLabel, actionFn, { title = '', duration 
         <span class="ms-toast__icon">${icon('info', { size: 18 })}</span>
         <div class="ms-toast__body">
             ${title ? '<div class="ms-toast__title"></div>' : ''}
-            <div class="ms-toast__message" dir="ltr"></div>
+            <div class="ms-toast__message" dir="auto"></div>
             <button class="btn-primary btn-sm toast-action-btn"></button>
         </div>
         <button class="ms-toast__close" aria-label="Dismiss">&#10005;</button>
