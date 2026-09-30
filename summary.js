@@ -164,6 +164,8 @@ function showSummary(text, savedAt, info) {
     metaEl.textContent = (savedAt
         ? `Saved ${new Date(savedAt).toLocaleString()}`
         : 'Saved') + modelNote(info);
+    const aiNote = document.getElementById('sum-ai-note');
+    if (aiNote) aiNote.hidden = false;
     copyBtn.disabled = false;
     regenBtn.disabled = false;
 }

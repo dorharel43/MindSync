@@ -68,6 +68,8 @@
                     <div class="auth-error" id="auth-error" hidden></div>
 
                     <button type="submit" class="btn-primary auth-submit-btn" id="auth-submit-btn">Log in</button>
+                    <!-- 30/9: shown on sign-up only (setAuthMode). -->
+                    <p class="auth-terms" id="auth-terms" hidden>By creating an account you agree to the <a href="#" data-site-page="/terms">terms of use</a> and the <a href="#" data-site-page="/privacy">privacy policy</a>.</p>
                 </form>
 
                 <p class="auth-toggle">
@@ -567,6 +569,7 @@
                         <div class="study-short-answer" id="study-short-answer" hidden>
                             <div class="study-answer-label">The answer</div>
                             <div class="study-short-answer__text" id="study-short-answer-text" translate="no" dir="auto"></div>
+                            <div class="ai-note">Written by AI - it can be wrong. The material below is the source.</div>
                         </div>
                         <div class="study-answer-label" id="study-material-label">Answer</div>
                         <div class="study-answer" id="study-answer" translate="no" dir="auto"></div>
@@ -962,6 +965,16 @@
                     </div>
                     <textarea id="feedback-text" class="input-field" rows="3" maxlength="4000" dir="auto" placeholder="What happened, or what would make this better?"></textarea>
                     <button id="feedback-send-btn" class="btn-secondary btn-sm">Send</button>
+                </div>
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-row__title">Terms and privacy</div>
+                        <div class="settings-hint settings-hint--inline">What MindSync keeps about you, and the rules of using it.</div>
+                    </div>
+                    <div class="settings-links">
+                        <a href="#" data-site-page="/terms">Terms of use</a>
+                        <a href="#" data-site-page="/privacy">Privacy policy</a>
+                    </div>
                 </div>
                 <!-- Keyboard shortcuts: shortcuts nobody can discover may as
                      well not exist - listed here, folded so they don't crowd. -->

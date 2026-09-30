@@ -1894,6 +1894,13 @@ ipcMain.handle('open-reset-password', async () => {
   return true;
 });
 
+// Terms of use / privacy policy on the website (30/9) - only these pages.
+ipcMain.handle('open-site-page', async (event, page) => {
+  if (!['/terms', '/privacy'].includes(page)) return false;
+  require('electron').shell.openExternal(api.resetPasswordPage().replace(/\/reset-password$/, page));
+  return true;
+});
+
 // =====================================
 // Profile
 // =====================================
