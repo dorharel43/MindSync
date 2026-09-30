@@ -152,7 +152,14 @@ function handleVerifiedLink(user) {
     ), 400);
 }
 
+// "Was logged in on this device" - read by i18n.js before the page shows.
+function rememberSession(on) {
+    try { if (on) localStorage.setItem('mindsync.session', '1'); else localStorage.removeItem('mindsync.session'); } catch (e) { /* storage blocked */ }
+    if (!on) document.documentElement.classList.remove('has-session');
+}
+
 function bootApp(user) {
+    rememberSession(true);
     document.body.classList.remove('auth-pending');
     currentUserId = user && (user.id || user._id) ? String(user.id || user._id) : null;
     handleVerifiedLink(user);
@@ -233,6 +240,7 @@ const authLogoutBtn = document.getElementById('auth-logout-btn');
 if (authLogoutBtn) {
     authLogoutBtn.onclick = async () => {
         await ipcRenderer.invoke('auth-logout');
+        rememberSession(false);
         // Start clean (30/9): the screens kept the previous account's data -
         // the next person to log in on this computer saw its folders, files
         // and even an open question. A reload clears everything.
@@ -261,6 +269,7 @@ if (authDeleteBtn) {
                 toast.success('Your account and its data were deleted.', 'Account deleted');
                 if (authForm) authForm.reset();
                 setAuthMode('register');
+                rememberSession(false);
                 if (authLoading) authLoading.hidden = true;
                 if (authFormWrap) authFormWrap.hidden = false;
                 document.body.classList.add('auth-pending');
@@ -306,6 +315,7 @@ if (authChangePwBtn) {
     }
     // Not logged in (or the check itself failed) - swap the spinner for the
     // actual form instead of leaving the person staring at "Checking...".
+    rememberSession(false);
     if (authLoading) authLoading.hidden = true;
     if (authFormWrap) authFormWrap.hidden = false;
 })();
@@ -513,6 +523,16 @@ document.querySelectorAll('[data-appearance]').forEach((btn) => {
 });
 
 // Language (i18n.js): switching reloads the page in the other language.
+// The sidebar's language button offers the other language (30/9).
+const sidebarLangBtn = document.getElementById('sidebar-lang-btn');
+if (sidebarLangBtn) {
+    const other = I18N.lang === 'he' ? 'en' : 'he';
+    sidebarLangBtn.dataset.lang = other;
+    sidebarLangBtn.lang = other;
+    sidebarLangBtn.dir = other === 'he' ? 'rtl' : 'ltr';
+    document.getElementById('sidebar-lang-name').textContent = other === 'he' ? 'עברית' : 'English';
+    sidebarLangBtn.title = other === 'he' ? 'Switch to Hebrew' : 'Switch to English';
+}
 document.querySelectorAll('[data-lang]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.lang === I18N.lang);
     btn.addEventListener('click', () => { if (btn.dataset.lang !== I18N.lang) I18N.setLang(btn.dataset.lang); });

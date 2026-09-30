@@ -71,7 +71,7 @@
         'Up Next Today': 'הבא בתור היום', 'Loading data...': 'טוען נתונים…', 'Please wait': 'רגע…',
         'See my week': 'לשבוע שלי', 'Start Focus Mode': 'הפעלת מצב ריכוז', 'This week': 'השבוע',
         'Open Tasks': 'משימות פתוחות', 'Upcoming Exams': 'מבחנים קרובים', 'Events This Week': 'אירועים השבוע', 'Classes This Week': 'שיעורים השבוע',
-        'To Planner >': 'ללוח השבועי ←', "Today's Timeline": 'היום שלי', 'Open Planner >': 'לפתיחת הלוח השבועי ←', 'Open Planner': 'לפתיחת הלוח השבועי', 'To Planner': 'ללוח השבועי', 'How this screen works': 'איך המסך הזה עובד', 'Next exam': 'המבחן הבא',
+        'To Planner >': 'ללוח השבועי ←', "Today's Timeline": 'היום שלי', 'Open Planner >': 'לפתיחת הלוח השבועי ←', 'Open Planner': 'לפתיחת הלוח השבועי', 'To Planner': 'ללוח השבועי', 'How this screen works': 'איך המסך הזה עובד', 'Switch to English': 'מעבר לאנגלית', 'Next exam': 'המבחן הבא',
         'Nothing scheduled': 'אין כלום בלוח', 'No classes or exams on your calendar today.': 'אין היום שיעורים או מבחנים בלוח.',
         'Nothing scheduled today': 'אין כלום בלוח היום', 'Nothing on your calendar today.': 'אין היום כלום בלוח.',
         'All done for today': 'סיימת להיום', "Today's classes and events are over.": 'השיעורים והאירועים של היום הסתיימו.',

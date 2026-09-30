@@ -1814,3 +1814,22 @@ html[dir="rtl"] .study-verdict__feedback, html[dir="rtl"] .study-verdict__yours,
 @media (max-width: 860px) {
     .study-hero { grid-template-columns: 1fr; }
 }
+
+/* ---------- Sidebar language button (30/9) ---------- */
+.sidebar-footer { display: flex; align-items: center; gap: 6px; }
+.sidebar-lang-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 10px; border-radius: 999px;
+    border: 1px solid var(--border-color); background: var(--bg-card);
+    color: var(--text-secondary); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
+}
+.sidebar-lang-btn:hover { color: var(--text-primary); border-color: var(--border-strong); }
+.sidebar-lang-btn:focus-visible { outline: 2px solid var(--accent-purple); outline-offset: 2px; }
+[data-theme="slate"] body:not(.dark-mode) .sidebar-lang-btn { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.12); color: #cbd5e1; }
+
+/* ---------- Returning user: a quiet loading screen, not the login (30/9) ---------- */
+html.has-session body.auth-pending #auth-screen { grid-template-columns: 1fr; }
+html.has-session body.auth-pending .auth-brand,
+html.has-session body.auth-pending .auth-langs,
+html.has-session body.auth-pending #auth-form-wrap { display: none !important; }
+html.has-session body.auth-pending .auth-main { min-height: 100vh; }
