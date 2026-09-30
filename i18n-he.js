@@ -26,6 +26,12 @@
         // ---- app frame / navigation ----
         'MindSync': 'MindSync',
         'MindSync AI - Home': 'MindSync',
+        // Login screen (30/9)
+        'Know what you really know - before the exam.': 'לדעת מה באמת ידוע לך - לפני המבחן.',
+        'Practice questions from your course files. Before each answer you say how sure you are - and see where that feeling is wrong.': 'שאלות תרגול מהקבצים של הקורס. לפני כל תשובה מסמנים כמה בטוחים - ורואים איפה התחושה הזאת מטעה.',
+        'Statistics': 'סטטיסטיקה',
+        "What's the difference between variance and standard deviation?": 'מה ההבדל בין שונות לסטיית תקן?',
+        'Not quite. You were sure - so it comes back first.': 'לא בדיוק. סימנת "בוודאות" - אז השאלה תחזור ראשונה.',
         'Written by AI - it can get things wrong. Check anything important against your course material.': 'נכתב על ידי AI ועלול לטעות. כדאי לבדוק כל דבר חשוב מול חומר הקורס.',
         'Written by AI - it can be wrong. The material below is the source.': 'נכתב על ידי AI ועלול לטעות. החומר שלמטה הוא המקור.',
         'Terms and privacy': 'תנאים ופרטיות', 'What MindSync keeps about you, and the rules of using it.': 'מה MindSync שומרת עליך, ומה הכללים לשימוש בה.',
