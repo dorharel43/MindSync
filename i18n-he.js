@@ -25,7 +25,11 @@
     const text = {
         // ---- app frame / navigation ----
         'MindSync': 'MindSync',
-        'MindSync AI - Home': 'MindSync', 'New Folder': 'תיקייה חדשה', 'Please try again later.': 'אפשר לנסות שוב מאוחר יותר.',
+        'MindSync AI - Home': 'MindSync',
+        'Written by AI - it can get things wrong. Check anything important against your course material.': 'נכתב על ידי AI ועלול לטעות. כדאי לבדוק כל דבר חשוב מול חומר הקורס.',
+        'Written by AI - it can be wrong. The material below is the source.': 'נכתב על ידי AI ועלול לטעות. החומר שלמטה הוא המקור.',
+        'Terms and privacy': 'תנאים ופרטיות', 'What MindSync keeps about you, and the rules of using it.': 'מה MindSync שומרת עליך, ומה הכללים לשימוש בה.',
+        'Terms of use': 'תנאי שימוש', 'Privacy policy': 'מדיניות פרטיות', 'New Folder': 'תיקייה חדשה', 'Please try again later.': 'אפשר לנסות שוב מאוחר יותר.',
         'Home': 'בית', 'Planner': 'לוח שבועי', 'Tasks': 'משימות', 'Materials': 'חומרי לימוד',
         'Study': 'תרגול', 'Progress': 'התקדמות', 'Settings': 'הגדרות',
         'Up next': 'הבא בתור', 'Loading…': 'טוען…', 'Loading...': 'טוען…', 'Guest': 'אורח', 'Student': 'סטודנט',
@@ -462,6 +466,8 @@
     };
 
     const html = {
+        'By creating an account you agree to the <a href="#" data-site-page="/terms">terms of use</a> and the <a href="#" data-site-page="/privacy">privacy policy</a>.':
+            'יצירת חשבון היא הסכמה ל<a href="#" data-site-page="/terms">תנאי השימוש</a> ול<a href="#" data-site-page="/privacy">מדיניות הפרטיות</a>.',
         '<strong>Add to calendar</strong> - write it the way you\'d say it, e.g. <bdi dir="rtl">"שיעור סטטיסטיקה כל יום שני ב-10"</bdi> or <bdi dir="rtl">"מבחן ב-12.2 ב-9"</bdi>.':
             '<strong>הוספה ללוח</strong> - כותבים כמו שאומרים, למשל <bdi dir="rtl">"שיעור סטטיסטיקה כל יום שני ב-10"</bdi> או <bdi dir="rtl">"מבחן ב-12.2 ב-9"</bdi>.',
         '<strong>Plan study time</strong> - finds free time this week for your open tasks and puts study blocks before their deadlines.':

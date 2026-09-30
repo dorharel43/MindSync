@@ -61,6 +61,17 @@ let authMode = 'login'; // 'login' | 'register'
 // "Forgot password?" (30/9): the reset happens on the website - on the web
 // version in this tab, on desktop in the browser (the emailed link opens
 // there anyway).
+// Links to the website's pages (terms, privacy) - 30/9. Web: a new tab;
+// desktop: the browser.
+document.addEventListener('click', (e) => {
+    const a = e.target.closest && e.target.closest('a[data-site-page]');
+    if (!a) return;
+    e.preventDefault();
+    const page = a.getAttribute('data-site-page');
+    if (window.MINDSYNC_WEB) window.open(page, '_blank', 'noopener');
+    else ipcRenderer.invoke('open-site-page', page).catch(() => {});
+});
+
 const authForgotLink = document.getElementById('auth-forgot-link');
 if (authForgotLink) authForgotLink.onclick = (e) => {
     e.preventDefault();
@@ -90,6 +101,7 @@ function setAuthMode(mode) {
         authSubmitBtn.textContent = 'Create account';
         authToggleText.textContent = 'Already have an account?';
         if (authForgotLink) authForgotLink.hidden = true;
+        const termsLine = document.getElementById('auth-terms'); if (termsLine) termsLine.hidden = false;
         authToggleLink.textContent = 'Log in';
     } else {
         authTitle.textContent = 'Log in';
@@ -100,6 +112,7 @@ function setAuthMode(mode) {
         authSubmitBtn.textContent = 'Log in';
         authToggleText.textContent = "Don't have an account?";
         if (authForgotLink) authForgotLink.hidden = false;
+        const termsLine = document.getElementById('auth-terms'); if (termsLine) termsLine.hidden = true;
         authToggleLink.textContent = 'Create one';
     }
 }
