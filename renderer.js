@@ -5066,6 +5066,11 @@ let courseFixDone = false;
 async function fixFileNamedCourses() {
     if (courseFixDone) return;
     courseFixDone = true;
+    // Once per account (30/9): it ran on EVERY launch, and a course the user
+    // had deliberately named like a file ("Statistics" for Statistics.pdf in
+    // "Semester A") was moved back into the folder each time.
+    const doneKey = `mindsync.courseFix.${currentUserId || 'anon'}`;
+    try { if (localStorage.getItem(doneKey) === '1') return; localStorage.setItem(doneKey, '1'); } catch (e) { return; }
     const [cats, files] = await Promise.all([
         ipcRenderer.invoke('get-study-categories').catch(() => []),
         ipcRenderer.invoke('get-files-light').catch(() => [])
@@ -5074,6 +5079,10 @@ async function fixFileNamedCourses() {
     for (const cat of cats || []) {
         const file = (files || []).find(f => f.name && f.name.replace(/\.[^.]+$/, '').trim() === String(cat).trim() && realFolder(f));
         if (!file) continue;
+        // Only a course that is really "the questions of that one file" (the
+        // old bug) - not one the user filled from other files too.
+        const inCourse = (studyItemsCache || []).filter(i => (i.category || '') === cat);
+        if (!inCourse.length || inCourse.some(i => (i.sourceFile || '') !== file.name)) continue;
         const r = await ipcRenderer.invoke('recategorize-study-items', cat, realFolder(file));
         if (r && r.updated) moved += r.updated;
     }
@@ -5174,6 +5183,24 @@ async function startStudySession(resume = null, scope = null) {
     let items;
     if (resume && resume.scope) scope = resume.scope;
 
+    // Don't silently throw away what's on the screen (30/9): new questions
+    // waiting for review cost an AI call, and a session in the middle is work.
+    const reviewEl = document.getElementById('study-review');
+    if (reviewEl && !reviewEl.hidden && reviewDraft && reviewDraft.length) {
+        const ok = await confirmDialog(t('Discard the new questions?'),
+            t('The questions from your file are still waiting for you to look them over. Starting practice now discards them.'),
+            { confirmText: t('Discard and practice'), danger: true });
+        if (!ok) return;
+        closeReviewScreen();
+    }
+    const sessionEl = document.getElementById('study-session');
+    if (!resume && sessionEl && !sessionEl.hidden && studyState.queue && studyState.index < studyState.queue.length) {
+        const ok = await confirmDialog(t('Leave this session?'),
+            t('You are in the middle of a practice session. Start the new one instead?'),
+            { confirmText: t('Start the new one') });
+        if (!ok) return;
+    }
+
     if (resume && Array.isArray(resume.ids)) {
         // Re-fetch by id rather than trusting a stored copy: an item may have
         // been edited or deleted since the session was paused.
@@ -5199,15 +5226,23 @@ async function startStudySession(resume = null, scope = null) {
         }
     } else {
         const filter = scope ? { category: scope.category, ...(scope.sourceFile !== undefined ? { sourceFile: scope.sourceFile } : {}) } : {};
-        items = await ipcRenderer.invoke('get-due-study-items', { limit: 20, ...filter });
-        if ((!items || items.length === 0) && scope) {
+        items = await ipcRenderer.invoke('get-due-study-items', { limit: 20, strict: true, ...filter }).catch(e => ({ error: e.message }));
+        if (!Array.isArray(items)) {
+            toast.error(t('Couldn\'t load your questions right now. Check the connection and try again.'));
+            return;
+        }
+        if (items.length === 0 && scope) {
             // Nothing DUE in this course/file - say why, and offer the rest.
             const ok = await confirmDialog(
                 `Nothing to practice in ${scope.label} right now`,
                 'You practiced these recently, so none is due yet. Spacing questions out is what makes you remember them longer. You can still go over them now - handy right before an exam.',
                 { confirmText: 'Practice anyway', cancelText: 'Not now' });
             if (!ok) return;
-            items = await ipcRenderer.invoke('get-due-study-items', { limit: 20, all: true, ...filter });
+            items = await ipcRenderer.invoke('get-due-study-items', { limit: 20, all: true, strict: true, ...filter }).catch(e => ({ error: e.message }));
+            if (!Array.isArray(items)) {
+                toast.error(t('Couldn\'t load your questions right now. Check the connection and try again.'));
+                return;
+            }
         }
         if (!items || items.length === 0) {
             toast.info(scope
@@ -5224,6 +5259,8 @@ async function startStudySession(resume = null, scope = null) {
     studyState.index = resume ? Math.min(resume.index, items.length - 1) : 0;
     studyState.session = resume ? resume.session : { reviewed: 0, correct: 0, lucky: 0, overconfident: 0 };
     if (!Array.isArray(studyState.session.sureWrong)) studyState.session.sureWrong = [];
+    studyState.checkOff = null;           // AI allowance ran out this session (reason)
+    studyState.shortAnswers = new Map();  // "I don't know" answers already fetched
 
     clearManageSelection();
     document.getElementById('study-home').hidden = true;
@@ -5241,6 +5278,7 @@ function renderStudyCard() {
 
     studyState.confidence = null;
     studyState.sureNoteShown = false;
+    studyState.answerId = null;
     document.querySelectorAll('.confidence-btn.is-picked').forEach(b => b.classList.remove('is-picked'));
     studyState.startedAt = Date.now();
     studyState.aiOutcome = null;
@@ -5300,6 +5338,9 @@ document.querySelectorAll('.confidence-btn').forEach(btn => {
         const typed = document.getElementById('study-typed-answer');
         const text = typed ? typed.value.trim() : '';
         if (!item || !text) { revealAnswer(); return; }   // answered in the head
+        // The AI allowance ran out earlier in this session: straight to
+        // marking yourself, with the reason - not another wait for a "no".
+        if (studyState.checkOff) { revealAnswer({ failed: studyState.checkOff, typed: text }); return; }
 
         // Typed: the AI checks it. The buttons stay put (no jump), just busy.
         const buttons = document.querySelectorAll('.confidence-btn, #study-dont-know-btn');
@@ -5308,11 +5349,13 @@ document.querySelectorAll('.confidence-btn').forEach(btn => {
         const prompt = document.getElementById('study-confidence-prompt');
         const promptText = prompt.textContent;
         prompt.textContent = 'Checking your answer…';
-        const res = await ipcRenderer.invoke('grade-study-answer', {
-            question: item.question, expected: item.answer || item.mySolution || '', mode: item.mode, userAnswer: text
-        }).catch(e => ({ error: e.message }));
+        const res = await withTimeout(ipcRenderer.invoke('grade-study-answer', {
+            question: item.question, expected: item.answer || item.mySolution || '', mode: item.mode, userAnswer: text,
+            solutionSource: item.solutionSource || 'document'
+        }).catch(e => ({ error: e.message })), CHECK_TIMEOUT_MS);
         prompt.textContent = promptText;
         if (studyState.queue[studyState.index] !== item) return;   // stopped meanwhile
+        if (res && res.error && isAiLimit(res.error)) studyState.checkOff = res.error;   // no point asking again this session
         revealAnswer(res && !res.error ? { ...res, typed: text } : { failed: (res && res.error) || 'no answer', typed: text });
     });
 });
@@ -5320,6 +5363,15 @@ document.querySelectorAll('.confidence-btn').forEach(btn => {
 // "I don't know": straight to the answer. No check (nothing to check), and no
 // "How did you do?" - it's already known how it went. Saved as not known
 // (missed / wrong), so it comes back soon.
+// The check waits at most this long (30/9): the server may retry an
+// overloaded AI for over a minute, with every button greyed out.
+const CHECK_TIMEOUT_MS = 25000;
+function withTimeout(promise, ms) {
+    return Promise.race([promise, new Promise(resolve => setTimeout(() => resolve({ error: 'timeout' }), ms))]);
+}
+// "You've used today's AI allowance" and the like - a reason, not a glitch.
+const isAiLimit = (msg) => /resets at midnight|confirm your email|quota|resource_exhausted|\b429\b|daily limit/i.test(String(msg || ''));
+
 const dontKnowBtn = document.getElementById('study-dont-know-btn');
 if (dontKnowBtn) dontKnowBtn.onclick = () => {
     const item = studyState.queue[studyState.index];
@@ -5329,7 +5381,7 @@ if (dontKnowBtn) dontKnowBtn.onclick = () => {
     // The stored answer is a quote from the material - often long, with an
     // intro. Ask for the short direct one (or a solution when there's none).
     const stored = (item.answer || item.mySolution || '').trim();
-    if (!stored || stored.length > SHORT_ENOUGH) fetchShortAnswer(item);
+    if ((!stored || stored.length > SHORT_ENOUGH) && !studyState.checkOff) fetchShortAnswer(item);
 };
 const SHORT_ENOUGH = 200;
 
@@ -5339,11 +5391,22 @@ async function fetchShortAnswer(item) {
     const text = document.getElementById('study-short-answer-text');
     if (!box || !text) return;
     box.hidden = false;
+    // Asked once per question (30/9) - it comes back after "I don't know"
+    // often, and each ask used a bit of the day's AI allowance.
+    studyState.shortAnswers = studyState.shortAnswers || new Map();
+    const cached = studyState.shortAnswers.get(item.id);
+    if (cached) {
+        text.textContent = cached;
+        document.getElementById('study-answer').classList.add('study-answer--source');
+        return;
+    }
     box.classList.add('is-loading');
     text.textContent = t('Getting a short answer…');
-    const res = await ipcRenderer.invoke('grade-study-answer', {
+    const res = await withTimeout(ipcRenderer.invoke('grade-study-answer', {
         question: item.question, expected: item.answer || item.mySolution || '', mode: item.mode, explainOnly: true
-    }).catch(() => null);
+    }).catch(() => null), CHECK_TIMEOUT_MS);
+    if (res && res.error && isAiLimit(res.error)) studyState.checkOff = res.error;
+    if (res && res.answer) studyState.shortAnswers.set(item.id, res.answer);
     if (studyState.index !== index || studyState.queue[index] !== item) return;   // moved on meanwhile
     box.classList.remove('is-loading');
     if (res && res.answer) {
@@ -5364,8 +5427,11 @@ function revealAnswer(check = null) {
     const nextRow = document.getElementById('study-next-row');
     const dontKnow = !!(check && check.dontKnow);
     const outcomeMap = VERDICT_TO_OUTCOME[item.mode] || VERDICT_TO_OUTCOME.recall;
+    // A check that says it isn't sure (30/9) is shown, but nothing is
+    // pre-selected - the student decides.
+    const unsure = !!(check && check.verdict && check.sure === false);
     studyState.aiOutcome = dontKnow ? outcomeMap.wrong
-        : (check && check.verdict ? outcomeMap[check.verdict] : null);
+        : (check && check.verdict && !unsure ? outcomeMap[check.verdict] : null);
     // Only a real AI verdict is sent with the answer ("I don't know" wasn't
     // checked) - the server counts how often students overrule the check.
     studyState.aiChecked = !dontKnow && check && check.verdict ? outcomeMap[check.verdict] : null;
@@ -5374,9 +5440,14 @@ function revealAnswer(check = null) {
         verdictBox.className = 'study-verdict' + (check && check.verdict ? ` study-verdict--${check.verdict}` : '');
         if (check) {
             document.getElementById('study-verdict-title').textContent = check.verdict
-                ? VERDICT_TITLES[check.verdict]
+                ? (unsure ? `${t(VERDICT_TITLES[check.verdict])} ${t('(the check is not sure - you decide)')}` : VERDICT_TITLES[check.verdict])
                 : 'Couldn\'t check it right now - mark yourself below';
-            document.getElementById('study-verdict-feedback').textContent = check.verdict ? (check.feedback || '') : '';
+            // Why it couldn't (30/9): "used today's allowance" / "confirm your
+            // email" is something the student can act on; a timeout isn't.
+            const why = !check.verdict && check.failed
+                ? (isAiLimit(check.failed) ? check.failed : check.failed === 'timeout' ? t('The check took too long.') : '')
+                : '';
+            document.getElementById('study-verdict-feedback').textContent = check.verdict ? (check.feedback || '') : why;
             document.getElementById('study-verdict-yours').textContent = `${t('You wrote:')} ${check.typed}`;
         }
         // The core moment, said right where it happens (same words as the
@@ -5493,10 +5564,13 @@ async function submitReview(outcome) {
     const secondsSpent = Math.round((Date.now() - studyState.startedAt) / 1000);
     let res;
     try {
+        // One id per shown card - a retry of the same answer is saved once.
+        if (!studyState.answerId) studyState.answerId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
         res = await ipcRenderer.invoke('submit-study-review', item.id, {
             confidence: studyState.confidence,
             outcome,
             secondsSpent,
+            clientId: studyState.answerId,
             ...(studyState.aiChecked ? { aiSuggested: studyState.aiChecked } : {})
         });
     } catch (err) {
@@ -5507,6 +5581,15 @@ async function submitReview(outcome) {
     // Stopped, or moved on, while it was saving: nothing more to do here.
     if (studyState.queue[index] !== item || studyState.index !== index || document.getElementById('study-session').hidden) return;
 
+    // Deleted meanwhile (another tab or device, 30/9): every button kept
+    // failing on it. Skip to the next one.
+    if (res && res.error && /not found|404/i.test(res.error)) {
+        toast.info(t('This question was deleted - skipping it.'));
+        studyState.index += 1;
+        saveSessionProgress();
+        if (studyState.index >= studyState.queue.length) endStudySession(); else renderStudyCard();
+        return;
+    }
     if (!res || res.error) {
         setOutcomeButtonsDisabled(false);
         toast.error((res && res.error) || 'Please try again.', 'Could not save review');
@@ -5536,7 +5619,9 @@ async function submitReview(outcome) {
     // A same-session retry (interval 0) goes back in the queue rather than
     // being lost until tomorrow.
     if (res.nextInterval === 0) {
-        studyState.queue.push(item);
+        // The item as saved just now (30/9) - with this answer in its
+        // history, so the card says "last time you were sure - and wrong".
+        studyState.queue.push(res.item ? { ...item, ...res.item, id: item.id } : item);
     }
 
     studyState.index += 1;
@@ -5668,8 +5753,13 @@ async function generateQuestionsFor(file, button = null) {
             // The PDF itself: layout, formulas and Hebrew order intact.
             response = await ipcRenderer.invoke('generate-study-items-pdf', file.sourcePath, opts);
             const first = JSON.parse(response);
-            // Out of quota: the text path asks the same Gemini - just say so.
-            if (first.error && !/quota/i.test(first.error)) {
+            // Fall back to the extracted text only when reading the PDF itself
+            // failed (30/9). Not for a used-up allowance or a busy AI (the
+            // text path would hit the same wall - and on the website it used
+            // a SECOND file action), and not for "no examinable content"
+            // (the text says the same thing, for another file action).
+            const noPoint = (e) => isAiLimit(e) || /another ai job|no examinable content/i.test(String(e || ''));
+            if (first.error && !noPoint(first.error)) {
                 console.warn('⚠️ PDF generation failed, falling back to extracted text:', first.error);
                 toast.info('Reading the PDF directly didn\'t work right now - using the text extracted from it instead. Formulas and tables may come out worse, so check the questions before adding them.', 'Using the extracted text');
                 response = await ipcRenderer.invoke('generate-study-items', file.content, opts);
@@ -5927,7 +6017,7 @@ async function loadManageList(refetch = true) {
                 <div class="manage-item__meta">
                     ${escapeHtml(MODE_LABELS[i.mode] || i.mode)}
                     ${i.category ? ' · ' + escapeHtml(i.category) : ''}
-                    ${i.repetitions > 0 ? ` · reviewed ${i.repetitions}×` : ' · never reviewed'}
+                    ${i.repetitions > 0 ? ` · reviewed ${i.repetitions}×` : i.lapses > 0 ? ` · ${t('answered, not known yet')}` : ' · never reviewed'}
                 </div>
             </div>
             <button class="btn-icon btn-icon--danger manage-item__delete" aria-label="Delete question">${icon('trash', { size: 16 })}</button>
@@ -6029,6 +6119,18 @@ if (copyQuestionBtn) {
 let reviewDraft = [];
 
 function openReviewScreen(items, meta = {}) {
+    // Questions finished while a practice session is on screen (30/9): both
+    // screens used to show at once. Offer them instead; the session's place
+    // is kept (it resumes from Study).
+    const sessionEl = document.getElementById('study-session');
+    if (sessionEl && !sessionEl.hidden && !meta._fromToast) {
+        showActionToast(t('Your new questions are ready to look over.'), t('Look over now'), () => {
+            sessionEl.hidden = true;
+            openReviewScreen(items, { ...meta, _fromToast: true });
+        }, { duration: 60000 });
+        return;
+    }
+    if (sessionEl) sessionEl.hidden = true;
     reviewDraft = items.map((it, i) => ({ ...it, _id: i, _selected: true }));
 
     const courseInput = document.getElementById('review-course-input');
@@ -6156,10 +6258,12 @@ if (reviewConfirmBtn) reviewConfirmBtn.onclick = async () => {
     if (res && res.error) { toast.error(res.error, 'Could not save'); return; }
 
     const discarded = reviewDraft.length - chosen.length;
+    // What the server really saved, not what was sent (30/9).
+    const added = res && Number.isInteger(res.created) ? res.created : chosen.length;
     toast.success(
         discarded > 0
-            ? `Added ${chosen.length} questions. ${discarded} discarded.`
-            : `Added ${chosen.length} questions.`,
+            ? `Added ${added} questions. ${discarded} discarded.`
+            : `Added ${added} questions.`,
         'Ready to study'
     );
     closeReviewScreen();

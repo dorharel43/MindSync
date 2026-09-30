@@ -188,7 +188,8 @@ module.exports = {
     const params = new URLSearchParams();
     if (opts.limit) params.set('limit', opts.limit);
     if (opts.category) params.set('category', opts.category);
-    if (opts.sourceFile) params.set('sourceFile', opts.sourceFile);
+    // '' = the questions written by hand (no file) - a real choice, not "any"
+    if (typeof opts.sourceFile === 'string') params.set('sourceFile', opts.sourceFile);
     if (opts.all) params.set('all', '1');
     const qs = params.toString();
     return withIdAliases(await request('GET', `/study/due${qs ? '?' + qs : ''}`));
