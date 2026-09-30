@@ -2972,6 +2972,26 @@ loadAndRenderBlockedApps();
 document.querySelectorAll('[data-go]').forEach((el) => {
     el.addEventListener('click', (e) => { e.preventDefault(); const nav = document.getElementById(el.dataset.go); if (nav) nav.click(); });
 });
+// Screen explanations (30/9): each grey help list is now a small foldable
+// "How this screen works" line. Open until the user closes it once - that
+// choice is remembered per screen, so the regulars get their space back.
+document.querySelectorAll('ul.screen-help').forEach((list) => {
+    const view = list.closest('.view-section');
+    const key = `mindsync.help.${view ? view.id : 'screen'}`;
+    const box = document.createElement('details');
+    box.className = 'screen-help-box';
+    let closed = false;
+    try { closed = localStorage.getItem(key) === 'closed'; } catch (e) { /* no storage - stays open */ }
+    box.open = !closed;
+    const summary = document.createElement('summary');
+    summary.className = 'screen-help-box__toggle';
+    summary.innerHTML = `${window.icon('info', { size: 15 })}<span>How this screen works</span>`;
+    list.replaceWith(box);
+    box.append(summary, list);
+    box.addEventListener('toggle', () => {
+        try { localStorage.setItem(key, box.open ? 'open' : 'closed'); } catch (e) { /* ignore */ }
+    });
+});
 const blockedAppInput = document.getElementById('blocked-app-input');
 if (blockedAppInput) blockedAppInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') window.addNewAppBlocker(); });
 const blockedAppAddBtn = document.getElementById('blocked-app-add-btn');
@@ -3611,6 +3631,24 @@ async function loadAndRenderHome() {
     if (statEvents) statEvents.innerText = events.filter(inThisWeek).length;
     if (statLessons) statLessons.innerText = events.filter(e => e.type === 'lesson' && inThisWeek(e)).length;
 
+    // The next exam on the calendar, in the Today panel (30/9 redesign):
+    // "Next exam  Statistics  In 2 days · Thu 2/10".
+    const examBox = document.getElementById('home-next-exam');
+    if (examBox) {
+        const nextExam = events
+            .filter(e => e.type === 'exam' && e.date && e.date >= todayIso)
+            .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')))[0];
+        examBox.hidden = !nextExam;
+        if (nextExam) {
+            const [y, m, d] = nextExam.date.split('-').map(Number);
+            const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+            const daysLeft = Math.round((new Date(y, m - 1, d) - today0) / 864e5);
+            document.getElementById('home-next-exam-name').textContent = nextExam.title;
+            const when = daysLeft === 0 ? 'Today' : daysLeft === 1 ? 'Tomorrow' : `In ${daysLeft} days`;
+            document.getElementById('home-next-exam-when').textContent = `${when} · ${WEEKDAY_NAMES[new Date(y, m - 1, d).getDay()].slice(0, 3)} ${d}/${m}`;
+        }
+    }
+
     
     const todayEvents = events.filter(e => eventOccursOn(e, new Date())).sort((a, b) => a.time.localeCompare(b.time));
     
@@ -3639,7 +3677,7 @@ async function loadAndRenderHome() {
             if (isNext) {
                 nextEventFound = true;
                 if (nextTitle) nextTitle.innerText = evt.title;
-                if (nextTime) nextTime.innerText = `${WEEKDAY_NAMES[new Date().getDay()]} • ${evt.time} • Up next`;
+                if (nextTime) nextTime.innerText = `Today at ${evt.time}`;
                 if (sidebarNextTitle) sidebarNextTitle.innerText = evt.title;
                 if (sidebarNextMeta) sidebarNextMeta.innerText = `${evt.time} today`;
             }
@@ -3878,7 +3916,7 @@ function renderHomeStudy(status) {
     const title = document.getElementById('home-study-title');
     const sub = document.getElementById('home-study-sub');
     const btn = document.getElementById('home-study-btn');
-    btn.className = 'btn-primary';
+    btn.className = 'btn-primary home-hero__btn';
     if (!status.questions) {
         title.textContent = 'No practice questions yet';
         if (!status.files) {
@@ -3899,7 +3937,7 @@ function renderHomeStudy(status) {
         title.textContent = 'All caught up';
         sub.textContent = 'Nothing to practice right now - questions come back on the day they\'re due.';
         btn.textContent = 'Open Study';
-        btn.className = 'btn-secondary';
+        btn.className = 'btn-secondary home-hero__btn';
         btn.onclick = () => document.getElementById('nav-study').click();
     }
 }
@@ -4737,7 +4775,7 @@ async function loadStudyHome() {
     renderStudyCourses(stats.subjects || [], studyItemsCache || []);
     renderSidebarCourses(stats.subjects || []);
     const startBtn = document.getElementById('start-study-btn');
-    if (startBtn) startBtn.textContent = stats.dueCount > 0 ? `Start smart practice · ${stats.dueCount} ready` : 'Start smart practice';
+    if (startBtn) startBtn.textContent = 'Start smart practice';   // the count is the panel's title now
     renderCalibration(stats.calibration, stats.reviewsAllTime, stats.trendByConfidence);
     renderConfidentlyWrong(stats.confidentlyWrong);
     renderAttentionList('underconfident-panel', stats.underconfidentItems,
@@ -5182,6 +5220,8 @@ function renderStudyCard() {
     if (!item) return endStudySession();
 
     studyState.confidence = null;
+    studyState.sureNoteShown = false;
+    document.querySelectorAll('.confidence-btn.is-picked').forEach(b => b.classList.remove('is-picked'));
     studyState.startedAt = Date.now();
     studyState.aiOutcome = null;
     studyState.aiChecked = null;
@@ -5235,6 +5275,7 @@ document.querySelectorAll('.confidence-btn').forEach(btn => {
         const seen = Number(localStorage.getItem(confidenceHintKey()) || 0);
         if (seen < CONFIDENCE_HINT_TIMES) localStorage.setItem(confidenceHintKey(), String(seen + 1));
         studyState.confidence = btn.dataset.confidence;
+        document.querySelectorAll('.confidence-btn').forEach(b => b.classList.toggle('is-picked', b === btn));
         const item = studyState.queue[studyState.index];
         const typed = document.getElementById('study-typed-answer');
         const text = typed ? typed.value.trim() : '';
@@ -5318,6 +5359,11 @@ function revealAnswer(check = null) {
             document.getElementById('study-verdict-feedback').textContent = check.verdict ? (check.feedback || '') : '';
             document.getElementById('study-verdict-yours').textContent = `${t('You wrote:')} ${check.typed}`;
         }
+        // The core moment, said right where it happens (same words as the
+        // login screen's example): sure + the check says wrong.
+        const sureNote = document.getElementById('study-verdict-sure');
+        studyState.sureNoteShown = !!(check && check.verdict === 'wrong' && studyState.confidence === 'sure');
+        if (sureNote) sureNote.hidden = !studyState.sureNoteShown;
     }
     const shortBox = document.getElementById('study-short-answer');
     if (shortBox) {
@@ -5463,7 +5509,8 @@ async function submitReview(outcome) {
     if (res.wasOverconfident) {
         studyState.session.overconfident += 1;
         if (!studyState.session.sureWrong.includes(item.question)) studyState.session.sureWrong.push(item.question);
-        toast.warning('You were sure about that one. It will come back soon.', 'Sure but wrong');
+        // Already said on the card when the check found it - no second message.
+        if (!studyState.sureNoteShown) toast.warning('You were sure about that one. It will come back soon.', 'Sure but wrong');
     }
 
     // A same-session retry (interval 0) goes back in the queue rather than

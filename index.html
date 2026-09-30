@@ -179,12 +179,13 @@
 
        <!-- Home View -->
         <div id="view-home" class="view-section">
-            <div class="header">
+            <div class="home-head">
                 <!-- UX FIX: was two stacked lines ("Good afternoon" / "Hello, Dor")
                      saying hello twice and wasting vertical space. Merged into one line. -->
                 <div class="greeting-main" id="home-greeting-main">
-                    <span id="home-greeting-time">Good afternoon</span>, <span id="home-greeting-name">Guest</span> <span data-icon="wave"></span>
+                    <span id="home-greeting-time">Good afternoon</span>, <span id="home-greeting-name">Guest</span>
                 </div>
+                <div class="home-date" id="home-date"></div>
             </div>
 
             <!-- Getting started: shown to new users until the first steps are
@@ -202,52 +203,59 @@
                 <div class="onboarding__progress"><div class="onboarding__bar" id="onboarding-bar"></div></div>
                 <ol class="onboarding__steps" id="onboarding-steps"></ol>
             </div>
-            <!-- Study on Home (30/9): one line saying where practice stands -
-                 no questions yet / N ready / all caught up - with the button
-                 that goes there. Shown when the guide isn't (renderHomeStudy). -->
-            <div class="card home-study" id="home-study" hidden>
-                <div class="home-study__text">
-                    <div class="home-study__title" id="home-study-title"></div>
-                    <div class="home-study__sub" id="home-study-sub"></div>
-                </div>
-                <button class="btn-primary" id="home-study-btn"></button>
-            </div>
 
-            <div class="focus-section">
-                <div class="next-up-card">
-                    <div class="next-up-title">Up Next Today</div>
-                    <div class="next-up-exam" id="home-next-title">Loading data...</div>
-                    <div class="badge" id="home-next-time">Please wait</div>
-                    
-                    <!-- UX FIX: this was a bare <div>, so the two buttons sized to
-                         their own text ("To Schedule >" vs "Start Focus Mode") and
-                         sat unevenly. .home-focus-actions makes them equal width. -->
+            <!-- Today panel (30/9 redesign, same look as the login screen's
+                 brand panel): practice first - that's what the app is for -
+                 then the next thing on today's calendar. The practice half is
+                 the old "Study line" (renderHomeStudy) and is hidden while the
+                 guide is open; the "next" half then takes the whole width. -->
+            <section class="home-hero">
+                <div class="home-hero__practice" id="home-study" hidden>
+                    <div class="home-hero__label">Practice</div>
+                    <div class="home-hero__title" id="home-study-title"></div>
+                    <div class="home-hero__text" id="home-study-sub"></div>
+                    <button class="btn-primary home-hero__btn" id="home-study-btn"></button>
+                </div>
+                <div class="home-hero__next">
+                    <div class="home-hero__label">Up Next Today</div>
+                    <div class="home-hero__title home-hero__title--next" id="home-next-title">Loading data...</div>
+                    <div class="home-hero__text" id="home-next-time">Please wait</div>
+                    <div class="home-hero__exam" id="home-next-exam" hidden>
+                        <span class="home-hero__exam-label">Next exam</span>
+                        <bdi class="home-hero__exam-name" id="home-next-exam-name"></bdi>
+                        <span class="home-hero__exam-when" id="home-next-exam-when"></span>
+                    </div>
                     <div class="home-focus-actions">
-                        <button class="btn-primary" data-go="nav-weekly">See my week</button>
-                        <button id="focus-btn" class="btn-primary desktop-only">
-                            <span data-icon="checkCircle"></span> Start Focus Mode 
+                        <button class="home-hero__link" data-go="nav-weekly">See my week</button>
+                        <button id="focus-btn" class="home-hero__link desktop-only">
+                            <span data-icon="checkCircle"></span> Start Focus Mode
                         </button>
                     </div>
                 </div>
-            </div>
+            </section>
 
             <div class="dashboard-grid">
-                <div class="card">
-                    <div class="card-header">This week</div>
-                    <div class="stats-grid">
-                        <div class="stat-item"><div><span data-icon="file"></span></div><div class="stat-value" id="home-stat-tasks">0</div><div class="stat-label">Open Tasks</div></div>
-                        <div class="stat-item"><div><span data-icon="graduation"></span></div><div class="stat-value" id="home-stat-exams">0</div><div class="stat-label">Upcoming Exams</div></div>
-                        <div class="stat-item"><div><span data-icon="clock"></span></div><div class="stat-value" id="home-stat-events">0</div><div class="stat-label">Events This Week</div></div>
-                        <div class="stat-item"><div><span data-icon="library"></span></div><div class="stat-value" id="home-stat-lessons">0</div><div class="stat-label">Classes This Week</div></div>
+                <div class="card home-card">
+                    <div class="home-card__head">
+                        <h2 class="home-card__title">Today's Timeline</h2>
+                        <a href="#" class="link-text" data-go="nav-weekly">To Planner</a>
                     </div>
-                    <a href="#" class="link-text" data-go="nav-weekly">To Planner ></a>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">Today's Timeline</div>
                     <div class="timeline" id="home-timeline-list">
                     </div>
-                    <a href="#" class="link-text" data-go="nav-weekly">Open Planner ></a>
+                </div>
+
+                <div class="card home-card">
+                    <div class="home-card__head">
+                        <h2 class="home-card__title">This week</h2>
+                        <a href="#" class="link-text" data-go="nav-weekly">To Planner</a>
+                    </div>
+                    <!-- Was 4 grey tiles with icons; a plain list reads faster. -->
+                    <ul class="week-list">
+                        <li><button type="button" class="week-list__row" data-go="nav-tasks"><span class="week-list__label">Open Tasks</span><span class="week-list__value" id="home-stat-tasks">0</span></button></li>
+                        <li><button type="button" class="week-list__row" data-go="nav-weekly"><span class="week-list__label">Upcoming Exams</span><span class="week-list__value" id="home-stat-exams">0</span></button></li>
+                        <li><button type="button" class="week-list__row" data-go="nav-weekly"><span class="week-list__label">Classes This Week</span><span class="week-list__value" id="home-stat-lessons">0</span></button></li>
+                        <li><button type="button" class="week-list__row" data-go="nav-weekly"><span class="week-list__label">Events This Week</span><span class="week-list__value" id="home-stat-events">0</span></button></li>
+                    </ul>
                 </div>
             </div>
         </div>
@@ -398,23 +406,29 @@
 
             <!-- Idle state: deck overview + start button -->
             <div id="study-home">
-                <div class="metric-grid">
-                    <div class="card metric">
-                        <div class="metric__label">Ready to practice</div>
-                        <div class="metric__value ms-tabular" id="study-due-count">0</div>
-                        <div class="metric__sub">waiting for you now, all courses</div>
+                <ul class="screen-help"><li><strong>Smart practice</strong> picks for you from all your courses: questions you're about to forget come first, then the course with the nearest exam, and new questions are added a few a day.</li><li><strong>Make questions</strong> - the AI writes practice questions from a lecture or notes. <strong>My questions</strong> - see, edit or delete the ones you have.</li></ul>
+
+                <!-- Study panel (30/9 redesign, like Home's): the main action
+                     and the numbers in one place - was three number boxes
+                     plus a separate "Smart practice" card. Same ids. -->
+                <section class="home-hero study-hero">
+                    <div class="home-hero__practice">
+                        <div class="home-hero__label">Smart practice</div>
+                        <div class="home-hero__title"><span class="ms-tabular" id="study-due-count">0</span> <span>ready to practice</span></div>
+                        <div class="home-hero__text">Picked for you from all your courses - what you're about to forget, and what's closest to an exam.</div>
+                        <button class="btn-primary home-hero__btn" id="start-study-btn">Start smart practice</button>
                     </div>
-                    <div class="card metric">
-                        <div class="metric__label">Questions</div>
-                        <div class="metric__value ms-tabular" id="study-total-count">0</div>
-                        <div class="metric__sub">made from your files</div>
+                    <div class="home-hero__next study-hero__side">
+                        <ul class="hero-stats">
+                            <li><span class="hero-stats__label">Questions</span><span class="hero-stats__value ms-tabular" id="study-total-count">0</span></li>
+                            <li><span class="hero-stats__label">Answered so far</span><span class="hero-stats__value ms-tabular" id="study-reviews-count">0</span></li>
+                        </ul>
+                        <div class="home-focus-actions">
+                            <button class="home-hero__link" id="generate-study-btn"><span data-icon="file" data-icon-size="15"></span> Make questions from a file</button>
+                            <button class="home-hero__link" id="manage-study-btn"><span data-icon="list" data-icon-size="15"></span> My questions</button>
+                        </div>
                     </div>
-                    <div class="card metric">
-                        <div class="metric__label">Answered so far</div>
-                        <div class="metric__value ms-tabular" id="study-reviews-count">0</div>
-                        <div class="metric__sub">since you started</div>
-                    </div>
-                </div>
+                </section>
 
                 <!-- Courses with an exam in the Planner: reviews are timed so
                      nothing lands after the exam (server: utils/examSchedule.js).
@@ -426,7 +440,7 @@
                          exam". Written in their own words, read like the
                          Planner's add box (main.js parse-exam-dates). -->
                     <div class="study-exam-ask" id="study-exam-ask" hidden>
-                        <div class="study-exam-ask__q" id="study-exam-ask-q" dir="ltr"></div>
+                        <div class="study-exam-ask__q" id="study-exam-ask-q"></div>
                         <div class="study-exam-ask__row">
                             <input id="study-exam-input" class="input-field" maxlength="300" dir="auto" placeholder='לדוגמה: "12.2" או "מועד א 12.2, מועד ב 5.3"'>
                             <button class="btn-primary btn-sm" id="study-exam-save">Save</button>
@@ -447,16 +461,6 @@
                     </div>
                 </div>
 
-                <!-- Two ways to practice, each saying what it does. Users
-                     don't explore, so the screen has to explain itself. -->
-                <div class="card study-way">
-                    <div class="study-way__text">
-                        <h3 class="section-title">Smart practice</h3>
-                        <p class="settings-hint">The app picks for you, from all your courses: questions you're about to forget come back first, the course with the nearest exam comes first, and new questions are added a few a day so it never piles up.</p>
-                    </div>
-                    <button class="btn-primary btn-lg" id="start-study-btn">Start smart practice</button>
-                </div>
-
                 <div class="card study-courses" id="study-courses" hidden>
                     <div class="study-way__text">
                         <h3 class="section-title">Practice one course</h3>
@@ -464,16 +468,6 @@
                     </div>
                     <div class="study-courses__list" id="study-courses-list"></div>
                 </div>
-
-                <div class="study-start-row">
-                    <button class="btn-secondary" id="generate-study-btn">
-                        <span data-icon="file" data-icon-size="16"></span> Make questions from a file
-                    </button>
-                    <button class="btn-secondary" id="manage-study-btn">
-                        <span data-icon="list" data-icon-size="16"></span> My questions
-                    </button>
-                </div>
-                <p class="settings-hint study-start-hint">"Make questions" - the AI writes practice questions from a lecture or notes. "My questions" - see, edit or delete the ones you have.</p>
 
                 <p class="settings-hint study-to-progress">How ready you are for each exam, and how reliable your "I'm sure" is: <a href="#" class="link-text" id="study-to-progress-link">see Progress</a>.</p>
             </div>
@@ -545,8 +539,8 @@
 
                 <div class="card study-card">
                     <div class="study-card__mode">
-                        <span class="ms-badge" id="study-mode-badge">Recall</span>
                         <span class="ms-badge ms-badge--accent" id="study-category-badge" hidden></span>
+                        <span class="ms-badge" id="study-mode-badge">Recall</span>
                     </div>
 
                     <div class="study-question" id="study-question" translate="no" dir="auto"></div>
@@ -559,11 +553,11 @@
                         <textarea id="study-typed-answer" class="input-field study-typed-answer" dir="auto" rows="3"
                             placeholder="Write your answer - a sentence or two is enough"></textarea>
                         <div class="study-prompt" id="study-confidence-prompt">How sure are you? This also checks your answer.</div>
+                        <!-- Shown for a user's first few answers only (CONFIDENCE_HINT_TIMES).
+                             Shortened 30/9: four sentences read like a manual. -->
                         <p class="confidence-hint" id="study-confidence-hint" hidden>
-                            Write your answer, then press how sure you are - the AI checks it.
-                            MindSync remembers what you were sure about and got wrong, and brings it back first.
-                            You can also leave it empty, answer in your head and mark yourself.
-                            No idea at all? Press "I don't know" - you'll see the answer and it comes back tomorrow.
+                            What you were sure about and got wrong comes back first.
+                            You can also leave the box empty and mark yourself.
                         </p>
                         <div class="confidence-row">
                             <button class="confidence-btn confidence-btn--sure" data-confidence="sure">
@@ -589,6 +583,7 @@
                             <div class="study-verdict__title" id="study-verdict-title"></div>
                             <div class="study-verdict__feedback" id="study-verdict-feedback" translate="no" dir="auto"></div>
                             <div class="study-verdict__yours" id="study-verdict-yours" translate="no" dir="auto"></div>
+                            <div class="study-verdict__sure" id="study-verdict-sure" hidden>You were sure about this - so it comes back soon.</div>
                         </div>
                         <!-- The AI's short, direct answer - the stored one is a quote
                              from the material, which often opens with an intro. -->
