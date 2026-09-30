@@ -144,6 +144,8 @@ RULES:
 
 ipcMain.handle('summarize-text', async (event, textToSummarize, sourcePath) => {
     try {
+        // Always a string (30/9): an array used to slip past the length check.
+        textToSummarize = typeof textToSummarize === 'string' ? textToSummarize : String(textToSummarize == null ? '' : textToSummarize);
         // Was 2000 - and Gemini's thinking is paid out of this same budget,
         // which left roughly one page of actual summary. A long lecture
         // needs room; the model stops when it's done, so a short file still
@@ -775,6 +777,9 @@ ipcMain.handle('read-syllabus', async (event, file = {}) => {
 // also in Google Calendar), submissions -> tasks under the course. Returns
 // the new ids so the renderer's Undo can remove exactly these.
 ipcMain.handle('import-syllabus-items', async (event, items = [], options = {}) => {
+    // A syllabus has tens of dates, never hundreds (30/9: 5000 were accepted).
+    items = Array.isArray(items) ? items.slice(0, 100) : [];
+    options = options && typeof options === 'object' ? options : {};
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const course = String(options.course || '').trim().slice(0, 80);
     const created = { events: [], tasks: [] };
@@ -1150,9 +1155,9 @@ ipcMain.handle('add-smart-task', async (event, freeText, category = '', options 
         // worst case the urgency briefly reads as one level calmer than it
         // should, never scarier.
         const task = {
-            title: cleanTitle,
+            title: String(cleanTitle || '').slice(0, 300),   // the server's limit (30/9)
             date: targetDate,
-            category: category || '',
+            category: String(category || '').slice(0, 100),
             urgency: "Normal",
             estimatedMinutes: durationMinutes || undefined
         };
@@ -1529,6 +1534,10 @@ Return ONLY this JSON, with no other text: {"type": "one_of_the_four"}`;
 // whether that slot was actually free.
 ipcMain.handle('generate-weekly-plan', async (event, currentTasks, currentEvents) => {
     try {
+        // Bounded input (30/9): 20,000 fake tasks froze the whole server for
+        // seconds. A real week has tens of each.
+        currentTasks = Array.isArray(currentTasks) ? currentTasks.slice(0, 300) : [];
+        currentEvents = Array.isArray(currentEvents) ? currentEvents.slice(0, 1500) : [];
         const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         const DAY_START = 9 * 60;   // don't schedule before 09:00
         const DAY_END = 21 * 60;    // or after 21:00
@@ -1759,8 +1768,18 @@ ipcMain.handle('select-upload-files', async (event, mode = 'files') => {
     }
     const truncated = paths.length > UPLOAD_MAX_FILES;
     paths = paths.slice(0, UPLOAD_MAX_FILES);
+    // Two files with the same name in different subfolders (Week 1/HW.pdf,
+    // Week 2/HW.pdf) keep their subfolder in the name - otherwise the second
+    // was taken for "already uploaded" and silently not saved (30/9).
+    const baseCount = {};
+    paths.forEach(p => { const b = path.basename(p); baseCount[b] = (baseCount[b] || 0) + 1; });
+    const root = isFolder ? result.filePaths[0] : null;
     return {
-        files: paths.map(p => ({ path: p, name: path.basename(p) })),
+        files: paths.map(p => {
+            const base = path.basename(p);
+            const name = root && baseCount[base] > 1 ? path.relative(root, p).split(path.sep).join('/') : base;
+            return { path: p, name };
+        }),
         folderName,
         truncated,
         maxFiles: UPLOAD_MAX_FILES,
@@ -1772,7 +1791,9 @@ ipcMain.handle('read-upload-file', async (event, filePath) => {
     try {
         const ext = path.extname(filePath).toLowerCase();
         const content = ext === '.pdf' ? await readPdf(filePath) : fs.readFileSync(filePath, 'utf-8');
-        return { fileName: path.basename(filePath), fileContent: content, filePath };
+        // Same cap as the server keeps (FileItem.content, 1.5M chars) - a
+        // bigger text used to be refused whole (30/9).
+        return { fileName: path.basename(filePath), fileContent: String(content || '').slice(0, 1500000), filePath };
     } catch (err) {
         console.error('❌ Failed to read file:', filePath, err.message);
         return { error: err.message };
@@ -1854,6 +1875,18 @@ ipcMain.handle('auth-delete-account', async (event, password) => {
   }
 });
 
+// New password: the server logs out every other device and returns a
+// fresh token for this one (30/9).
+ipcMain.handle('auth-change-password', async (event, { currentPassword, newPassword } = {}) => {
+  try {
+    const { token, user } = await api.changePassword(String(currentPassword || ''), String(newPassword || ''));
+    authClient.saveSession({ token, user });
+    return { success: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
 // =====================================
 // Profile
 // =====================================
@@ -1874,9 +1907,11 @@ ipcMain.handle('save-profile', async (event, profileData) => {
 // =====================================
 // Tasks
 // =====================================
-ipcMain.handle('get-tasks', async () => {
-  try { return await api.getTasks(); } 
-  catch (err) { return []; }
+// opts.strict (30/9): report a failure as { error } instead of an empty
+// list - for callers that must not mistake "couldn't load" for "none".
+ipcMain.handle('get-tasks', async (event, opts = {}) => {
+  try { return await api.getTasks(); }
+  catch (err) { return opts && opts.strict ? { error: err.message } : []; }
 });
 
 ipcMain.handle('save-task', async (event, newTask) => {
@@ -1973,8 +2008,11 @@ ipcMain.handle('delete-subtask', async (event, taskId, subtaskId) => {
 // the same prompt and filters as the PDF path.
 ipcMain.handle('generate-study-items', async (event, sourceText, options = {}) => {
     try {
-        const category = options.category || '';
-        const sourceFile = options.sourceFile || '';
+        options = options && typeof options === 'object' ? options : {};
+        // Short strings (30/9): the course name goes into the prompt and into
+        // every question - a megabyte of it used to go to the AI.
+        const category = String(options.category || '').slice(0, 100);
+        const sourceFile = String(options.sourceFile || '').slice(0, 300);
         const text = String(sourceText || '');
         console.log(`🧠 generate-study-items (text): ${text.length} chars, category "${category}"`);
         if (!text.trim()) return JSON.stringify({ error: 'This file has no readable text.' });
@@ -2200,7 +2238,10 @@ ipcMain.handle('update-study-item', async (event, id, updates) => {
 });
 
 ipcMain.handle('get-study-items', async (event, opts = {}) => {
-    try { return await api.getStudyItems(opts); } catch (err) { console.error('get-study-items failed:', err.message); return []; }
+    try { return await api.getStudyItems(opts); } catch (err) {
+        console.error('get-study-items failed:', err.message);
+        return opts && opts.strict ? { error: err.message } : [];
+    }
 });
 
 ipcMain.handle('delete-all-study-items', async () => {
@@ -2447,8 +2488,9 @@ function finaliseStudyItems(responseText, category, sourceFile) {
 // model exactly as it is, so nothing can be mangled on the way in.
 ipcMain.handle('generate-study-items-pdf', async (event, sourcePath, options = {}) => {
     try {
-        const category = options.category || '';
-        const sourceFile = options.sourceFile || '';
+        options = options && typeof options === 'object' ? options : {};
+        const category = String(options.category || '').slice(0, 100);
+        const sourceFile = String(options.sourceFile || '').slice(0, 300);
 
         if (!aiProvider.supportsVision()) {
             return JSON.stringify({ error: 'Reading PDFs directly needs a Gemini API key. Add one under Settings → AI engine.' });
@@ -2675,9 +2717,11 @@ async function syncToGoogleCalendar(evtData) {
 // =====================================
 // Events
 // =====================================
-ipcMain.handle('get-events', async () => {
-  try { return await api.getEvents(); } 
-  catch (err) { return []; }
+// opts.strict (30/9): report a failure as { error } instead of an empty
+// list - for callers that must not mistake "couldn't load" for "none".
+ipcMain.handle('get-events', async (event, opts = {}) => {
+  try { return await api.getEvents(); }
+  catch (err) { return opts && opts.strict ? { error: err.message } : []; }
 });
 
 ipcMain.handle('save-event', async (event, newEvent) => {
@@ -2922,8 +2966,8 @@ ipcMain.handle('get-files-light', async () => {
   try { return await api.getFilesLight(); } catch (err) { return []; }
 });
 
-ipcMain.handle('get-files', async () => {
-  try { return await api.getFiles(); } catch (err) { return []; }
+ipcMain.handle('get-files', async (event, opts = {}) => {
+  try { return await api.getFiles(); } catch (err) { return opts && opts.strict ? { error: err.message } : []; }
 });
 ipcMain.handle('save-file', async (event, newFile) => {
   try { return await api.createFile(newFile); } catch (err) { return { error: err.message }; }

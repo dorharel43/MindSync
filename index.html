@@ -183,7 +183,7 @@
                          their own text ("To Schedule >" vs "Start Focus Mode") and
                          sat unevenly. .home-focus-actions makes them equal width. -->
                     <div class="home-focus-actions">
-                        <button class="btn-primary" onclick="document.getElementById('nav-weekly').click()">See my week</button>
+                        <button class="btn-primary" data-go="nav-weekly">See my week</button>
                         <button id="focus-btn" class="btn-primary desktop-only">
                             <span data-icon="checkCircle"></span> Start Focus Mode 
                         </button>
@@ -200,14 +200,14 @@
                         <div class="stat-item"><div><span data-icon="clock"></span></div><div class="stat-value" id="home-stat-events">0</div><div class="stat-label">Events This Week</div></div>
                         <div class="stat-item"><div><span data-icon="library"></span></div><div class="stat-value" id="home-stat-lessons">0</div><div class="stat-label">Classes This Week</div></div>
                     </div>
-                    <a href="#" class="link-text" onclick="document.getElementById('nav-weekly').click()">To Planner ></a>
+                    <a href="#" class="link-text" data-go="nav-weekly">To Planner ></a>
                 </div>
 
                 <div class="card">
                     <div class="card-header">Today's Timeline</div>
                     <div class="timeline" id="home-timeline-list">
                     </div>
-                    <a href="#" class="link-text" onclick="document.getElementById('nav-weekly').click()">Open Planner ></a>
+                    <a href="#" class="link-text" data-go="nav-weekly">Open Planner ></a>
                 </div>
             </div>
         </div>
@@ -849,9 +849,9 @@
                         <div class="settings-row__title">Language</div>
                         <div class="settings-hint settings-hint--inline">The app's language. Hebrew also turns the layout right-to-left.</div>
                     </div>
-                    <div class="filter-group" id="language-picker" role="group" aria-label="Language" translate="no">
-                        <button class="filter-chip" data-lang="en" lang="en" dir="ltr">English</button>
-                        <button class="filter-chip" data-lang="he" lang="he" dir="rtl">עברית</button>
+                    <div class="filter-group" id="language-picker" role="group" aria-label="Language">
+                        <button class="filter-chip" data-lang="en" lang="en" dir="ltr" translate="no">English</button>
+                        <button class="filter-chip" data-lang="he" lang="he" dir="rtl" translate="no">עברית</button>
                     </div>
                 </div>
             </div>
@@ -914,8 +914,8 @@
                 <details class="blocker-manual">
                     <summary>Or type the app's file name (e.g. discord.exe)</summary>
                     <div class="input-with-action">
-                        <input type="text" id="blocked-app-input" placeholder="e.g. chrome.exe" class="input-field" onkeypress="if(event.key === 'Enter') window.addNewAppBlocker()">
-                        <button class="btn-secondary" onclick="window.addNewAppBlocker()">Add</button>
+                        <input type="text" id="blocked-app-input" placeholder="e.g. chrome.exe" class="input-field">
+                        <button class="btn-secondary" id="blocked-app-add-btn">Add</button>
                     </div>
                 </details>
 
@@ -939,6 +939,15 @@
                         <div class="settings-hint settings-hint--inline">Ends your session on this device. Your data stays on the server.</div>
                     </div>
                     <button id="auth-logout-btn" class="btn-secondary">Log out</button>
+                </div>
+                <!-- 30/9: changing the password also logs out every other device
+                     (a lost laptop, a shared computer, a stolen session). -->
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-row__title">Change password</div>
+                        <div class="settings-hint settings-hint--inline">Also logs you out on every other device.</div>
+                    </div>
+                    <button id="auth-change-password-btn" class="btn-secondary">Change password</button>
                 </div>
                 <div class="settings-row">
                     <div>

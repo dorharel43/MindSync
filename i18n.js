@@ -28,6 +28,24 @@
    not flash English: the <html> dir/lang are set here, before the body
    paints, and the first pass runs on DOMContentLoaded.
    ========================================================================== */
+// Blocked site storage (30/9): some browsers/privacy settings make every
+// localStorage access throw - the app then died at start-up. This is the
+// first script on the page, so it puts an in-memory stand-in in place
+// (preferences just aren't remembered after closing).
+(function () {
+    try { const k = '__ms_probe'; window.localStorage.setItem(k, '1'); window.localStorage.removeItem(k); return; } catch (e) { /* blocked */ }
+    const mem = new Map();
+    const stub = {
+        getItem: (k) => (mem.has(String(k)) ? mem.get(String(k)) : null),
+        setItem: (k, v) => { mem.set(String(k), String(v)); },
+        removeItem: (k) => { mem.delete(String(k)); },
+        clear: () => mem.clear(),
+        key: (i) => [...mem.keys()][i] || null,
+        get length() { return mem.size; }
+    };
+    try { Object.defineProperty(window, 'localStorage', { value: stub, configurable: true }); } catch (e) { /* can't replace - nothing more to do */ }
+})();
+
 (function () {
     'use strict';
 
@@ -105,18 +123,39 @@
     // ---- DOM pass ----
     const ATTRS = ['placeholder', 'title', 'aria-label'];
     const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'CODE', 'PRE', 'NOSCRIPT']);
-    function skipped(el) {
+    // What the USER wrote is never translated (30/9): a task called "Study"
+    // or "Monday" became "תרגול" / "יום שני". These hold user content only;
+    // any fallback text shown in them ("No course", "Guest") is translated
+    // in the code with t().
+    const USER_CONTENT = [
+        '.task-title-text', '.task-category-tag', '.checklist-item span[dir="auto"]',
+        '.task-card__title', '.board-task__title', '.timeline-title', '.schedule-title', '.week-upcoming__title',
+        '.attention-item__title', '.cat-row__name', '.readiness-row__name', '.study-course__name', '.study-file__name',
+        '.study-exam-row__course', '.file-name', '.folder-name', '.syllabus-row__title', '.upload-row__name',
+        '.blocked-app__name', '.manage-item__q', '.review-item__q', '.review-item__a', '.summary-surewrong__list',
+        '#sidebar-profile-name', '#sidebar-profile-degree', '#home-greeting-name', '#settings-profile-name', '#settings-profile-meta',
+        '#home-next-title', '#sidebar-next-title', '.sum-toolbar__name'
+    ].join(', ');
+    // Placeholders the app itself puts in those spots before real content
+    // arrives (or when there's none) - always translated.
+    const ALWAYS_UI = new Set(['Loading…', 'Loading...', 'Loading data...', 'Please wait', 'Guest', 'Student', 'Uncategorized',
+        'No course', 'Summary', 'No answer passage — this will be a practice prompt.']);
+    function hardSkipped(el) {
         for (let e = el; e && e.nodeType === 1; e = e.parentNode) {
             if (SKIP_TAGS.has(e.tagName)) return true;
             if (e.getAttribute('translate') === 'no') return true;
         }
         return false;
     }
+    function skipped(el) {
+        return hardSkipped(el) || !!(el && el.nodeType === 1 && el.closest && el.closest(USER_CONTENT));
+    }
 
     function translateText(node) {
         const v = node.nodeValue;
         if (!v || !/[A-Za-z]/.test(v)) return;
-        if (!node.parentNode || skipped(node.parentNode)) return;
+        if (!node.parentNode) return;
+        if (skipped(node.parentNode) && !(ALWAYS_UI.has(norm(v)) && !hardSkipped(node.parentNode))) return;
         const tr = lookup(v);
         if (tr == null) return;
         // Keep the spaces around it (inline text next to icons, "Hide · ").
@@ -151,7 +190,7 @@
         if (lang !== 'he' || !dict || !scope) return;
         if (scope.nodeType === 3) { translateText(scope); return; }
         if (scope.nodeType !== 1 && scope.nodeType !== 9 && scope.nodeType !== 11) return;
-        if (scope.nodeType === 1 && skipped(scope)) return;
+        if (scope.nodeType === 1 && hardSkipped(scope)) return;   // user areas: walked, text decides (ALWAYS_UI)
         translateHtmlBlocks(scope);
         const walker = document.createTreeWalker(scope, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
         let n = walker.currentNode;
@@ -164,7 +203,7 @@
                     if (n.tagName === 'TEXTAREA' && !skipped(n.parentNode)) translateAttrs(n);
                     n = nextSkippingChildren(walker); continue;
                 }
-                translateAttrs(n);
+                if (!skipped(n)) translateAttrs(n);   // a user area's attributes (a file name as title) stay
             }
             n = walker.nextNode();
         }

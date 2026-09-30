@@ -112,7 +112,13 @@
 
             function onKey(e) {
                 if (e.key === 'Escape') close(false);
-                if (e.key === 'Enter') close(true);
+                // Enter on a focused button presses THAT button (30/9: Enter
+                // on a focused "Cancel" used to confirm - e.g. delete).
+                if (e.key === 'Enter') {
+                    if (e.target && e.target.tagName === 'BUTTON') return;
+                    e.preventDefault();
+                    close(true);
+                }
             }
 
             backdrop.querySelector('[data-action="confirm"]').onclick = () => close(true);
@@ -181,7 +187,11 @@
             }
             function onKey(e) {
                 if (e.key === 'Escape') close(null);
-                if (e.key === 'Enter') close(input.value);
+                if (e.key === 'Enter') {
+                    if (e.target && e.target.tagName === 'BUTTON') return;   // see buildDialog
+                    e.preventDefault();
+                    close(input.value);
+                }
             }
 
             backdrop.querySelector('[data-action="confirm"]').onclick = () => close(input.value);

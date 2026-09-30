@@ -14,6 +14,9 @@
 const SERVER_URL = process.env.MINDSYNC_SERVER_URL || 'https://mindsync-server-gags.onrender.com/api';
 const SERVER_ROOT = SERVER_URL.replace(/\/api\/?$/, ''); // health check lives at '/', not '/api'
 const authClient = require('./authClient');
+// Ids go into URL paths encoded (30/9): an "id" like '../auth/me' must not
+// reach a different route.
+const enc = (v) => encodeURIComponent(String(v));
 
 // BUG FIX: only ping() had a timeout. Every other call went through fetch()
 // with no AbortController at all - so a stuck/overloaded server left the
@@ -121,29 +124,29 @@ module.exports = {
   // ---- Tasks ----
   getTasks: async () => withIdAliases(await request('GET', '/tasks')),
   createTask: (task) => request('POST', '/tasks', task).then(withIdAlias),
-  updateTask: (id, updates) => request('PUT', `/tasks/${id}`, updates).then(withIdAlias),
-  deleteTask: (id) => request('DELETE', `/tasks/${id}`),
+  updateTask: (id, updates) => request('PUT', `/tasks/${enc(id)}`, updates).then(withIdAlias),
+  deleteTask: (id) => request('DELETE', `/tasks/${enc(id)}`),
   getTaskCategories: () => request('GET', '/tasks/categories'),
 
   // ---- Subtasks (checklist) ----
   addSubtask: (taskId, title) =>
-    request('POST', `/tasks/${taskId}/subtasks`, { title }).then(withIdAlias),
+    request('POST', `/tasks/${enc(taskId)}/subtasks`, { title }).then(withIdAlias),
   toggleSubtask: (taskId, subtaskId, completed) =>
-    request('PATCH', `/tasks/${taskId}/subtasks/${subtaskId}`, { completed }).then(withIdAlias),
+    request('PATCH', `/tasks/${enc(taskId)}/subtasks/${enc(subtaskId)}`, { completed }).then(withIdAlias),
   deleteSubtask: (taskId, subtaskId) =>
-    request('DELETE', `/tasks/${taskId}/subtasks/${subtaskId}`).then(withIdAlias),
+    request('DELETE', `/tasks/${enc(taskId)}/subtasks/${enc(subtaskId)}`).then(withIdAlias),
 
   // ---- Events ----
   getEvents: async () => withIdAliases(await request('GET', '/events')),
-  getEvent: (id) => request('GET', `/events/${id}`).then(withIdAlias),
+  getEvent: (id) => request('GET', `/events/${enc(id)}`).then(withIdAlias),
   createEvent: (evt) => request('POST', '/events', evt).then(withIdAlias),
-  updateEvent: (id, updates) => request('PUT', `/events/${id}`, updates).then(withIdAlias),
-  deleteEvent: (id) => request('DELETE', `/events/${id}`),
+  updateEvent: (id, updates) => request('PUT', `/events/${enc(id)}`, updates).then(withIdAlias),
+  deleteEvent: (id) => request('DELETE', `/events/${enc(id)}`),
 
   // ---- Folders ----
   getFolders: async () => withIdAliases(await request('GET', '/folders')),
   createFolder: (folder) => request('POST', '/folders', folder).then(withIdAlias),
-  deleteFolder: (id) => request('DELETE', `/folders/${id}`),
+  deleteFolder: (id) => request('DELETE', `/folders/${enc(id)}`),
 
   // ---- Files ----
   getFiles: async () => withIdAliases(await request('GET', '/files')),
@@ -151,9 +154,9 @@ module.exports = {
   // extracted text, which the duplicate check before an upload doesn't need.
   getFilesLight: async () => withIdAliases(await request('GET', '/files?light=1')),
   createFile: (file) => request('POST', '/files', file).then(withIdAlias),
-  getFile: (id) => request('GET', `/files/${id}`).then(withIdAlias),
-  updateFile: (id, updates) => request('PUT', `/files/${id}`, updates).then(withIdAlias),
-  deleteFile: (id) => request('DELETE', `/files/${id}`),
+  getFile: (id) => request('GET', `/files/${enc(id)}`).then(withIdAlias),
+  updateFile: (id, updates) => request('PUT', `/files/${enc(id)}`, updates).then(withIdAlias),
+  deleteFile: (id) => request('DELETE', `/files/${enc(id)}`),
 
   // ---- Auth ----
   // register/login skip the auth header - there's no token to send yet.
@@ -166,6 +169,7 @@ module.exports = {
   getMe: () => request('GET', '/auth/me'),
   updateMe: (updates) => request('PUT', '/auth/me', updates),
   deleteMe: (password) => request('DELETE', '/auth/me', { password }),
+  changePassword: (currentPassword, newPassword) => request('POST', '/auth/change-password', { currentPassword, newPassword }),
 
   // ---- Stats: removed with /api/stats (XP/levels/streak dropped server-side) ----
 
@@ -198,9 +202,9 @@ module.exports = {
   deleteAllStudyItems: () => request('DELETE', '/study/all/everything'),
   getStudyCategories: () => request('GET', '/study/categories'),
   createStudyItemsBulk: (items) => request('POST', '/study/bulk', { items }),
-  submitStudyReview: (id, payload) => request('POST', `/study/${id}/review`, payload),
-  updateStudyItem: (id, updates) => request('PUT', `/study/${id}`, updates).then(withIdAlias),
-  deleteStudyItem: (id) => request('DELETE', `/study/${id}`),
+  submitStudyReview: (id, payload) => request('POST', `/study/${enc(id)}/review`, payload),
+  updateStudyItem: (id, updates) => request('PUT', `/study/${enc(id)}`, updates).then(withIdAlias),
+  deleteStudyItem: (id) => request('DELETE', `/study/${enc(id)}`),
 
   // ---- Admin ----
   hardReset: () => request('POST', '/admin/hard-reset'),
