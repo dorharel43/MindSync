@@ -1479,3 +1479,134 @@ html[dir="rtl"] :is(textarea, input)[dir="auto"]:placeholder-shown { direction: 
 .auth-terms[hidden] { display: none; }
 .auth-terms a, .settings-links a { color: var(--accent-text); }
 .settings-links { display: flex; gap: 14px; flex-wrap: wrap; font-size: var(--text-sm); flex-shrink: 0; }
+
+/* ---------- Login screen (30/9 redesign) ----------
+   Start side: what MindSync is about, shown rather than told - a practice
+   card at the moment the app is built around (you said "I'm sure", you were
+   wrong, so it comes back first). End side: the form, on a plain surface.
+   Colours: the app's accent, deepened for the panel; the card stays light in
+   both themes (it's a picture of the app). */
+body.auth-pending #auth-screen {
+    display: grid;
+    grid-template-columns: minmax(360px, 44%) 1fr;
+    align-items: stretch;
+    justify-content: stretch;
+    background: var(--bg-card);
+    padding: 0;
+}
+.auth-brand {
+    --brand-bg: #183577;
+    --brand-ink: #f3f6ff;
+    --brand-muted: #b8c6ec;
+    background: var(--brand-bg);
+    color: var(--brand-ink);
+    display: flex;
+    flex-direction: column;
+    padding: 36px clamp(28px, 5vw, 64px);
+    min-height: 100vh;
+}
+body.dark-mode .auth-brand { --brand-bg: #111f45; }
+.auth-logo--brand { color: var(--brand-ink); margin: 0; font-size: var(--text-base); }
+.auth-logo--brand .logo-mark { background: #fff; color: var(--brand-bg); }
+.auth-brand__body { margin: auto 0; max-width: 460px; padding: 32px 0; }
+.auth-brand__title {
+    font-size: clamp(28px, 3.2vw, 38px);
+    line-height: 1.15;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 14px;
+    color: var(--brand-ink);
+}
+html[dir="rtl"] .auth-brand__title { letter-spacing: 0; line-height: 1.25; }
+.auth-brand__text { margin: 0 0 32px; color: var(--brand-muted); font-size: var(--text-base); line-height: 1.6; max-width: 40ch; }
+
+.auth-demo {
+    background: #ffffff;
+    color: #1d2433;
+    border-radius: 14px;
+    padding: 18px 18px 16px;
+    box-shadow: 0 18px 40px -18px rgba(5, 14, 40, 0.55);
+    max-width: 400px;
+    transform: rotate(-1.2deg);
+}
+html[dir="rtl"] .auth-demo { transform: rotate(1.2deg); }
+.auth-demo__top { display: flex; gap: 6px; margin-bottom: 10px; }
+.auth-demo__top span { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #eef2fb; color: #3b4a6b; }
+.auth-demo__top .auth-demo__course { background: #e6edfd; color: #2f64d6; }
+.auth-demo__q { font-size: 15px; font-weight: 600; line-height: 1.4; margin-bottom: 14px; }
+.auth-demo__conf { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
+.auth-demo__conf span {
+    text-align: center;
+    font-size: 12px;
+    padding: 7px 4px;
+    border: 1px solid #dde3ee;
+    border-radius: 8px;
+    color: #4b5563;
+}
+.auth-demo__conf .is-picked { border-color: #2f64d6; background: #eef3ff; color: #1f4fbf; font-weight: 600; }
+.auth-demo__verdict {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: #7f1d1d;
+    background: #fdecec;
+    border-radius: 8px;
+    padding: 8px 10px;
+}
+.auth-demo__dot { width: 7px; height: 7px; border-radius: 50%; background: #dc2626; flex-shrink: 0; margin-top: 6px; }
+
+.auth-main {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 72px 24px 40px;
+    min-height: 100vh;
+}
+.auth-langs {
+    position: absolute;
+    top: 20px;
+    inset-inline-end: 24px;
+    display: inline-flex;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+.auth-langs button {
+    border: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: var(--text-xs);
+    padding: 5px 10px;
+    cursor: pointer;
+}
+.auth-langs button.active { background: var(--bg-subtle); color: var(--text-primary); font-weight: var(--font-semibold); }
+.auth-langs button:focus-visible { outline: 2px solid var(--accent-purple); outline-offset: -2px; }
+#auth-screen .auth-card {
+    max-width: 360px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+}
+#auth-screen .auth-title { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
+#auth-screen .auth-subtitle { margin-bottom: 24px; }
+
+/* Phone / narrow window: the panel becomes a short header - logo and the
+   one line; the demo card is left out. */
+@media (max-width: 860px) {
+    body.auth-pending #auth-screen { grid-template-columns: 1fr; grid-template-rows: auto auto; align-content: start; min-height: 100vh; }
+    body.auth-pending .mobile-topbar { display: none !important; }
+    .auth-brand { min-height: 0; padding: 20px 20px 22px; }
+    .auth-brand__body { margin: 0; padding: 18px 0 0; }
+    .auth-brand__title { font-size: 22px; margin: 0; }
+    .auth-brand__text, .auth-demo { display: none; }
+    .auth-main { min-height: 0; align-items: flex-start; padding: 28px 20px 40px; }
+    .auth-langs { position: static; margin: 0 0 20px; align-self: flex-start; }
+    .auth-main { flex-direction: column; align-items: stretch; }
+    #auth-screen .auth-card { max-width: none; }
+}
+@media (prefers-reduced-motion: reduce) { .auth-demo { transform: none !important; } }

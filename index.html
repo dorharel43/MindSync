@@ -25,8 +25,33 @@
          runs in the background and just gets empty results/401s until login
          succeeds, which is harmless since none of it is visible yet. -->
     <div id="auth-screen">
+        <!-- Login screen (30/9 redesign): the start side shows what MindSync is
+             about - a practice card with the "how sure are you?" step, the
+             one idea the app is built on. The form side is unchanged in
+             behaviour (same ids). On a phone the panel shrinks to a header. -->
+        <aside class="auth-brand">
+            <div class="auth-logo auth-logo--brand"><span class="logo-mark" aria-hidden="true">M</span> <span dir="ltr">MindSync</span></div>
+            <div class="auth-brand__body">
+                <h1 class="auth-brand__title">Know what you really know - before the exam.</h1>
+                <p class="auth-brand__text">Practice questions from your course files. Before each answer you say how sure you are - and see where that feeling is wrong.</p>
+                <div class="auth-demo" aria-hidden="true">
+                    <div class="auth-demo__top"><span class="auth-demo__course">Statistics</span><span class="auth-demo__mode">Recall</span></div>
+                    <div class="auth-demo__q">What's the difference between variance and standard deviation?</div>
+                    <div class="auth-demo__conf">
+                        <span class="is-picked">I'm sure</span>
+                        <span>I think so</span>
+                        <span>Guessing</span>
+                    </div>
+                    <div class="auth-demo__verdict"><span class="auth-demo__dot"></span><span>Not quite. You were sure - so it comes back first.</span></div>
+                </div>
+            </div>
+        </aside>
+        <div class="auth-main">
+            <div class="auth-langs" role="group" aria-label="Language">
+                <button type="button" data-lang="he" lang="he" dir="rtl" translate="no">עברית</button>
+                <button type="button" data-lang="en" lang="en" dir="ltr" translate="no">English</button>
+            </div>
         <div class="auth-card">
-            <div class="auth-logo"><span class="logo-mark" aria-hidden="true">M</span> MindSync</div>
 
             <!-- UX FIX: the form used to be visible immediately while the
                  startup session check ran in the background - on a cold
@@ -77,6 +102,7 @@
                     <a href="#" id="auth-toggle-link">Create one</a>
                 </p>
             </div>
+        </div>
         </div>
     </div>
 
