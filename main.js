@@ -144,6 +144,8 @@ RULES:
 
 ipcMain.handle('summarize-text', async (event, textToSummarize, sourcePath) => {
     try {
+        // Always a string (30/9): an array used to slip past the length check.
+        textToSummarize = typeof textToSummarize === 'string' ? textToSummarize : String(textToSummarize == null ? '' : textToSummarize);
         // Was 2000 - and Gemini's thinking is paid out of this same budget,
         // which left roughly one page of actual summary. A long lecture
         // needs room; the model stops when it's done, so a short file still
@@ -775,6 +777,9 @@ ipcMain.handle('read-syllabus', async (event, file = {}) => {
 // also in Google Calendar), submissions -> tasks under the course. Returns
 // the new ids so the renderer's Undo can remove exactly these.
 ipcMain.handle('import-syllabus-items', async (event, items = [], options = {}) => {
+    // A syllabus has tens of dates, never hundreds (30/9: 5000 were accepted).
+    items = Array.isArray(items) ? items.slice(0, 100) : [];
+    options = options && typeof options === 'object' ? options : {};
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const course = String(options.course || '').trim().slice(0, 80);
     const created = { events: [], tasks: [] };
@@ -1529,6 +1534,10 @@ Return ONLY this JSON, with no other text: {"type": "one_of_the_four"}`;
 // whether that slot was actually free.
 ipcMain.handle('generate-weekly-plan', async (event, currentTasks, currentEvents) => {
     try {
+        // Bounded input (30/9): 20,000 fake tasks froze the whole server for
+        // seconds. A real week has tens of each.
+        currentTasks = Array.isArray(currentTasks) ? currentTasks.slice(0, 300) : [];
+        currentEvents = Array.isArray(currentEvents) ? currentEvents.slice(0, 1500) : [];
         const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         const DAY_START = 9 * 60;   // don't schedule before 09:00
         const DAY_END = 21 * 60;    // or after 21:00
@@ -1973,8 +1982,11 @@ ipcMain.handle('delete-subtask', async (event, taskId, subtaskId) => {
 // the same prompt and filters as the PDF path.
 ipcMain.handle('generate-study-items', async (event, sourceText, options = {}) => {
     try {
-        const category = options.category || '';
-        const sourceFile = options.sourceFile || '';
+        options = options && typeof options === 'object' ? options : {};
+        // Short strings (30/9): the course name goes into the prompt and into
+        // every question - a megabyte of it used to go to the AI.
+        const category = String(options.category || '').slice(0, 100);
+        const sourceFile = String(options.sourceFile || '').slice(0, 300);
         const text = String(sourceText || '');
         console.log(`🧠 generate-study-items (text): ${text.length} chars, category "${category}"`);
         if (!text.trim()) return JSON.stringify({ error: 'This file has no readable text.' });
@@ -2447,8 +2459,9 @@ function finaliseStudyItems(responseText, category, sourceFile) {
 // model exactly as it is, so nothing can be mangled on the way in.
 ipcMain.handle('generate-study-items-pdf', async (event, sourcePath, options = {}) => {
     try {
-        const category = options.category || '';
-        const sourceFile = options.sourceFile || '';
+        options = options && typeof options === 'object' ? options : {};
+        const category = String(options.category || '').slice(0, 100);
+        const sourceFile = String(options.sourceFile || '').slice(0, 300);
 
         if (!aiProvider.supportsVision()) {
             return JSON.stringify({ error: 'Reading PDFs directly needs a Gemini API key. Add one under Settings → AI engine.' });

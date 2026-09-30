@@ -2844,6 +2844,16 @@ async function loadAndRenderBlockedApps() {
 
 loadAndRenderBlockedApps();
 
+// No inline onclick="" in index.html (30/9): the web version's security
+// policy (CSP) blocks inline script, so these are wired here.
+document.querySelectorAll('[data-go]').forEach((el) => {
+    el.addEventListener('click', (e) => { e.preventDefault(); const nav = document.getElementById(el.dataset.go); if (nav) nav.click(); });
+});
+const blockedAppInput = document.getElementById('blocked-app-input');
+if (blockedAppInput) blockedAppInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') window.addNewAppBlocker(); });
+const blockedAppAddBtn = document.getElementById('blocked-app-add-btn');
+if (blockedAppAddBtn) blockedAppAddBtn.addEventListener('click', () => window.addNewAppBlocker());
+
 // ==========================================
 // 9. Modals closing
 // ==========================================
