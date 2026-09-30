@@ -1837,9 +1837,9 @@ ipcMain.handle('auth-get-session', async () => {
   }
 });
 
-ipcMain.handle('auth-register', async (event, { email, password, name, degree }) => {
+ipcMain.handle('auth-register', async (event, { email, password, name, degree, lang }) => {
   try {
-    const { token, user } = await api.register(email, password, name, degree);
+    const { token, user } = await api.register(email, password, name, degree, lang === 'he' ? 'he' : 'en');
     authClient.saveSession({ token, user });
     return { success: true, user };
   } catch (err) {
@@ -1887,6 +1887,13 @@ ipcMain.handle('auth-change-password', async (event, { currentPassword, newPassw
   }
 });
 
+// "Forgot password?" on the desktop login screen: the reset happens on the
+// website (the link in the email opens there anyway).
+ipcMain.handle('open-reset-password', async () => {
+  require('electron').shell.openExternal(api.resetPasswordPage());
+  return true;
+});
+
 // =====================================
 // Profile
 // =====================================
@@ -1902,6 +1909,12 @@ ipcMain.handle('save-profile', async (event, profileData) => {
     await api.updateMe(profileData);
     return true;
   } catch (err) { return { error: err.message }; }
+});
+
+// A new confirmation email (30/9) - in Profile so the web version gets it
+// too. { sent } / { alreadyVerified } / { error }.
+ipcMain.handle('auth-resend-verification', async () => {
+  try { return await api.resendVerification(); } catch (err) { return { error: err.message }; }
 });
 
 // =====================================
