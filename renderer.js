@@ -531,7 +531,8 @@ if (sidebarLangBtn) {
     sidebarLangBtn.lang = other;
     sidebarLangBtn.dir = other === 'he' ? 'rtl' : 'ltr';
     document.getElementById('sidebar-lang-name').textContent = other === 'he' ? 'עברית' : 'English';
-    sidebarLangBtn.title = other === 'he' ? 'Switch to Hebrew' : 'Switch to English';
+    // translate="no" keeps the NAME as written; the tooltip is in the page's language.
+    sidebarLangBtn.title = other === 'he' ? 'Switch to Hebrew' : t('Switch to English');
 }
 document.querySelectorAll('[data-lang]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.lang === I18N.lang);
@@ -5302,6 +5303,8 @@ function renderStudyCard() {
     const badgeText = (item.mode === 'practice' && item.skillTag) ? item.skillTag : item.category;
     if (badgeText) { catBadge.textContent = badgeText; catBadge.hidden = false; }
     else catBadge.hidden = true;
+    const twinBadge = document.getElementById('study-twin-badge');
+    if (twinBadge) twinBadge.hidden = !item.twinOf;
 
     document.getElementById('study-question').textContent = item.question;
     // Last time: sure, and wrong. Say so - that's the whole point of the list.
@@ -5616,6 +5619,10 @@ async function submitReview(outcome) {
         if (!studyState.sureNoteShown) toast.warning('You were sure about that one. It will come back soon.', 'Sure but wrong');
     }
 
+    // The mistake loop: not known -> a twin question on the same idea.
+    const lastReview = res.item && res.item.reviews ? res.item.reviews[res.item.reviews.length - 1] : null;
+    if (lastReview && lastReview.wasCorrect === false) makeTwin(item);
+
     // A same-session retry (interval 0) goes back in the queue rather than
     // being lost until tomorrow.
     if (res.nextInterval === 0) {
@@ -5629,6 +5636,51 @@ async function submitReview(outcome) {
 
     if (studyState.index >= studyState.queue.length) endStudySession();
     else renderStudyCard();
+}
+
+// ---- The mistake loop (30/9) ------------------------------------------------
+// After a wrong / half / "I don't know" answer, the AI writes a TWIN: the same
+// idea from another angle (or the same method with other numbers). It's
+// saved to the deck and comes up a few cards later in this session. Getting
+// the twin right is evidence of understanding - the original's answer was
+// just on screen, so getting the original right again proves little.
+// A few per session (each is a small AI job); never a twin of a twin.
+const MAX_TWINS_PER_SESSION = 5;
+async function makeTwin(item) {
+    const session = studyState.session;
+    if (!session || item.twinOf || studyState.checkOff) return;
+    const base = String(item.answer || item.mySolution || '').trim();
+    if (!base) return;
+    // An array, not a Set: the session is saved as JSON (to resume it).
+    if (!Array.isArray(session.twinsAsked)) session.twinsAsked = [];
+    if (session.twinsAsked.includes(item.id) || session.twinsAsked.length >= MAX_TWINS_PER_SESSION) return;
+    session.twinsAsked.push(item.id);
+    const queue = studyState.queue;
+    const res = await withTimeout(ipcRenderer.invoke('make-twin-question', {
+        question: item.question, answer: base, mode: item.mode, solutionSource: item.solutionSource || 'document'
+    }).catch(e => ({ error: e.message })), 50000);
+    if (!res || res.error || !res.question) {
+        if (res && res.error && isAiLimit(res.error)) studyState.checkOff = res.error;
+        return;
+    }
+    const saved = await ipcRenderer.invoke('save-study-items', [{
+        question: res.question, answer: res.answer, mode: item.mode, solutionSource: 'ai',
+        skillTag: item.skillTag || '', category: item.category || '', sourceFile: item.sourceFile || '', twinOf: item.id
+    }]).catch(() => null);
+    const twin = saved && Array.isArray(saved.items) && saved.items[0];
+    if (!twin) return;
+    const withId = { ...twin, id: twin.id || twin._id, twinOf: twin.twinOf || item.id };
+    session.twins = (session.twins || 0) + 1;
+    // Still the same session on screen: slot it in a few cards ahead.
+    const sessionOn = !document.getElementById('study-session').hidden && studyState.queue === queue;
+    if (sessionOn) {
+        const at = Math.min(queue.length, studyState.index + 3);
+        queue.splice(at, 0, withId);
+        saveSessionProgress();
+        const pos = document.getElementById('study-position');
+        if (pos) pos.textContent = `${studyState.index + 1} / ${queue.length}`;
+        if (session.twins === 1) toast.info(t('A new question on the idea you missed was added - it comes up in a few questions.'), t('Same idea, new question'));
+    }
 }
 
 function endStudySession() {
@@ -5648,6 +5700,14 @@ function endStudySession() {
             : `${n} more were right while you were guessing. That doesn't count as knowing them - they come back tomorrow to check.`;
     }
     document.getElementById('summary-overconfident').textContent = s.overconfident;
+    const twinsEl = document.getElementById('summary-twins');
+    if (twinsEl) {
+        const n = s.twins || 0;
+        twinsEl.hidden = n === 0;
+        twinsEl.textContent = n === 1
+            ? t('1 new question was written on an idea you missed. It stays in your deck and comes back with the rest.')
+            : t('{n} new questions were written on ideas you missed. They stay in your deck and come back with the rest.', { n });
+    }
 
     const swBox = document.getElementById('summary-surewrong');
     const swList = document.getElementById('summary-surewrong-list');

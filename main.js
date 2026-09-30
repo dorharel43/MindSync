@@ -2286,6 +2286,57 @@ Return ONLY JSON: {"answer": "the short direct answer"}`;
     }
 });
 
+// ---- The mistake loop (30/9) ----
+// A question answered wrong (or "I don't know", or half right) gets a TWIN:
+// a new question on the same idea from another angle - a concrete case, the
+// reverse direction, "what if", or for a problem the same method with other
+// numbers. It comes up again a few questions later; getting IT right shows
+// the idea was understood, not that one answer was remembered. Light job.
+function buildTwinPrompt({ question, answer, practice, referenceByAi }) {
+    const tag = (s) => String(s || '').replace(/<\/?(original_question|original_answer)>/gi, '');
+    return `A university student just got this practice question wrong (or didn't know it) and has now seen the answer.
+Write ONE new question that tests the SAME idea from a different angle, so that answering it right shows they understood it - not that they remember this answer.
+
+<original_question>
+${tag(question)}
+</original_question>
+<original_answer source="${referenceByAi ? 'written by AI - check it' : 'the course material'}">
+${tag(answer)}
+</original_answer>
+
+How:
+${practice
+        ? '- A problem of the same kind solved by the same method, with different numbers or a different setting. Solve it, then CHECK the result (substitute back or solve another way). If you are not sure of the result, write a simpler one you are sure of.'
+        : '- Change the angle: apply the idea to a short concrete case, ask it in the reverse direction, ask what happens if a condition changes, or contrast it with a close concept. Not the same question in other words.'}
+- Use only what the original question and answer say or directly imply${practice ? ' (and your own calculation)' : ''} - no new facts.
+- It must stand alone: the student will not see the original next to it. Don't give the answer away in the question.
+- The SAME LANGUAGE as the original. Maths as readable text (x^2, √, σ), no LaTeX.
+- "answer": short and complete - 1-3 sentences${practice ? ', with the key steps and the result' : ''}.
+
+Return ONLY JSON: {"question": "...", "answer": "..."}`;
+}
+
+ipcMain.handle('make-twin-question', async (event, payload = {}) => {
+    try {
+        const question = String(payload.question || '').slice(0, 2000);
+        const answer = String(payload.answer || '').slice(0, 4000);
+        if (!question || !answer) return { error: 'Nothing to base it on.' };
+        const practice = payload.mode === 'practice';
+        const text = await aiProvider.generateText(buildTwinPrompt({ question, answer, practice, referenceByAi: payload.solutionSource === 'ai' }),
+            { forceJson: true, maxTokens: practice ? 3000 : 1500, thinkingLevel: practice ? 'medium' : 'low', noFallback: true, timeoutMs: 45000 });
+        const data = JSON.parse(extractJsonFromText(String(text)));
+        const q = cleanMathNotation(String(data.question || '').trim()).slice(0, 2000);
+        const a = cleanMathNotation(String(data.answer || '').trim()).slice(0, 4000);
+        // The same filters generated questions pass: it must stand alone and
+        // not be the original again.
+        if (q.length < 10 || !a || !isSelfContained(q) || q.toLowerCase() === question.trim().toLowerCase()) return { error: 'No usable twin question came back.' };
+        return { question: q, answer: a };
+    } catch (err) {
+        console.error('❌ make-twin-question:', err.message);
+        return { error: err.message };
+    }
+});
+
 ipcMain.handle('delete-study-item', async (event, id) => {
     try { return await api.deleteStudyItem(id); } catch (err) { return { error: err.message }; }
 });

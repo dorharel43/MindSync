@@ -1833,3 +1833,7 @@ html.has-session body.auth-pending .auth-brand,
 html.has-session body.auth-pending .auth-langs,
 html.has-session body.auth-pending #auth-form-wrap { display: none !important; }
 html.has-session body.auth-pending .auth-main { min-height: 100vh; }
+
+/* Mistake loop (30/9): the twin question's pill */
+.study-card__mode .ms-badge--twin { background: var(--status-warning-bg); color: var(--status-warning); }
+.summary-twins { margin-top: 6px; }
