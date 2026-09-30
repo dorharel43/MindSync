@@ -749,74 +749,52 @@
             <div class="page-header">
                 <div>
                     <h2 class="page-title">Settings</h2>
-                    <div class="page-subtitle desktop-only">AI connection, appearance, focus mode and your profile.</div>
-                    <div class="page-subtitle web-only">Google Calendar, appearance and your profile.</div>
+                    <div class="page-subtitle">Your account, how the app looks, connections and help.</div>
                 </div>
             </div>
 
-            <!-- desktop-only: hidden in the web version (html.is-web), which uses
-                 the server's AI key - see web/web-shim.js in the server repo. -->
-            <div class="card settings-card desktop-only">
-                <h3 class="settings-title">AI connection</h3>
-                <p class="settings-hint">
-                    The AI reads your files and writes your questions. Your key stays on this computer.
-                </p>
-
+            <!-- Settings order (30/9, user feedback: "the profile part is so
+                 crowded it took me a while to find where to log out"):
+                 1 Account - who you are + Log out right there, password,
+                   the email-confirm notice;  2 Appearance;  3 Connections
+                   (Google Calendar on the web, the AI key on desktop, Focus
+                   mode);  4 Help & feedback (guide, feedback, shortcuts);
+                 5 Delete data - reset + delete account, last, on their own.
+                 Ids are unchanged; renderer.js finds everything by id. -->
+            <h3 class="settings-group-title">Account</h3>
+            <div class="card settings-card account-card">
+                <div class="account-head">
+                    <div class="profile-pic-large" id="settings-profile-pic">?</div>
+                    <div class="profile-details">
+                        <div class="profile-name-large" id="settings-profile-name">Guest</div>
+                        <div class="profile-meta" id="settings-profile-meta">Student</div>
+                        <div class="profile-email" id="settings-profile-email"></div>
+                    </div>
+                    <div class="account-head__actions">
+                        <button id="settings-edit-btn" class="btn-secondary btn-sm">Edit Profile</button>
+                        <button id="auth-logout-btn" class="btn-secondary btn-sm">Log out</button>
+                    </div>
+                </div>
+                <!-- shown only while the email isn't confirmed (and the server
+                     can send email) - see loadProfile(). -->
+                <div class="account-notice" id="email-verify-row" hidden>
+                    <span data-icon="info" data-icon-size="16" aria-hidden="true"></span>
+                    <span class="account-notice__text">Your email isn't confirmed yet. Confirming it lets you reset your password if you forget it.</span>
+                    <button id="email-resend-btn" class="btn-link">Send the link again</button>
+                </div>
+                <!-- changing the password also logs out every other device
+                     (a lost laptop, a shared computer, a stolen session). -->
                 <div class="settings-row">
                     <div>
-                        <div class="settings-row__title">Status</div>
-                        <div class="settings-hint settings-hint--inline" id="ai-active-label">—</div>
+                        <div class="settings-row__title">Password</div>
+                        <div class="settings-hint settings-hint--inline">Changing it logs you out on every other device.</div>
                     </div>
-                </div>
-
-                <div class="settings-row settings-row--stacked">
-                    <div class="ms-grow">
-                        <div class="settings-row__title">Your Google AI key</div>
-                        <div class="settings-hint settings-hint--inline" id="ai-key-status">No key saved.</div>
-                        <div class="input-with-action ai-key-row">
-                            <input type="password" id="gemini-key-input" class="input-field" placeholder="Paste your key here" autocomplete="off">
-                            <button class="btn-secondary" id="test-key-btn">Test</button>
-                            <button class="btn-primary" id="save-key-btn">Save</button>
-                        </div>
-                        <div class="settings-hint settings-hint--footnote">
-                            Free at <strong>aistudio.google.com/apikey</strong> - just a Google account, no credit card.
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Which model writes summaries and questions. -->
-                <div class="settings-row">
-                    <div class="ms-grow">
-                        <div class="settings-row__title">Model</div>
-                        <div class="settings-hint settings-hint--inline" id="ai-model-hint">Fast, and works with a free key.</div>
-                    </div>
-                    <select id="ai-model-select" class="input-field ai-model-select">
-                        <option value="gemini-3.8-flash">Gemini 3.8 Flash (recommended)</option>
-                        <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (needs billing)</option>
-                    </select>
+                    <button id="auth-change-password-btn" class="btn-secondary btn-sm">Change password</button>
                 </div>
             </div>
 
-            <!-- web-only: each account connects its own Google Calendar (server
-                 side, routes/google.js). The desktop app signs in to Google the
-                 first time something is synced instead. -->
-            <div class="card settings-card web-only" id="google-card">
-                <h3 class="settings-title">Google Calendar</h3>
-                <p class="settings-hint">
-                    Your classes, exams and study blocks can also appear in Google Calendar - in a calendar called "MindSync", separate from your own.
-                </p>
-                <div class="settings-row">
-                    <div class="ms-grow">
-                        <div class="settings-row__title">Status</div>
-                        <div class="settings-hint settings-hint--inline" id="google-status-label">Checking…</div>
-                    </div>
-                    <button id="google-connect-btn" class="btn-primary" hidden>Connect</button>
-                    <button id="google-disconnect-btn" class="btn-secondary" hidden>Disconnect</button>
-                </div>
-            </div>
-
+            <h3 class="settings-group-title">Appearance</h3>
             <div class="card settings-card">
-                <h3 class="settings-title">Appearance</h3>
                 <div class="settings-row settings-row--stacked">
                     <div>
                         <div class="settings-row__title">Colours</div>
@@ -870,44 +848,66 @@
                 </div>
             </div>
 
-            <div class="card settings-card">
-                <h3 class="settings-title">Getting started guide</h3>
-                <p class="settings-hint">Show the step-by-step guide on the Home screen again.</p>
-                <div class="settings-actions">
-                    <button id="settings-show-onboarding-btn" class="btn-secondary">Show guide</button>
+
+            <h3 class="settings-group-title">Connections</h3>
+            <!-- web-only: each account connects its own Google Calendar (server
+                 side, routes/google.js). The desktop app signs in to Google the
+                 first time something is synced instead. -->
+            <div class="card settings-card web-only" id="google-card">
+                <h3 class="settings-title">Google Calendar</h3>
+                <p class="settings-hint">
+                    Your classes, exams and study blocks can also appear in Google Calendar - in a calendar called "MindSync", separate from your own.
+                </p>
+                <div class="settings-row">
+                    <div class="ms-grow">
+                        <div class="settings-row__title">Status</div>
+                        <div class="settings-hint settings-hint--inline" id="google-status-label">Checking…</div>
+                    </div>
+                    <button id="google-connect-btn" class="btn-primary" hidden>Connect</button>
+                    <button id="google-disconnect-btn" class="btn-secondary" hidden>Disconnect</button>
                 </div>
             </div>
 
+            <!-- desktop-only: hidden in the web version (html.is-web), which uses
+                 the server's AI key - see web/web-shim.js in the server repo. -->
             <div class="card settings-card desktop-only">
-                <h3 class="settings-title">Report a problem</h3>
+                <h3 class="settings-title">AI connection</h3>
                 <p class="settings-hint">
-                    Something not working? Copy the error log and send it to us.
+                    The AI reads your files and writes your questions. Your key stays on this computer.
                 </p>
-                <div class="settings-actions">
-                    <button id="settings-copy-log-btn" class="btn-secondary">
-                        <span data-icon="file" data-icon-size="16"></span> Copy error log
-                    </button>
-                </div>
-            </div>
 
-            <div class="card settings-card web-only">
-                <h3 class="settings-title">Send feedback</h3>
-                <p class="settings-hint">Something not working, or an idea? Write it here - it goes straight to the developer.</p>
-                <textarea id="feedback-text" class="input-field" rows="3" maxlength="4000" dir="auto" placeholder="What happened, or what would make this better?"></textarea>
-                <div class="settings-actions">
-                    <button id="feedback-send-btn" class="btn-secondary">Send</button>
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-row__title">Status</div>
+                        <div class="settings-hint settings-hint--inline" id="ai-active-label">—</div>
+                    </div>
                 </div>
-            </div>
 
-            <div class="card settings-card settings-card--danger">
-                <h3 class="settings-title">Reset all data</h3>
-                <p class="settings-hint">
-                    Deletes all your tasks, calendar items, files and questions - for starting a new semester. Can't be undone.
-                </p>
-                <div class="settings-actions">
-                    <button id="settings-hard-reset-btn" class="btn-danger">
-                        <span data-icon="alert" data-icon-size="16"></span> Reset all data
-                    </button>
+                <div class="settings-row settings-row--stacked">
+                    <div class="ms-grow">
+                        <div class="settings-row__title">Your Google AI key</div>
+                        <div class="settings-hint settings-hint--inline" id="ai-key-status">No key saved.</div>
+                        <div class="input-with-action ai-key-row">
+                            <input type="password" id="gemini-key-input" class="input-field" placeholder="Paste your key here" autocomplete="off">
+                            <button class="btn-secondary" id="test-key-btn">Test</button>
+                            <button class="btn-primary" id="save-key-btn">Save</button>
+                        </div>
+                        <div class="settings-hint settings-hint--footnote">
+                            Free at <strong>aistudio.google.com/apikey</strong> - just a Google account, no credit card.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Which model writes summaries and questions. -->
+                <div class="settings-row">
+                    <div class="ms-grow">
+                        <div class="settings-row__title">Model</div>
+                        <div class="settings-hint settings-hint--inline" id="ai-model-hint">Fast, and works with a free key.</div>
+                    </div>
+                    <select id="ai-model-select" class="input-field ai-model-select">
+                        <option value="gemini-3.8-flash">Gemini 3.8 Flash (recommended)</option>
+                        <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (needs billing)</option>
+                    </select>
                 </div>
             </div>
 
@@ -936,75 +936,76 @@
                 <div class="blocked-apps-label">Currently blocked</div>
                 <div id="blocked-apps-list" class="blocked-apps-list"></div>
             </div>
-            
+
+            <h3 class="settings-group-title">Help &amp; feedback</h3>
             <div class="card settings-card">
-                <h3 class="settings-title">Profile</h3>
-                <div class="settings-row profile-row">
-                    <div class="profile-pic-large" id="settings-profile-pic">?</div>
-                    <div class="profile-details">
-                        <div class="profile-name-large" id="settings-profile-name">Guest</div>
-                        <div class="profile-meta" id="settings-profile-meta">Student</div>
-                    </div>
-                    <button id="settings-edit-btn" class="btn-secondary edit-btn">Edit Profile</button>
-                </div>
-                <!-- 30/9: shown only while the email isn't confirmed (and the
-                     server can send email) - see loadProfile(). -->
-                <div class="settings-row" id="email-verify-row" hidden>
-                    <div>
-                        <div class="settings-row__title">Confirm your email</div>
-                        <div class="settings-hint settings-hint--inline">We sent a link to your email when you signed up. Confirming it lets you reset your password if you forget it.</div>
-                    </div>
-                    <button id="email-resend-btn" class="btn-secondary">Send it again</button>
-                </div>
                 <div class="settings-row">
                     <div>
-                        <div class="settings-row__title">Log out</div>
-                        <div class="settings-hint settings-hint--inline">Ends your session on this device. Your data stays on the server.</div>
+                        <div class="settings-row__title">Getting started guide</div>
+                        <div class="settings-hint settings-hint--inline">Show the step-by-step guide on the Home screen again.</div>
                     </div>
-                    <button id="auth-logout-btn" class="btn-secondary">Log out</button>
+                    <button id="settings-show-onboarding-btn" class="btn-secondary btn-sm">Show guide</button>
                 </div>
-                <!-- 30/9: changing the password also logs out every other device
-                     (a lost laptop, a shared computer, a stolen session). -->
+                <div class="settings-row desktop-only">
+                    <div>
+                        <div class="settings-row__title">Report a problem</div>
+                        <div class="settings-hint settings-hint--inline">Something not working? Copy the error log and send it to us.</div>
+                    </div>
+                    <button id="settings-copy-log-btn" class="btn-secondary btn-sm">
+                        <span data-icon="file" data-icon-size="16"></span> Copy error log
+                    </button>
+                </div>
+                <div class="settings-row settings-row--stacked web-only">
+                    <div>
+                        <div class="settings-row__title">Send feedback</div>
+                        <div class="settings-hint settings-hint--inline">Something not working, or an idea? Write it here - it goes straight to the developer.</div>
+                    </div>
+                    <textarea id="feedback-text" class="input-field" rows="3" maxlength="4000" dir="auto" placeholder="What happened, or what would make this better?"></textarea>
+                    <button id="feedback-send-btn" class="btn-secondary btn-sm">Send</button>
+                </div>
+                <!-- Keyboard shortcuts: shortcuts nobody can discover may as
+                     well not exist - listed here, folded so they don't crowd. -->
+                <details class="settings-details shortcuts-card">
+                    <summary>Keyboard shortcuts</summary>
+                <div class="shortcut-list">
+                        <div class="shortcut-row">
+                            <span class="shortcut-desc">Search tasks</span>
+                            <span class="shortcut-keys"><kbd class="kbd">Ctrl</kbd><kbd class="kbd">K</kbd></span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span class="shortcut-desc">New task</span>
+                            <span class="shortcut-keys"><kbd class="kbd">N</kbd></span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span class="shortcut-desc">Save from a text field</span>
+                            <span class="shortcut-keys"><kbd class="kbd">Ctrl</kbd><kbd class="kbd">Enter</kbd></span>
+                        </div>
+                        <div class="shortcut-row">
+                            <span class="shortcut-desc">Close dialog / clear selection</span>
+                            <span class="shortcut-keys"><kbd class="kbd">Esc</kbd></span>
+                        </div>
+                    </div>
+                    <p class="settings-hint settings-hint--footnote">On macOS use <kbd class="kbd">Cmd</kbd> instead of <kbd class="kbd">Ctrl</kbd>. Shortcuts work with any keyboard layout, including Hebrew, and are ignored while you're typing.</p>
+                </details>
+            </div>
+
+            <!-- Last, on their own: the two actions that can't be undone. -->
+            <h3 class="settings-group-title settings-group-title--danger">Delete data</h3>
+            <div class="card settings-card settings-card--danger">
                 <div class="settings-row">
                     <div>
-                        <div class="settings-row__title">Change password</div>
-                        <div class="settings-hint settings-hint--inline">Also logs you out on every other device.</div>
+                        <div class="settings-row__title">Reset all data</div>
+                        <div class="settings-hint settings-hint--inline">Deletes all your tasks, calendar items, files and questions - for starting a new semester. Can't be undone.</div>
                     </div>
-                    <button id="auth-change-password-btn" class="btn-secondary">Change password</button>
+                    <button id="settings-hard-reset-btn" class="btn-danger btn-sm">Reset all data</button>
                 </div>
                 <div class="settings-row">
                     <div>
                         <div class="settings-row__title">Delete account</div>
                         <div class="settings-hint settings-hint--inline">Deletes your account and everything in it - tasks, calendar, files, questions. This can't be undone.</div>
                     </div>
-                    <button id="auth-delete-account-btn" class="btn-danger">Delete account</button>
+                    <button id="auth-delete-account-btn" class="btn-danger btn-sm">Delete account</button>
                 </div>
-            </div>
-
-            <!-- Keyboard shortcuts reference. Shortcuts nobody can discover
-                 may as well not exist, so they're listed here rather than
-                 left to be found by accident. -->
-            <div class="card settings-card shortcuts-card">
-                <h3 class="settings-title">Keyboard shortcuts</h3>
-                <div class="shortcut-list">
-                    <div class="shortcut-row">
-                        <span class="shortcut-desc">Search tasks</span>
-                        <span class="shortcut-keys"><kbd class="kbd">Ctrl</kbd><kbd class="kbd">K</kbd></span>
-                    </div>
-                    <div class="shortcut-row">
-                        <span class="shortcut-desc">New task</span>
-                        <span class="shortcut-keys"><kbd class="kbd">N</kbd></span>
-                    </div>
-                    <div class="shortcut-row">
-                        <span class="shortcut-desc">Save from a text field</span>
-                        <span class="shortcut-keys"><kbd class="kbd">Ctrl</kbd><kbd class="kbd">Enter</kbd></span>
-                    </div>
-                    <div class="shortcut-row">
-                        <span class="shortcut-desc">Close dialog / clear selection</span>
-                        <span class="shortcut-keys"><kbd class="kbd">Esc</kbd></span>
-                    </div>
-                </div>
-                <p class="settings-hint settings-hint--footnote">On macOS use <kbd class="kbd">Cmd</kbd> instead of <kbd class="kbd">Ctrl</kbd>. Shortcuts work with any keyboard layout, including Hebrew, and are ignored while you're typing.</p>
             </div>
         </div> 
     </div> 

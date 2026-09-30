@@ -133,7 +133,7 @@
         '.attention-item__title', '.cat-row__name', '.readiness-row__name', '.study-course__name', '.study-file__name',
         '.study-exam-row__course', '.file-name', '.folder-name', '.syllabus-row__title', '.upload-row__name',
         '.blocked-app__name', '.manage-item__q', '.review-item__q', '.review-item__a', '.summary-surewrong__list',
-        '#sidebar-profile-name', '#sidebar-profile-degree', '#home-greeting-name', '#settings-profile-name', '#settings-profile-meta',
+        '#sidebar-profile-name', '#sidebar-profile-degree', '#home-greeting-name', '#settings-profile-name', '#settings-profile-meta', '#settings-profile-email',
         '#home-next-title', '#sidebar-next-title', '.sum-toolbar__name', '.sb-course__name'
     ].join(', ');
     // Placeholders the app itself puts in those spots before real content

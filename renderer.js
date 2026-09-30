@@ -3493,6 +3493,8 @@ async function loadProfile() {
     if (settingsName) settingsName.innerText = name;
     if (settingsMeta) settingsMeta.innerText = profile.degree || t('Student');
     if (settingsPic) settingsPic.innerText = name.charAt(0).toUpperCase();
+    const settingsEmail = document.getElementById('settings-profile-email');
+    if (settingsEmail) settingsEmail.textContent = profile.email || '';
 
     // Email not confirmed yet (30/9): one quiet row in Settings, only when
     // the server can send email at all.
