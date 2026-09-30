@@ -71,7 +71,7 @@
         'Up Next Today': 'הבא בתור היום', 'Loading data...': 'טוען נתונים…', 'Please wait': 'רגע…',
         'See my week': 'לשבוע שלי', 'Start Focus Mode': 'הפעלת מצב ריכוז', 'This week': 'השבוע',
         'Open Tasks': 'משימות פתוחות', 'Upcoming Exams': 'מבחנים קרובים', 'Events This Week': 'אירועים השבוע', 'Classes This Week': 'שיעורים השבוע',
-        'To Planner >': 'ללוח השבועי ←', "Today's Timeline": 'היום שלי', 'Open Planner >': 'לפתיחת הלוח השבועי ←', 'Open Planner': 'לפתיחת הלוח השבועי',
+        'To Planner >': 'ללוח השבועי ←', "Today's Timeline": 'היום שלי', 'Open Planner >': 'לפתיחת הלוח השבועי ←', 'Open Planner': 'לפתיחת הלוח השבועי', 'To Planner': 'ללוח השבועי', 'How this screen works': 'איך המסך הזה עובד', 'Next exam': 'המבחן הבא',
         'Nothing scheduled': 'אין כלום בלוח', 'No classes or exams on your calendar today.': 'אין היום שיעורים או מבחנים בלוח.',
         'Nothing scheduled today': 'אין כלום בלוח היום', 'Nothing on your calendar today.': 'אין היום כלום בלוח.',
         'All done for today': 'סיימת להיום', "Today's classes and events are over.": 'השיעורים והאירועים של היום הסתיימו.',
@@ -197,7 +197,8 @@
         'Answered so far': 'תשובות עד עכשיו', 'since you started': 'מאז שהתחלת', 'Save': 'שמירה', 'No exam': 'אין מבחן',
         "Don't ask about this course again": 'לא לשאול שוב על הקורס הזה',
         'Session in progress': 'יש תרגול שלא הסתיים', 'Continue': 'להמשיך', 'Start fresh': 'להתחיל מחדש',
-        'Smart practice': 'תרגול חכם',
+        'Smart practice': 'תרגול חכם', 'ready to practice': 'מוכנות לתרגול',
+        "Picked for you from all your courses - what you're about to forget, and what's closest to an exam.": 'נבחר בשבילך מכל הקורסים - מה שעומד להישכח, ומה שהכי קרוב למבחן.',
         "The app picks for you, from all your courses: questions you're about to forget come back first, the course with the nearest exam comes first, and new questions are added a few a day so it never piles up.": 'האפליקציה בוחרת בשבילך, מכל הקורסים: שאלות שעומדות להישכח חוזרות קודם, הקורס עם המבחן הקרוב ביותר קודם, ושאלות חדשות נוספות כמה ביום כדי שלא יצטברו.',
         'Start smart practice': 'להתחיל תרגול חכם', 'Practice one course': 'תרגול של קורס אחד',
         'Pick a course - or one file inside it - to practice only that. "Ready now" is what\'s due today; you can always practice the rest too.': 'בוחרים קורס - או קובץ אחד בתוכו - כדי לתרגל רק אותו. "מוכנות עכשיו" הן השאלות שהגיע זמנן היום; תמיד אפשר לתרגל גם את השאר.',
@@ -258,6 +259,8 @@
         'How to check': 'איך לבדוק', 'No stored answer': 'אין תשובה שמורה', 'The check says:': 'לפי הבדיקה:',
         'Marked as "didn\'t know" - it comes back tomorrow.': 'סומן "לא ידעתי" - השאלה חוזרת מחר.',
         'Could not save review': 'לא הצלחתי לשמור את התשובה', 'You were sure about that one. It will come back soon.': 'בשאלה הזאת סימנת "בוודאות". היא תחזור בקרוב.',
+        'What you were sure about and got wrong comes back first. You can also leave the box empty and mark yourself.': 'מה שסימנת עליו "בוודאות" וטעית - חוזר ראשון. אפשר גם להשאיר את התיבה ריקה ולסמן לבד.',
+        'You were sure about this - so it comes back soon.': 'סימנת כאן "בוודאות" - אז השאלה תחזור בקרוב.',
         'Sure but wrong': 'ודאות שגויה', 'Last time you were sure about this - and got it wrong.': 'בפעם הקודמת סימנת כאן "בוודאות" - וטעית.',
         'Session complete': 'התרגול הסתיים', 'Reviewed': 'תורגלו', 'Knew it': 'ידעת', 'Your confidence matched your results this session.': 'הביטחון שלך התאים לתוצאות בתרגול הזה.',
         'You were sure about these - and got them wrong. They come back first next time:': 'באלה סימנת "בוודאות" - וטעית. הן יחזרו ראשונות בפעם הבאה:',
@@ -472,6 +475,10 @@
     };
 
     const html = {
+        '<strong>Smart practice</strong> picks for you from all your courses: questions you\'re about to forget come first, then the course with the nearest exam, and new questions are added a few a day.':
+            '<strong>תרגול חכם</strong> בוחר בשבילך מכל הקורסים: קודם שאלות שעומדות להישכח, אחר כך הקורס עם המבחן הקרוב, ושאלות חדשות נוספות כמה ביום.',
+        '<strong>Make questions</strong> - the AI writes practice questions from a lecture or notes. <strong>My questions</strong> - see, edit or delete the ones you have.':
+            '<strong>יצירת שאלות</strong> - ה-AI כותב שאלות תרגול מהרצאה או מסיכום. <strong>השאלות שלי</strong> - לראות, לערוך או למחוק את השאלות שיש.',
         'By creating an account you agree to the <a href="#" data-site-page="/terms">terms of use</a> and the <a href="#" data-site-page="/privacy">privacy policy</a>.':
             'יצירת חשבון היא הסכמה ל<a href="#" data-site-page="/terms">תנאי השימוש</a> ול<a href="#" data-site-page="/privacy">מדיניות הפרטיות</a>.',
         '<strong>Add to calendar</strong> - write it the way you\'d say it, e.g. <bdi dir="rtl">"שיעור סטטיסטיקה כל יום שני ב-10"</bdi> or <bdi dir="rtl">"מבחן ב-12.2 ב-9"</bdi>.':
@@ -545,6 +552,9 @@
         [/^1 open task$/, 'משימה פתוחה אחת'],
         [/^(\d+) open tasks$/, '$1 משימות פתוחות'],
         [/^(\d+) questions ready to practice$/, '$1 שאלות מוכנות לתרגול'],
+        [/^Today at (\d\d?:\d\d)$/, 'היום ב-$1'],
+        [/^(\d\d?:\d\d) today$/, 'היום ב-$1'],
+        [/^In (\d+) days$/, (m, x) => (x === '2' ? 'בעוד יומיים' : `בעוד ${x} ימים`)],
         [/^(.+) starts at (\d\d?:\d\d)$/, '$1 מתחיל ב-$2'],
         // Study home
         [/^Start smart practice · (\d+) ready$/, (m, x) => `להתחיל תרגול חכם · ${n(x, 'אחת מוכנה', '# מוכנות')}`],
