@@ -136,18 +136,26 @@
         '#sidebar-profile-name', '#sidebar-profile-degree', '#home-greeting-name', '#settings-profile-name', '#settings-profile-meta',
         '#home-next-title', '#sidebar-next-title', '.sum-toolbar__name'
     ].join(', ');
-    function skipped(el) {
+    // Placeholders the app itself puts in those spots before real content
+    // arrives (or when there's none) - always translated.
+    const ALWAYS_UI = new Set(['Loading…', 'Loading...', 'Loading data...', 'Please wait', 'Guest', 'Student', 'Uncategorized',
+        'No course', 'Summary', 'No answer passage — this will be a practice prompt.']);
+    function hardSkipped(el) {
         for (let e = el; e && e.nodeType === 1; e = e.parentNode) {
             if (SKIP_TAGS.has(e.tagName)) return true;
             if (e.getAttribute('translate') === 'no') return true;
         }
-        return !!(el && el.nodeType === 1 && el.closest && el.closest(USER_CONTENT));
+        return false;
+    }
+    function skipped(el) {
+        return hardSkipped(el) || !!(el && el.nodeType === 1 && el.closest && el.closest(USER_CONTENT));
     }
 
     function translateText(node) {
         const v = node.nodeValue;
         if (!v || !/[A-Za-z]/.test(v)) return;
-        if (!node.parentNode || skipped(node.parentNode)) return;
+        if (!node.parentNode) return;
+        if (skipped(node.parentNode) && !(ALWAYS_UI.has(norm(v)) && !hardSkipped(node.parentNode))) return;
         const tr = lookup(v);
         if (tr == null) return;
         // Keep the spaces around it (inline text next to icons, "Hide · ").
@@ -182,7 +190,7 @@
         if (lang !== 'he' || !dict || !scope) return;
         if (scope.nodeType === 3) { translateText(scope); return; }
         if (scope.nodeType !== 1 && scope.nodeType !== 9 && scope.nodeType !== 11) return;
-        if (scope.nodeType === 1 && skipped(scope)) return;
+        if (scope.nodeType === 1 && hardSkipped(scope)) return;   // user areas: walked, text decides (ALWAYS_UI)
         translateHtmlBlocks(scope);
         const walker = document.createTreeWalker(scope, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
         let n = walker.currentNode;
@@ -195,7 +203,7 @@
                     if (n.tagName === 'TEXTAREA' && !skipped(n.parentNode)) translateAttrs(n);
                     n = nextSkippingChildren(walker); continue;
                 }
-                translateAttrs(n);
+                if (!skipped(n)) translateAttrs(n);   // a user area's attributes (a file name as title) stay
             }
             n = walker.nextNode();
         }

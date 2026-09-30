@@ -1155,9 +1155,9 @@ ipcMain.handle('add-smart-task', async (event, freeText, category = '', options 
         // worst case the urgency briefly reads as one level calmer than it
         // should, never scarier.
         const task = {
-            title: cleanTitle,
+            title: String(cleanTitle || '').slice(0, 300),   // the server's limit (30/9)
             date: targetDate,
-            category: category || '',
+            category: String(category || '').slice(0, 100),
             urgency: "Normal",
             estimatedMinutes: durationMinutes || undefined
         };
@@ -1791,7 +1791,9 @@ ipcMain.handle('read-upload-file', async (event, filePath) => {
     try {
         const ext = path.extname(filePath).toLowerCase();
         const content = ext === '.pdf' ? await readPdf(filePath) : fs.readFileSync(filePath, 'utf-8');
-        return { fileName: path.basename(filePath), fileContent: content, filePath };
+        // Same cap as the server keeps (FileItem.content, 1.5M chars) - a
+        // bigger text used to be refused whole (30/9).
+        return { fileName: path.basename(filePath), fileContent: String(content || '').slice(0, 1500000), filePath };
     } catch (err) {
         console.error('❌ Failed to read file:', filePath, err.message);
         return { error: err.message };
@@ -2236,7 +2238,10 @@ ipcMain.handle('update-study-item', async (event, id, updates) => {
 });
 
 ipcMain.handle('get-study-items', async (event, opts = {}) => {
-    try { return await api.getStudyItems(opts); } catch (err) { console.error('get-study-items failed:', err.message); return []; }
+    try { return await api.getStudyItems(opts); } catch (err) {
+        console.error('get-study-items failed:', err.message);
+        return opts && opts.strict ? { error: err.message } : [];
+    }
 });
 
 ipcMain.handle('delete-all-study-items', async () => {

@@ -388,6 +388,12 @@
         'Every other device was logged out.': 'כל שאר המכשירים נותקו.', 'Password changed': 'הסיסמה שונתה', 'Password not changed': 'הסיסמה לא שונתה',
         'Enter your current password and a new one.': 'צריך את הסיסמה הנוכחית ואת החדשה.',
 
+        'Uploaded as text only (storage is full)': 'הועלה כטקסט בלבד (האחסון מלא)',
+        "Couldn't load your questions right now. Your paused session is kept - try again in a moment.": 'לא הצלחתי לטעון את השאלות כרגע. התרגול שעצרת שמור - אפשר לנסות שוב עוד רגע.',
+        '{n} of {total} study blocks could not be saved.': '{n} מתוך {total} זמני הלימוד לא נשמרו.',
+
+        'No answer passage — this will be a practice prompt.': 'אין קטע תשובה - זו תהיה שאלת תרגול.',
+
         // ---- tooltips ----
         'Go to related content': 'למקום הקשור', 'Delete folder': 'מחיקת תיקייה', 'Delete file': 'מחיקת קובץ', 'Delete question': 'מחיקת שאלה',
         'Reads a syllabus or assignment sheet: exams go to the Planner, submissions to Tasks': 'קורא סילבוס או דף עבודה: מבחנים נכנסים ללוח השבועי, הגשות למשימות',

@@ -2424,7 +2424,8 @@ async function runUploadBatch() {
         uploaded++;
         uploadedNow.push({ name: read.fileName, content: read.fileContent || '' });
         alreadyThere.add(f.name);
-        setUploadRowStatus(i, 'done', 'Uploaded');
+        // Web, storage full: the text was saved but not the PDF itself (30/9).
+        setUploadRowStatus(i, 'done', read.warning ? t('Uploaded as text only (storage is full)') : 'Uploaded');
     }
 
     batch.running = false;
@@ -3747,6 +3748,7 @@ if (generateWeeklyAiBtn) {
                     ? false
                     : await confirmDialog("Sync to Google Calendar?", "The new study blocks will also be added to your Google Calendar.", { confirmText: "Sync", cancelText: "Skip" });
                 let syncErrors = [];
+                let saveFailures = 0;   // 30/9: failures used to go to the console only
 
                 for (const planEvent of newPlan) {
                     planEvent.type = planEvent.type || 'study';
@@ -3762,14 +3764,16 @@ if (generateWeeklyAiBtn) {
                     }
                     
                     const planRes = await ipcRenderer.invoke('save-event', planEvent);
-                    if (planRes && planRes.error) console.error('Save plan event failed:', planRes.error, planEvent);
+                    if (!planRes || planRes.error) { saveFailures += 1; console.error('Save plan event failed:', planRes && planRes.error, planEvent); }
                 }
                 
                 await loadAndRenderEvents();
                 await loadAndRenderWeeklyBoard();
                 await loadAndRenderHome();
 
-                if (syncToGoogle && syncErrors.length > 0) {
+                if (saveFailures > 0) {
+                    toast.error(t('{n} of {total} study blocks could not be saved.', { n: saveFailures, total: newPlan.length }), t('Could not plan'));
+                } else if (syncToGoogle && syncErrors.length > 0) {
                     toast.error(`${syncErrors.length} out of ${newPlan.length} study blocks failed to sync to Google Calendar.\n\nReason: ${syncErrors[0]}\n\nThe blocks were still saved in MindSync itself.`);
                 } else {
                     toast.success(`Added ${newPlan.length} blocks to your calendar${previousPlan.length ? ', replacing the previous plan' : ''}.`, 'Study plan ready');
@@ -4823,8 +4827,14 @@ async function startStudySession(resume = null, scope = null) {
     if (resume && Array.isArray(resume.ids)) {
         // Re-fetch by id rather than trusting a stored copy: an item may have
         // been edited or deleted since the session was paused.
-        const all = await ipcRenderer.invoke('get-study-items', {});
-        const byId = new Map((all || []).map(i => [i.id, i]));
+        // Strict (30/9): offline used to look like "all deleted" and the
+        // paused session was thrown away.
+        const all = await ipcRenderer.invoke('get-study-items', { strict: true }).catch(e => ({ error: e.message }));
+        if (!Array.isArray(all)) {
+            toast.error(t('Couldn\'t load your questions right now. Your paused session is kept - try again in a moment.'));
+            return;
+        }
+        const byId = new Map(all.map(i => [i.id, i]));
         // Answered part and the rest kept apart (30/9): a question deleted
         // from the answered part used to shift the place by one, skipping one.
         const before = resume.ids.slice(0, resume.index).map(id => byId.get(id)).filter(Boolean);
