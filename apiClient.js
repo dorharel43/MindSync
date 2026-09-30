@@ -207,6 +207,10 @@ module.exports = {
   deleteAllStudyItems: () => request('DELETE', '/study/all/everything'),
   getStudyCategories: () => request('GET', '/study/categories'),
   createStudyItemsBulk: (items) => request('POST', '/study/bulk', { items }),
+  // Mock exams (30/9)
+  getExamQuestions: (course, count) => request('GET', `/study/exam/pick?course=${encodeURIComponent(course)}&count=${encodeURIComponent(count || 15)}`),
+  saveExamRun: (run) => request('POST', '/study/exam/runs', run),
+  getExamRuns: (course) => request('GET', `/study/exam/runs${course ? `?course=${encodeURIComponent(course)}` : ''}`),
   submitStudyReview: (id, payload) => request('POST', `/study/${enc(id)}/review`, payload),
   updateStudyItem: (id, updates) => request('PUT', `/study/${enc(id)}`, updates).then(withIdAlias),
   deleteStudyItem: (id) => request('DELETE', `/study/${enc(id)}`),

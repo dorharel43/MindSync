@@ -2337,6 +2337,17 @@ ipcMain.handle('make-twin-question', async (event, payload = {}) => {
     }
 });
 
+// Mock exams (30/9) - see routes/study.js on the server.
+ipcMain.handle('study-exam-questions', async (event, course, count) => {
+    try { return await api.getExamQuestions(course, count); } catch (err) { return { error: err.message }; }
+});
+ipcMain.handle('study-exam-save', async (event, run) => {
+    try { return await api.saveExamRun(run); } catch (err) { return { error: err.message }; }
+});
+ipcMain.handle('study-exam-runs', async (event, course) => {
+    try { return await api.getExamRuns(course); } catch (err) { return { error: err.message }; }
+});
+
 ipcMain.handle('delete-study-item', async (event, id) => {
     try { return await api.deleteStudyItem(id); } catch (err) { return { error: err.message }; }
 });

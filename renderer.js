@@ -3136,6 +3136,7 @@ function readinessSentence(s) {
         if (status === 'at_risk' && r.reason === 'knowledge') parts.push('Go over the ones you got wrong first.');
         if (status === 'ready' && s.exam) parts.push('Keep it fresh until the exam.');
     }
+    if (s.lastMock) parts.push(`Last mock exam: ${s.lastMock.score} out of 100.`);
     if (!s.exam) parts.push('No exam date yet - add it (Study or Planner) and practice is timed to it.');
     if (r.filesWithoutQuestions) parts.push(r.filesWithoutQuestions === 1
         ? '1 file in this course has no questions yet.'
@@ -3227,7 +3228,18 @@ function renderReadiness(subjects) {
 
         const foot = document.createElement('div');
         foot.className = 'readiness-row__foot';
-        foot.append(text, practice);
+        const buttons = document.createElement('div');
+        buttons.className = 'readiness-row__buttons';
+        // Mock exam (30/9): the evidence behind "how ready am I".
+        if ((r.total || 0) >= 5) {
+            const mock = document.createElement('button');
+            mock.className = 'btn-secondary btn-sm';
+            mock.textContent = t('Mock exam');
+            mock.onclick = () => { document.getElementById('nav-study').click(); setTimeout(() => openExamSetup(s.category, name.textContent, r.total), 60); };
+            buttons.append(mock);
+        }
+        buttons.append(practice);
+        foot.append(text, buttons);
         row.append(head, bar, foot);
         list.append(row);
     });
@@ -4934,7 +4946,21 @@ function renderStudyCourses(subjects, items) {
             };
             actions.append(toggle);
         }
+        // Mock exam (30/9) - once there's enough to make an exam of.
+        if ((s.items || 0) >= 5) {
+            const mock = document.createElement('button');
+            mock.className = 'btn-secondary btn-sm';
+            mock.textContent = t('Mock exam');
+            mock.onclick = () => openExamSetup(s.category, name.textContent, s.items);
+            actions.append(mock);
+        }
         actions.append(practice);
+        if (s.lastMock) {
+            const m = document.createElement('span');
+            m.className = 'study-course__mock';
+            m.textContent = `${t('Last mock exam:')} ${s.lastMock.score} \u2066±${s.lastMock.margin}\u2069`;
+            meta.append(document.createTextNode(' · '), m);
+        }
 
         const main = document.createElement('div');
         main.className = 'study-course__main';
@@ -5225,6 +5251,13 @@ async function startStudySession(resume = null, scope = null) {
             clearSessionProgress();
             return startStudySession();
         }
+    } else if (scope && Array.isArray(scope.ids)) {
+        // Chosen questions (30/9: "Practice what I missed" after a mock exam).
+        const all = await ipcRenderer.invoke('get-study-items', { strict: true }).catch(e => ({ error: e.message }));
+        if (!Array.isArray(all)) { toast.error(t('Couldn\'t load your questions right now. Check the connection and try again.')); return; }
+        const byId = new Map(all.map(i => [i.id, i]));
+        items = scope.ids.map(id => byId.get(id)).filter(Boolean);
+        if (!items.length) { toast.info('There are no questions here yet.'); return; }
     } else {
         const filter = scope ? { category: scope.category, ...(scope.sourceFile !== undefined ? { sourceFile: scope.sourceFile } : {}) } : {};
         items = await ipcRenderer.invoke('get-due-study-items', { limit: 20, strict: true, ...filter }).catch(e => ({ error: e.message }));
@@ -5264,6 +5297,7 @@ async function startStudySession(resume = null, scope = null) {
     studyState.shortAnswers = new Map();  // "I don't know" answers already fetched
 
     clearManageSelection();
+    document.getElementById('study-exam').hidden = true;
     document.getElementById('study-home').hidden = true;
     document.getElementById('study-summary').hidden = true;
     document.getElementById('study-review').hidden = true;
@@ -5280,7 +5314,7 @@ function renderStudyCard() {
     studyState.confidence = null;
     studyState.sureNoteShown = false;
     studyState.answerId = null;
-    document.querySelectorAll('.confidence-btn.is-picked').forEach(b => b.classList.remove('is-picked'));
+    document.querySelectorAll('#study-confidence-step .confidence-btn.is-picked').forEach(b => b.classList.remove('is-picked'));
     studyState.startedAt = Date.now();
     studyState.aiOutcome = null;
     studyState.aiChecked = null;
@@ -5290,7 +5324,7 @@ function renderStudyCard() {
         typed.placeholder = TYPE_PLACEHOLDERS[item.mode] || TYPE_PLACEHOLDERS.recall;
         typed.disabled = false;
     }
-    document.querySelectorAll('.confidence-btn, #study-dont-know-btn').forEach(b => { b.disabled = false; });
+    document.querySelectorAll('#study-confidence-step .confidence-btn, #study-dont-know-btn').forEach(b => { b.disabled = false; });
 
     const total = studyState.queue.length;
     document.getElementById('study-position').textContent = `${studyState.index + 1} / ${total}`;
@@ -5331,12 +5365,12 @@ const CONFIDENCE_HINT_TIMES = 5;
 function confidenceHintKey() { return `mindsync.confidenceHintSeen.${currentUserId || 'anon'}`; }
 
 // Step 1 -> 2: confidence is locked in before anything is revealed.
-document.querySelectorAll('.confidence-btn').forEach(btn => {
+document.querySelectorAll('#study-confidence-step .confidence-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
         const seen = Number(localStorage.getItem(confidenceHintKey()) || 0);
         if (seen < CONFIDENCE_HINT_TIMES) localStorage.setItem(confidenceHintKey(), String(seen + 1));
         studyState.confidence = btn.dataset.confidence;
-        document.querySelectorAll('.confidence-btn').forEach(b => b.classList.toggle('is-picked', b === btn));
+        document.querySelectorAll('#study-confidence-step .confidence-btn').forEach(b => b.classList.toggle('is-picked', b === btn));
         const item = studyState.queue[studyState.index];
         const typed = document.getElementById('study-typed-answer');
         const text = typed ? typed.value.trim() : '';
@@ -5346,7 +5380,7 @@ document.querySelectorAll('.confidence-btn').forEach(btn => {
         if (studyState.checkOff) { revealAnswer({ failed: studyState.checkOff, typed: text }); return; }
 
         // Typed: the AI checks it. The buttons stay put (no jump), just busy.
-        const buttons = document.querySelectorAll('.confidence-btn, #study-dont-know-btn');
+        const buttons = document.querySelectorAll('#study-confidence-step .confidence-btn, #study-dont-know-btn');
         buttons.forEach(b => { b.disabled = true; });
         typed.disabled = true;
         const prompt = document.getElementById('study-confidence-prompt');
@@ -5636,6 +5670,282 @@ async function submitReview(outcome) {
 
     if (studyState.index >= studyState.queue.length) endStudySession();
     else renderStudyCard();
+}
+
+
+// ==========================================
+// Mock exams (30/9)
+// ==========================================
+// One course under exam conditions: typed answers, a clock, nothing checked
+// or shown until the end - then every answer is checked (the same AI check as
+// practice), and one score comes back with its margin. The latest score is
+// shown with the course as "Last mock exam" - evidence, not a feeling. Every
+// checked answer also counts as practice on the server (routes/study.js).
+const examState = { course: '', label: '', count: 15, timed: true, items: [], answers: [], index: 0, startedAt: 0, limitSec: 0, timer: null, running: false };
+const PAST_EXAM_FILE = /מבחן|בחינה|מועד|בוחן|exam|midterm|final|quiz/i;
+const EXAM_SECONDS_PER_QUESTION = 120;
+
+function showExamPart(part) {
+    ['exam-setup', 'exam-run', 'exam-checking', 'exam-result'].forEach(id => { document.getElementById(id).hidden = id !== part; });
+}
+
+function openExamSetup(course, label, total) {
+    examState.course = course;
+    examState.label = label || course;
+    ['study-home', 'study-session', 'study-summary', 'study-review', 'study-manage'].forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
+    document.getElementById('study-exam').hidden = false;
+    document.getElementById('exam-course-name').textContent = examState.label;
+    // Question counts that make sense for this course: 10 always, 15 and 25
+    // only when there are that many. The default is the largest up to 15.
+    const n = total || 0;
+    let chosen = null;
+    document.querySelectorAll('#exam-count .filter-chip').forEach(b => {
+        const c = Number(b.dataset.count);
+        b.hidden = c > 10 && c > n;
+        if (!b.hidden && c <= 15) chosen = b;
+    });
+    document.querySelectorAll('#exam-count .filter-chip').forEach(b => b.classList.toggle('active', b === chosen));
+    const past = (studyItemsCache || []).some(i => studyCourseOf(i) === course && PAST_EXAM_FILE.test(i.sourceFile || ''));
+    document.getElementById('exam-past-note').hidden = !past;
+    showExamPart('exam-setup');
+    window.scrollTo(0, 0);
+}
+
+document.querySelectorAll('#exam-count .filter-chip, #exam-time .filter-chip').forEach(b => {
+    b.addEventListener('click', () => {
+        b.parentElement.querySelectorAll('.filter-chip').forEach(x => x.classList.toggle('active', x === b));
+    });
+});
+
+function leaveExam() {
+    clearInterval(examState.timer);
+    examState.running = false;
+    document.getElementById('study-exam').hidden = true;
+    document.getElementById('study-home').hidden = false;
+    loadStudyHome();
+}
+document.getElementById('exam-cancel-btn').onclick = leaveExam;
+document.getElementById('exam-done-btn').onclick = leaveExam;
+
+document.getElementById('exam-start-btn').onclick = async () => {
+    const btn = document.getElementById('exam-start-btn');
+    const active = document.querySelector('#exam-count .filter-chip.active');
+    examState.count = active ? Number(active.dataset.count) : 15;
+    examState.timed = (document.querySelector('#exam-time .filter-chip.active') || {}).dataset.timed !== '0';
+    btn.disabled = true;
+    const qs = await ipcRenderer.invoke('study-exam-questions', examState.course, examState.count).catch(e => ({ error: e.message }));
+    btn.disabled = false;
+    if (!Array.isArray(qs)) { toast.error((qs && qs.error) || t('Couldn\'t load your questions right now. Check the connection and try again.')); return; }
+    if (qs.length < 3) { toast.info(t('A mock exam needs at least 3 questions in this course.')); return; }
+    examState.items = qs;
+    examState.answers = qs.map(() => ({ typed: '', confidence: 'none', done: false }));
+    examState.index = 0;
+    examState.limitSec = examState.timed ? qs.length * EXAM_SECONDS_PER_QUESTION : 0;
+    examState.startedAt = Date.now();
+    examState.running = true;
+    clearInterval(examState.timer);
+    examState.timer = setInterval(tickExam, 1000);
+    tickExam();
+    showExamPart('exam-run');
+    renderExamCard();
+};
+
+function tickExam() {
+    const el = document.getElementById('exam-timer');
+    if (!examState.running) return;
+    const used = Math.floor((Date.now() - examState.startedAt) / 1000);
+    const fmt = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+    if (!examState.limitSec) { el.textContent = fmt(used); el.classList.remove('is-low'); return; }
+    const left = Math.max(0, examState.limitSec - used);
+    el.textContent = `${t('Time left')} ${fmt(left)}`;
+    el.classList.toggle('is-low', left <= 60);
+    if (left === 0) finishExam(true);
+}
+
+function renderExamCard() {
+    const i = examState.index;
+    const item = examState.items[i];
+    const n = examState.items.length;
+    document.getElementById('exam-position').textContent = `${i + 1} / ${n}`;
+    document.getElementById('exam-progress-fill').style.width = `${(i / n) * 100}%`;
+    document.getElementById('exam-course-badge').textContent = examState.label;
+    document.getElementById('exam-past-badge').hidden = !item.fromPastExam;
+    document.getElementById('exam-question').textContent = item.question;
+    const box = document.getElementById('exam-answer');
+    box.value = examState.answers[i].typed;
+    box.placeholder = t(item.mode === 'practice' ? 'Your solution - the steps and the result' : 'Your answer');
+    box.focus();
+}
+
+function storeMockAnswer(confidence) {
+    const a = examState.answers[examState.index];
+    a.typed = document.getElementById('exam-answer').value.trim();
+    a.confidence = a.typed ? confidence : 'none';
+    a.done = true;
+}
+document.querySelectorAll('.exam-conf').forEach(b => {
+    b.addEventListener('click', () => {
+        if (!examState.running) return;
+        if (!document.getElementById('exam-answer').value.trim()) {
+            toast.info(t('Write an answer first - or press "Skip" if you don\'t know it.'));
+            return;
+        }
+        storeMockAnswer(b.dataset.confidence);
+        nextExamCard();
+    });
+});
+document.getElementById('exam-skip-btn').onclick = () => {
+    if (!examState.running) return;
+    document.getElementById('exam-answer').value = '';
+    storeMockAnswer('none');
+    nextExamCard();
+};
+function nextExamCard() {
+    if (examState.index + 1 >= examState.items.length) return finishExam(false);
+    examState.index += 1;
+    renderExamCard();
+}
+document.getElementById('exam-finish-btn').onclick = async () => {
+    const left = examState.answers.filter(a => !a.done).length;
+    if (left > 0) {
+        const ok = await confirmDialog(t('Finish the exam now?'),
+            t('{n} questions have no answer yet - they count as wrong.', { n: left }),
+            { confirmText: t('Finish and check') });
+        if (!ok) return;
+    }
+    finishExam(false);
+};
+
+async function finishExam(timeUp) {
+    if (!examState.running) return;
+    examState.running = false;
+    clearInterval(examState.timer);
+    // What's typed on the current card counts, even without a button press.
+    const cur = examState.answers[examState.index];
+    if (cur && !cur.done) { cur.typed = document.getElementById('exam-answer').value.trim(); cur.confidence = cur.typed ? 'think_so' : 'none'; }
+    const usedSec = Math.round((Date.now() - examState.startedAt) / 1000);
+    if (timeUp) toast.info(t('Time is up - checking what you wrote.'));
+    showExamPart('exam-checking');
+    const text = document.getElementById('exam-checking-text');
+
+    // Check, three at a time. A used-up AI allowance stops the checking: the
+    // rest is "not checked" (left out of the score), and the result says so.
+    const results = examState.items.map(() => null);
+    let next = 0, done = 0, stopReason = null;
+    const toCheck = examState.answers.filter(a => a.typed).length;
+    const worker = async () => {
+        while (next < examState.items.length) {
+            const i = next++;
+            const item = examState.items[i];
+            const a = examState.answers[i];
+            if (!a.typed) { results[i] = { verdict: 'blank' }; continue; }
+            if (stopReason) { results[i] = { verdict: 'unchecked' }; continue; }
+            const res = await withTimeout(ipcRenderer.invoke('grade-study-answer', {
+                question: item.question, expected: item.answer || '', mode: item.mode, userAnswer: a.typed, solutionSource: item.solutionSource || 'document'
+            }).catch(e => ({ error: e.message })), CHECK_TIMEOUT_MS);
+            if (res && res.verdict) results[i] = res;
+            else {
+                results[i] = { verdict: 'unchecked', error: res && res.error };
+                if (res && res.error && isAiLimit(res.error)) stopReason = res.error;
+            }
+            done += 1;
+            text.textContent = t('Checking your answers… {done} of {total}', { done, total: toCheck });
+        }
+    };
+    text.textContent = t('Checking your answers… {done} of {total}', { done: 0, total: toCheck });
+    await Promise.all([worker(), worker(), worker()]);
+
+    const answers = examState.items.map((item, i) => ({ itemId: item.id, confidence: examState.answers[i].confidence, verdict: results[i].verdict }));
+    const saved = await ipcRenderer.invoke('study-exam-save', {
+        course: examState.course, startedAt: new Date(examState.startedAt).toISOString(), limitSec: examState.limitSec, usedSec, answers
+    }).catch(e => ({ error: e.message }));
+    if (saved && saved.error) toast.error(t('The result couldn\'t be saved - it is shown here, but won\'t be in your history.'));
+    renderExamResult(saved && !saved.error ? saved : null, results, stopReason);
+}
+
+function renderExamResult(run, results, stopReason) {
+    const items = examState.items;
+    const answers = examState.answers;
+    // Same arithmetic as the server (routes/study.js examScore) - used when saving failed.
+    const inScore = results.filter(r => r.verdict !== 'unchecked');
+    const points = inScore.reduce((n, r) => n + (r.verdict === 'correct' ? 1 : r.verdict === 'partial' ? 0.5 : 0), 0);
+    const p = inScore.length ? points / inScore.length : 0;
+    const score = run ? run.score : Math.round(p * 100);
+    const margin = run ? run.margin : Math.round(100 * Math.sqrt(Math.max(p * (1 - p), 0.04) / Math.max(1, inScore.length)));
+    document.getElementById('exam-score').textContent = inScore.length ? score : '-';
+    document.getElementById('exam-margin').textContent = inScore.length ? ` ±${margin}` : '';
+    const count = (v) => results.filter(r => r.verdict === v).length;
+    document.getElementById('exam-n-correct').textContent = count('correct');
+    document.getElementById('exam-n-partial').textContent = count('partial');
+    document.getElementById('exam-n-wrong').textContent = count('wrong') + count('blank');
+    const sureWrong = results.filter((r, i) => answers[i].confidence === 'sure' && (r.verdict === 'wrong' || r.verdict === 'partial')).length;
+    document.getElementById('exam-n-surewrong').textContent = sureWrong;
+    const unchecked = count('unchecked');
+    document.getElementById('exam-score-text').textContent = [
+        t('Out of 100, from {n} checked answers. {m} because a short exam is a rough measure - more questions give a tighter number.', { n: inScore.length, m: `\u2066±${margin}\u2069` }),
+        unchecked ? t('{n} answers couldn\'t be checked and are left out.', { n: unchecked }) + (stopReason && isAiLimit(stopReason) ? ` ${stopReason}` : '') : ''
+    ].filter(Boolean).join(' ');
+
+    // By topic: the skill, else the file - weakest first.
+    const topics = new Map();
+    items.forEach((item, i) => {
+        const r = results[i];
+        if (r.verdict === 'unchecked') return;
+        const key = item.skillTag || (item.sourceFile ? fileLabel(item.sourceFile) : t('General'));
+        const tp = topics.get(key) || { n: 0, pts: 0 };
+        tp.n += 1; tp.pts += r.verdict === 'correct' ? 1 : r.verdict === 'partial' ? 0.5 : 0;
+        topics.set(key, tp);
+    });
+    const topicRows = [...topics.entries()].map(([k, v]) => ({ k, n: v.n, pct: Math.round((v.pts / v.n) * 100) })).sort((a, b) => a.pct - b.pct || b.n - a.n);
+    const topicsEl = document.getElementById('exam-topics');
+    topicsEl.innerHTML = '';
+    topicRows.forEach(r => {
+        const row = document.createElement('div');
+        row.className = 'exam-topic';
+        row.innerHTML = `<div class="exam-topic__head"><bdi class="exam-topic__name"></bdi><span class="exam-topic__pct ms-tabular">${r.pct}%</span></div><div class="exam-topic__bar"><div style="width:${r.pct}%"></div></div><div class="exam-topic__n"></div>`;
+        row.querySelector('.exam-topic__name').textContent = r.k;
+        row.querySelector('.exam-topic__n').textContent = r.n === 1 ? t('1 question') : t('{n} questions', { n: r.n });
+        row.classList.toggle('is-weak', r.pct < 50);
+        topicsEl.append(row);
+    });
+
+    const VERDICT_LABELS = { correct: 'Right', partial: 'Half right', wrong: 'Wrong', blank: 'Skipped', unchecked: 'Not checked' };
+    const CONF_LABELS = { sure: 'I\'m sure', think_so: 'I think so', guessing: 'Guessing', none: '' };
+    const list = document.getElementById('exam-answers');
+    list.innerHTML = '';
+    items.forEach((item, i) => {
+        const r = results[i];
+        const a = answers[i];
+        const el = document.createElement('div');
+        el.className = `exam-answer is-${r.verdict}`;
+        el.innerHTML = `
+            <div class="exam-answer__top"><span class="exam-answer__verdict"></span><span class="exam-answer__conf"></span></div>
+            <div class="exam-answer__q" dir="auto" translate="no"></div>
+            <div class="exam-answer__line"><span class="exam-answer__label"></span> <span class="exam-answer__yours" dir="auto" translate="no"></span></div>
+            <div class="exam-answer__feedback" dir="auto" translate="no"></div>
+            <div class="exam-answer__line exam-answer__right"><span class="exam-answer__label"></span> <span class="exam-answer__correct" dir="auto" translate="no"></span></div>`;
+        el.querySelector('.exam-answer__verdict').textContent = t(VERDICT_LABELS[r.verdict]);
+        el.querySelector('.exam-answer__conf').textContent = a.confidence !== 'none' ? `${t('You said:')} ${t(CONF_LABELS[a.confidence])}` : '';
+        el.querySelector('.exam-answer__q').textContent = item.question;
+        el.querySelectorAll('.exam-answer__label')[0].textContent = t('Your answer:');
+        el.querySelector('.exam-answer__yours').textContent = a.typed || '-';
+        el.querySelector('.exam-answer__feedback').textContent = r.feedback || '';
+        el.querySelectorAll('.exam-answer__label')[1].textContent = t('The answer:');
+        const right = r.answer || String(item.answer || '').slice(0, 400);
+        el.querySelector('.exam-answer__correct').textContent = right;
+        el.querySelector('.exam-answer__right').hidden = !right || r.verdict === 'correct';
+        list.append(el);
+    });
+
+    const missed = items.filter((it, i) => ['wrong', 'partial', 'blank'].includes(results[i].verdict)).map(it => it.id);
+    const btn = document.getElementById('exam-practice-missed-btn');
+    btn.hidden = missed.length === 0;
+    btn.onclick = () => {
+        document.getElementById('study-exam').hidden = true;
+        startStudySession(null, { category: examState.course, label: t('Missed in the mock exam'), ids: missed });
+    };
+    showExamPart('exam-result');
+    window.scrollTo(0, 0);
 }
 
 // ---- The mistake loop (30/9) ------------------------------------------------
