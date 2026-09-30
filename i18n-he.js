@@ -409,6 +409,8 @@
         'Too many new accounts from this network. Try again in an hour.': 'נפתחו יותר מדי חשבונות מהרשת הזאת. אפשר לנסות שוב בעוד שעה.',
         'Sign-ups are paused for today. Please try again tomorrow.': 'ההרשמה מושהית להיום. אפשר לנסות שוב מחר.',
         'Password is too long (72 characters at most).': 'הסיסמה ארוכה מדי (עד 72 תווים).',
+        'Please sign up with your regular email address (not a temporary one).': 'צריך להירשם עם כתובת המייל הרגילה שלך (לא כתובת זמנית).',
+        'Too many AI requests from this network today. It resets at midnight.': 'היום נשלחו יותר מדי בקשות AI מהרשת הזאת. זה מתאפס בחצות.',
         'Another AI job of yours is still running - wait for it to finish, then try again.': 'פעולת AI אחרת שלך עדיין רצה - אפשר לנסות שוב כשהיא תסתיים.',
         "The AI has reached today's limit for everyone. It resets at midnight.": 'ה-AI הגיע למכסה היומית של כל המשתמשים. היא מתאפסת בחצות.',
         'This text is too long for the AI. Try a shorter part of the file.': 'הטקסט ארוך מדי בשביל ה-AI. אפשר לנסות חלק קצר יותר מהקובץ.',
@@ -641,6 +643,8 @@
         [/^Could not reach Gemini: (.+)$/, 'לא הצלחתי להגיע ל-Gemini: $1'],
         [/^(.+) The backup model is overloaded right now, so nothing could answer\.$/, '$1 גם מודל הגיבוי עמוס כרגע, אז אף מודל לא יכול היה לענות.'],
         [/^(\d+) out of (\d+) study blocks failed to sync to Google Calendar\. Reason: (.+?) The blocks were still saved in MindSync itself\.$/, '$1 מתוך $2 זמני לימוד לא סונכרנו ל-Google Calendar. הסיבה: $3 הם עדיין נשמרו ב-MindSync.'],
+        [/^Confirm your email to keep using the AI today - until then an account gets (\d+) (file actions|quick checks) a day\. The link is in your inbox; Settings > Account sends it again\.$/,
+            (m, x, what) => `כדי להמשיך להשתמש היום ב-AI צריך לאשר את כתובת המייל - עד אז לחשבון יש ${x} ${what === 'file actions' ? 'פעולות על קבצים' : 'בדיקות קצרות'} ביום. הקישור נמצא בתיבת הדואר; אפשר לשלוח אותו שוב מהגדרות ← חשבון.`],
         // Limits (30/9)
         [/^Too many wrong passwords for this email\. Try again in (\d+) (seconds|minutes)\.$/, (m, n, u) => `יותר מדי סיסמאות שגויות למייל הזה. אפשר לנסות שוב בעוד ${n} ${u === 'minutes' ? 'דקות' : 'שניות'}.`],
         [/^Too many wrong passwords\. Try again in (\d+) (seconds|minutes)\.$/, (m, n, u) => `יותר מדי סיסמאות שגויות. אפשר לנסות שוב בעוד ${n} ${u === 'minutes' ? 'דקות' : 'שניות'}.`],
