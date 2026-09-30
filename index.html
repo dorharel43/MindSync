@@ -113,6 +113,17 @@
             </div>
         </div>
 
+        <!-- My courses (30/9): each course's status and exam countdown; a
+             click shows the facts and a Practice button. Filled by
+             renderSidebarCourses() in renderer.js; scrolls on short windows. -->
+        <div class="sidebar-courses" id="sidebar-courses" hidden>
+            <button type="button" class="sidebar-courses__head" id="sidebar-courses-toggle" aria-expanded="true" aria-controls="sidebar-courses-list">
+                <span>My courses</span>
+                <span class="sidebar-courses__chev" data-icon="chevronDown" data-icon-size="14" aria-hidden="true"></span>
+            </button>
+            <div class="sidebar-courses__list" id="sidebar-courses-list"></div>
+        </div>
+
         <div class="sidebar-spacer"></div>
 
         <div class="sidebar-footer">
@@ -622,13 +633,15 @@
             </div>
 
             <!-- Exam readiness (30/9): one row per course, from the LAST answer
-                 to each question (server routes/study.js readinessOf). Lucky
-                 guesses don't count as knowing. Filled by renderReadiness(). -->
+                 to each question (server routes/study.js readinessOf): what
+                 was practiced, what of it is known, and a status word only
+                 once there are enough answers. Filled by renderReadiness(). -->
             <h3 class="section-title progress-section-title">Exam readiness</h3>
             <div class="card readiness" id="readiness-card">
-                <p class="settings-hint card-help">Where each course stands, by your last answer to each of its questions. A right answer while guessing doesn't count as knowing it.</p>
+                <p class="settings-hint card-help">Where each course stands: how much of it you practiced, and how much of that you know - by your last answer to each question. A right answer while guessing doesn't count, and one you haven't answered in a while needs a refresh.</p>
                 <div class="readiness-legend" id="readiness-legend">
                     <span><i class="rd-dot rd-known"></i>Know it</span>
+                    <span><i class="rd-dot rd-fading"></i>Needs a refresh</span>
                     <span><i class="rd-dot rd-shaky"></i>Shaky</span>
                     <span><i class="rd-dot rd-not"></i>Don't know yet</span>
                     <span><i class="rd-dot rd-unseen"></i>Not practiced</span>

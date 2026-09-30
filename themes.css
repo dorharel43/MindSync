@@ -157,6 +157,17 @@
 [data-theme="slate"] body:not(.dark-mode) .sidebar-highlight__label { color: #8595a8; }
 [data-theme="slate"] body:not(.dark-mode) .sidebar-highlight__title { color: #f1f5f9; }
 [data-theme="slate"] body:not(.dark-mode) .sidebar-highlight__meta { color: #94a3b8; }
+[data-theme="slate"] body:not(.dark-mode) .sidebar-courses__head { color: #8595a8; }
+[data-theme="slate"] body:not(.dark-mode) .sidebar-courses__head:hover { color: #f1f5f9; background: rgba(255, 255, 255, 0.06); }
+[data-theme="slate"] body:not(.dark-mode) .sb-course__row:hover { background: rgba(255, 255, 255, 0.06); }
+[data-theme="slate"] body:not(.dark-mode) .sb-course.is-open { background: rgba(255, 255, 255, 0.05); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
+[data-theme="slate"] body:not(.dark-mode) .sb-course__name { color: #f1f5f9; }
+[data-theme="slate"] body:not(.dark-mode) .sb-course__meta, [data-theme="slate"] body:not(.dark-mode) .sb-courses-empty { color: #8595a8; }
+[data-theme="slate"] body:not(.dark-mode) .sb-course__detail { color: #94a3b8; }
+[data-theme="slate"] body:not(.dark-mode) .sb-course__next { color: #e2e8f0; }
+[data-theme="slate"] body:not(.dark-mode) .sb-course__link { color: #c7d2fe; }
+[data-theme="slate"] body:not(.dark-mode) .sb-courses-more { color: #94a3b8; }
+[data-theme="slate"] body:not(.dark-mode) .sb-dot.rd-status--too_early, [data-theme="slate"] body:not(.dark-mode) .sb-dot.rd-status--not_started { background: #475569; }
 [data-theme="slate"] body:not(.dark-mode) .user-profile { border-top-color: #2b3a4f; }
 [data-theme="slate"] body:not(.dark-mode) .user-profile:hover { background: rgba(255, 255, 255, 0.06); }
 [data-theme="slate"] body:not(.dark-mode) .profile-name { color: #f1f5f9; }
