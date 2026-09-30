@@ -1464,3 +1464,11 @@ html:not(.is-web) .web-only { display: none !important; }
     .account-head__actions .btn-sm { flex: 1; }
     #view-settings .settings-row:not(.settings-row--stacked) { flex-wrap: wrap; }
 }
+
+/* Hebrew (30/9 review): letter-spacing pulls Hebrew letters apart ("מ ת ו ך")
+   - uppercase-style labels are for Latin text only. */
+html[dir="rtl"] body * { letter-spacing: normal !important; }
+/* An empty text box with dir="auto" is left-to-right in Chrome, so its
+   Hebrew placeholder showed backwards; right-to-left until something is
+   typed, then the text decides. */
+html[dir="rtl"] :is(textarea, input)[dir="auto"]:placeholder-shown { direction: rtl; }
