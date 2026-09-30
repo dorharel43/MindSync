@@ -283,6 +283,14 @@
         '1 needs a refresh (answered right, but a while ago).': 'אחת צריכה רענון (נענתה נכון, אבל לפני זמן מה).',
         '1 file in this course has no questions yet.': 'לקובץ אחד בקורס הזה עוד אין שאלות.',
         // Sidebar: My courses (30/9)
+        // Email (30/9)
+        'Forgot password?': 'שכחת את הסיסמה?', 'Confirm your email': 'אישור כתובת המייל', 'Send it again': 'שליחה שוב',
+        'We sent a link to your email when you signed up. Confirming it lets you reset your password if you forget it.': 'בהרשמה נשלח למייל שלך קישור לאישור. אחרי האישור אפשר יהיה לאפס את הסיסמה אם היא תישכח.',
+        'Your email is already confirmed.': 'כתובת המייל כבר מאושרת.', 'Sent. Check your inbox (and the spam folder).': 'נשלח. כדאי לבדוק את תיבת הדואר (וגם את הספאם).',
+        'Confirmation email': 'מייל אישור', "Couldn't send it": 'לא הצלחנו לשלוח',
+        'We already sent a few - check your inbox (and spam). You can ask again in an hour.': 'כבר שלחנו כמה - כדאי לבדוק בתיבת הדואר (וגם בספאם). אפשר לבקש שוב בעוד שעה.',
+        "The email couldn't be sent right now. Please try again later.": 'לא הצלחנו לשלוח את המייל כרגע. אפשר לנסות שוב מאוחר יותר.',
+        "Email isn't set up on this server yet.": 'שליחת מיילים עוד לא הוגדרה בשרת.',
         'My courses': 'הקורסים שלי', 'Details': 'פרטים', 'Show fewer': 'הצג פחות',
         'Your courses show up here once you make practice questions.': 'הקורסים יופיעו כאן אחרי שיוצרים שאלות תרגול.',
         '1 you were sure about was wrong.': 'באחת שסימנת "בוודאות" טעית.',

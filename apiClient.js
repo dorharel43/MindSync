@@ -160,8 +160,9 @@ module.exports = {
 
   // ---- Auth ----
   // register/login skip the auth header - there's no token to send yet.
-  register: (email, password, name, degree) =>
-    request('POST', '/auth/register', { email, password, name, degree }, { skipAuth: true }),
+  // lang: the app's language, for the emails the server sends (30/9).
+  register: (email, password, name, degree, lang) =>
+    request('POST', '/auth/register', { email, password, name, degree, lang }, { skipAuth: true }),
   login: (email, password) =>
     request('POST', '/auth/login', { email, password }, { skipAuth: true }),
   // Replaces the old getProfile/updateProfile - name/degree now live on the
@@ -170,6 +171,9 @@ module.exports = {
   updateMe: (updates) => request('PUT', '/auth/me', updates),
   deleteMe: (password) => request('DELETE', '/auth/me', { password }),
   changePassword: (currentPassword, newPassword) => request('POST', '/auth/change-password', { currentPassword, newPassword }),
+  resendVerification: () => request('POST', '/auth/resend-verification'),
+  // The website's "forgot password" page - the desktop app opens it in the browser.
+  resetPasswordPage: () => `${SERVER_ROOT}/reset-password`,
 
   // ---- Stats: removed with /api/stats (XP/levels/streak dropped server-side) ----
 

@@ -1400,3 +1400,8 @@ html:not(.is-web) .web-only { display: none !important; }
 /* Numbers, times and dates inside Hebrew text keep their own order. */
 [dir="rtl"] .ms-tabular, [dir="rtl"] .kbd { unicode-bidi: isolate; }
 .study-to-progress .link-text { display: inline; margin: 0; padding: 0; text-align: inherit; }
+
+/* "Forgot password?" under the password field (30/9) */
+.auth-forgot { display: inline-block; margin-top: 6px; font-size: var(--text-xs); color: var(--accent-text); text-decoration: none; }
+.auth-forgot:hover { text-decoration: underline; }
+.auth-forgot[hidden] { display: none; }

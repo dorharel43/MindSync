@@ -58,6 +58,16 @@ const authToggleLink = document.getElementById('auth-toggle-link');
 
 let authMode = 'login'; // 'login' | 'register'
 
+// "Forgot password?" (30/9): the reset happens on the website - on the web
+// version in this tab, on desktop in the browser (the emailed link opens
+// there anyway).
+const authForgotLink = document.getElementById('auth-forgot-link');
+if (authForgotLink) authForgotLink.onclick = (e) => {
+    e.preventDefault();
+    if (window.MINDSYNC_WEB) location.href = '/reset-password';
+    else ipcRenderer.invoke('open-reset-password').catch(() => {});
+};
+
 // Letters (any language), spaces, hyphens, apostrophes - covers real names
 // like "דור-אל" or "O'Brian" while rejecting digits and symbols. Used for
 // both the registration form and the Edit Profile modal, client-side; the
@@ -79,6 +89,7 @@ function setAuthMode(mode) {
         authPasswordHint.hidden = false;
         authSubmitBtn.textContent = 'Create account';
         authToggleText.textContent = 'Already have an account?';
+        if (authForgotLink) authForgotLink.hidden = true;
         authToggleLink.textContent = 'Log in';
     } else {
         authTitle.textContent = 'Log in';
@@ -88,6 +99,7 @@ function setAuthMode(mode) {
         authPasswordHint.hidden = true;
         authSubmitBtn.textContent = 'Log in';
         authToggleText.textContent = "Don't have an account?";
+        if (authForgotLink) authForgotLink.hidden = false;
         authToggleLink.textContent = 'Create one';
     }
 }
@@ -156,7 +168,8 @@ if (authForm) {
                 ? await ipcRenderer.invoke('auth-register', {
                     email, password,
                     name: authNameInput.value.trim(),
-                    degree: authDegreeInput.value.trim()
+                    degree: authDegreeInput.value.trim(),
+                    lang: (window.I18N && I18N.lang) || 'en'   // the welcome email's language
                   })
                 : await ipcRenderer.invoke('auth-login', { email, password });
 
@@ -3457,7 +3470,34 @@ async function loadProfile() {
     if (settingsName) settingsName.innerText = name;
     if (settingsMeta) settingsMeta.innerText = profile.degree || t('Student');
     if (settingsPic) settingsPic.innerText = name.charAt(0).toUpperCase();
+
+    // Email not confirmed yet (30/9): one quiet row in Settings, only when
+    // the server can send email at all.
+    const verifyRow = document.getElementById('email-verify-row');
+    if (verifyRow) verifyRow.hidden = !(profile.mailEnabled && profile.emailVerified === false);
+    // The server writes our emails in the app's language - keep it in step.
+    const lang = (window.I18N && I18N.lang) || 'en';
+    if (profile.lang && profile.lang !== lang) ipcRenderer.invoke('save-profile', { lang }).catch(() => {});
 }
+
+const emailResendBtn = document.getElementById('email-resend-btn');
+if (emailResendBtn) emailResendBtn.onclick = async () => {
+    if (emailResendBtn.disabled) return;
+    emailResendBtn.disabled = true;
+    try {
+        const res = await ipcRenderer.invoke('auth-resend-verification').catch(e => ({ error: e.message }));
+        if (res && res.alreadyVerified) {
+            toast.success('Your email is already confirmed.');
+            document.getElementById('email-verify-row').hidden = true;
+        } else if (res && res.sent) {
+            toast.success('Sent. Check your inbox (and the spam folder).', 'Confirmation email');
+        } else {
+            toast.error((res && res.error) || 'Please try again later.', 'Couldn\'t send it');
+        }
+    } finally {
+        emailResendBtn.disabled = false;
+    }
+};
 
 const finishOnboardBtn = document.getElementById('finish-onboard-btn');
 if (finishOnboardBtn) {

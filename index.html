@@ -62,6 +62,7 @@
                         <label for="auth-password-input">Password</label>
                         <input type="password" id="auth-password-input" class="input-field" autocomplete="current-password" required>
                         <div class="settings-hint" id="auth-password-hint" hidden>At least 8 characters.</div>
+                        <a href="#" class="auth-forgot" id="auth-forgot-link">Forgot password?</a>
                     </div>
 
                     <div class="auth-error" id="auth-error" hidden></div>
@@ -945,6 +946,15 @@
                         <div class="profile-meta" id="settings-profile-meta">Student</div>
                     </div>
                     <button id="settings-edit-btn" class="btn-secondary edit-btn">Edit Profile</button>
+                </div>
+                <!-- 30/9: shown only while the email isn't confirmed (and the
+                     server can send email) - see loadProfile(). -->
+                <div class="settings-row" id="email-verify-row" hidden>
+                    <div>
+                        <div class="settings-row__title">Confirm your email</div>
+                        <div class="settings-hint settings-hint--inline">We sent a link to your email when you signed up. Confirming it lets you reset your password if you forget it.</div>
+                    </div>
+                    <button id="email-resend-btn" class="btn-secondary">Send it again</button>
                 </div>
                 <div class="settings-row">
                     <div>
