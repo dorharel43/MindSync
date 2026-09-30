@@ -1833,7 +1833,8 @@ ipcMain.handle('auth-get-session', async () => {
   } catch (err) {
     // Token rejected (expired/invalid) - apiClient already cleared it via
     // the 401 handling in request(), so this just reports the outcome.
-    return { loggedIn: false };
+    // No answer at all (offline / server asleep) is not "logged out".
+    return err && err.status === 401 ? { loggedIn: false } : { loggedIn: false, offline: !err || !err.status };
   }
 });
 
@@ -2212,7 +2213,10 @@ ipcMain.handle('submit-study-review', async (event, id, payload) => {
 // the model isn't confident - the app then doesn't pre-select an outcome.
 // Also used by the server's AI quality check (/admin), so it's one place.
 function buildGradePrompt({ question, expected, userAnswer, solve, referenceByAi }) {
-    const tag = (s) => String(s || '').replace(/<\/?(question|reference|student_answer)>/gi, '');
+    // No tag can be opened or closed from inside a field (review fix 30/9):
+    // stripping tag names was beaten by nesting them. Look-alike brackets keep
+    // "x < 3" readable.
+    const tag = (s) => String(s || '').replace(/</g, '\uFF1C').replace(/>/g, '\uFF1E');
     return `You check a university student's answer to a practice question.
 
 <question>
@@ -2293,7 +2297,7 @@ Return ONLY JSON: {"answer": "the short direct answer"}`;
 // numbers. It comes up again a few questions later; getting IT right shows
 // the idea was understood, not that one answer was remembered. Light job.
 function buildTwinPrompt({ question, answer, practice, referenceByAi }) {
-    const tag = (s) => String(s || '').replace(/<\/?(original_question|original_answer)>/gi, '');
+    const tag = (s) => String(s || '').replace(/</g, '\uFF1C').replace(/>/g, '\uFF1E');   // see buildGradePrompt
     return `A university student just got this practice question wrong (or didn't know it) and has now seen the answer.
 Write ONE new question that tests the SAME idea from a different angle, so that answering it right shows they understood it - not that they remember this answer.
 
