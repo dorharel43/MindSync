@@ -2973,6 +2973,7 @@ async function renderLearningProgress() {
     const stats = await ipcRenderer.invoke('get-study-stats').catch(() => null);
     if (!stats || stats.error) return;
     renderReadiness(stats.subjects || []);
+    renderSidebarCourses(stats.subjects || []);
     renderCalibration(stats.calibration, stats.reviewsAllTime, stats.trendByConfidence);
     renderConfidentlyWrong(stats.confidentlyWrong);
     renderAttentionList('underconfident-panel', stats.underconfidentItems,
@@ -2989,34 +2990,83 @@ function examChipText(exam) {
     return `${when} · ${WEEKDAY_NAMES[new Date(y, m - 1, d).getDay()].slice(0, 3)} ${d}/${m}`;
 }
 
+// ---- Readiness, in words (30/9, reworked) ----------------------------------
+// The server (routes/study.js readinessOf) gives each course a status from
+// two separate things: how much of it was practiced, and how much of THAT
+// is known. Too little practice gets no verdict - "Just started", not "12%".
+const READINESS_STATUS = {
+    not_started: { label: 'Not started', tip: 'No question in this course was answered yet.' },
+    too_early:   { label: 'Just started', tip: 'Too few answers to judge yet - practice a few more.' },
+    building:    { label: 'In progress', tip: "You're practicing, but a good part of what you practiced isn't known yet." },
+    on_track:    { label: 'On track', tip: 'Most of what you practiced, you know. Keep going.' },
+    at_risk:     { label: 'At risk', tip: "The exam is close and there's a lot left." },
+    ready:       { label: 'Ready', tip: 'You practiced most of the course and know most of it.' }
+};
+// An older server sends no status: work one out from the old numbers.
+function readinessStatus(r) {
+    if (r.status && READINESS_STATUS[r.status]) return r.status;
+    return r.unseen === r.total ? 'not_started' : 'building';
+}
+// "Practiced 12 of 40 · you know 9 of them." (known includes fading ones -
+// they were answered right; the fading ones are said separately).
+function readinessFacts(r) {
+    const practiced = r.practiced != null ? r.practiced : r.total - r.unseen;
+    const know = (r.known || 0) + (r.fading || 0);
+    return `Practiced ${practiced} of ${r.total} · you know ${know} of them.`;
+}
+
 // What the numbers mean, in words - the student shouldn't have to work out
 // what "12 / 3 / 5 / 10" says about next Thursday.
 function readinessSentence(s) {
     const r = s.readiness;
+    const status = readinessStatus(r);
     const parts = [];
-    if (r.unseen === r.total) {
+    const days = s.exam ? s.exam.daysLeft : null;
+    if (status === 'not_started' || r.unseen === r.total) {
         parts.push('You haven\'t practiced this course yet.');
+        if (s.exam && r.perDay > 1) parts.push(days <= 1
+            ? `Before the exam, try as many of the ${r.unseen} as you can.`
+            : `About ${r.perDay} questions a day covers it before the exam.`);
     } else {
-        parts.push(`You know ${r.known} of ${r.total}.`);
+        parts.push(readinessFacts(r));
         if (r.sureWrong) parts.push(r.sureWrong === 1
             ? '1 you were sure about turned out wrong - it comes first in practice.'
             : `${r.sureWrong} you were sure about turned out wrong - they come first in practice.`);
         if (r.shaky) parts.push(`${r.shaky} ${r.shaky === 1 ? 'is' : 'are'} shaky (partly right, or right by guessing).`);
-        if (r.unseen) parts.push(`${r.unseen} not practiced yet.`);
-    }
-    const toGo = r.total - r.known;
-    if (s.exam) {
-        if (toGo === 0) parts.push('You know all of it - keep it fresh until the exam.');
-        else if (s.exam.daysLeft <= 1) parts.push(`Before the exam, go over the ${toGo} you don't know for sure yet.`);
-        else {
-            const perDay = Math.ceil(toGo / (s.exam.daysLeft - 1));
-            parts.push(`To get through the other ${toGo} before the exam: about ${perDay} a day.`);
+        if (r.fading) parts.push(r.fading === 1
+            ? '1 needs a refresh (answered right, but a while ago).'
+            : `${r.fading} need a refresh (answered right, but a while ago).`);
+        if (r.unseen) {
+            // A pace only when it says something ("about 1 a day" for 1 left doesn't).
+            if (s.exam && r.perDay > 1 && days > 1) parts.push(`${r.unseen} not practiced yet - about ${r.perDay} a day before the exam.`);
+            else if (s.exam && days <= 1) parts.push(`${r.unseen} not practiced yet - try as many as you can before the exam.`);
+            else parts.push(`${r.unseen} not practiced yet.`);
         }
-    } else {
-        parts.push('No exam date yet - add it (Study or Planner) and practice is timed to it.');
+        if (status === 'too_early') parts.push('A few more answers and this shows how ready you are.');
+        if (status === 'at_risk' && r.reason === 'knowledge') parts.push('Go over the ones you got wrong first.');
+        if (status === 'ready' && s.exam) parts.push('Keep it fresh until the exam.');
     }
+    if (!s.exam) parts.push('No exam date yet - add it (Study or Planner) and practice is timed to it.');
+    if (r.filesWithoutQuestions) parts.push(r.filesWithoutQuestions === 1
+        ? '1 file in this course has no questions yet.'
+        : `${r.filesWithoutQuestions} files in this course have no questions yet.`);
     return parts.join(' ');
 }
+
+function readinessPill(r) {
+    const status = readinessStatus(r);
+    const pill = document.createElement('span');
+    pill.className = `rd-status rd-status--${status}`;
+    pill.textContent = READINESS_STATUS[status].label;
+    pill.title = status === 'at_risk' && r.reason === 'knowledge'
+        ? "The exam is close and much of what you practiced isn't known yet."
+        : status === 'at_risk' ? "The exam is close and much of the course isn't practiced yet."
+        : READINESS_STATUS[status].tip;
+    return pill;
+}
+
+// Set by "Details" in the sidebar: the course to scroll to in Progress.
+let readinessFocus = null;
 
 function renderReadiness(subjects) {
     const list = document.getElementById('readiness-list');
@@ -3037,12 +3087,15 @@ function renderReadiness(subjects) {
         btn.onclick = () => goAndClick('nav-study', 'generate-study-btn');
         empty.append(p, btn);
         list.append(empty);
+        readinessFocus = null;
         return;
     }
+    let focusRow = null;
     withQuestions.forEach(s => {
         const r = s.readiness;
         const row = document.createElement('div');
         row.className = 'readiness-row';
+        if (readinessFocus === s.category) focusRow = row;
 
         const head = document.createElement('div');
         head.className = 'readiness-row__head';
@@ -3050,10 +3103,6 @@ function renderReadiness(subjects) {
         name.className = 'readiness-row__name';
         name.dir = 'auto';
         name.textContent = s.category === 'Uncategorized' ? t('No course') : s.category;
-        const pct = document.createElement('span');
-        pct.className = 'readiness-row__pct ms-tabular';
-        pct.textContent = `${r.percent}%`;
-        pct.title = 'Share of this course\'s questions you know';
         head.append(name);
         if (s.exam) {
             const exam = document.createElement('span');
@@ -3062,11 +3111,12 @@ function renderReadiness(subjects) {
             exam.title = s.exam.title;
             head.append(exam);
         }
-        head.append(pct);
+        head.append(readinessPill(r));
 
         const bar = document.createElement('div');
         bar.className = 'readiness-bar';
-        [['known', 'rd-known', 'Know it'], ['shaky', 'rd-shaky', 'Shaky'], ['notKnown', 'rd-not', 'Don\'t know yet'], ['unseen', 'rd-unseen', 'Not practiced']]
+        [['known', 'rd-known', 'Know it'], ['fading', 'rd-fading', 'Needs a refresh'], ['shaky', 'rd-shaky', 'Shaky'],
+         ['notKnown', 'rd-not', 'Don\'t know yet'], ['unseen', 'rd-unseen', 'Not practiced']]
             .forEach(([key, cls, label]) => {
                 if (!r[key]) return;
                 const seg = document.createElement('span');
@@ -3083,10 +3133,7 @@ function renderReadiness(subjects) {
         const practice = document.createElement('button');
         practice.className = (r.sureWrong || r.notKnown || s.due) ? 'btn-primary btn-sm' : 'btn-secondary btn-sm';
         practice.textContent = 'Practice this course';
-        practice.onclick = () => {
-            document.getElementById('nav-study').click();
-            setTimeout(() => startStudySession(null, { category: s.category, label: name.textContent }), 60);
-        };
+        practice.onclick = () => practiceCourse(s.category, name.textContent);
 
         const foot = document.createElement('div');
         foot.className = 'readiness-row__foot';
@@ -3094,7 +3141,172 @@ function renderReadiness(subjects) {
         row.append(head, bar, foot);
         list.append(row);
     });
+    if (focusRow) {
+        focusRow.classList.add('is-focus');
+        focusRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        setTimeout(() => focusRow.classList.remove('is-focus'), 2200);
+    }
+    readinessFocus = null;
 }
+
+// Study -> a session of one course (from Progress and the sidebar).
+function practiceCourse(category, label) {
+    document.getElementById('nav-study').click();
+    setTimeout(() => startStudySession(null, { category, label }), 60);
+}
+
+// ---- Sidebar: "My courses" (30/9) -----------------------------------------
+// The space under "Up next" shows each course: a dot for its status, the
+// exam countdown, and - on a click - the facts and a Practice button. Filled
+// from the same stats Study and Progress load; Home asks for them itself.
+const SIDEBAR_COURSES_SHOWN = 5;
+const sidebarCoursesKey = 'mindsync.sidebarCourses.collapsed';
+let sidebarCoursesOpen = null;      // the course whose details are open
+let sidebarCoursesAll = false;      // "Show all" pressed
+let sidebarSubjects = [];
+
+function sidebarCoursesCollapsed() {
+    try { return localStorage.getItem(sidebarCoursesKey) === '1'; } catch (e) { return false; }
+}
+
+function renderSidebarCourses(subjects) {
+    const box = document.getElementById('sidebar-courses');
+    const list = document.getElementById('sidebar-courses-list');
+    const toggle = document.getElementById('sidebar-courses-toggle');
+    if (!box || !list) return;
+    if (Array.isArray(subjects)) sidebarSubjects = subjects.filter(s => s.readiness && s.readiness.total > 0);
+    const courses = sidebarSubjects;
+    box.hidden = false;
+    const collapsed = sidebarCoursesCollapsed();
+    box.classList.toggle('is-collapsed', collapsed);
+    if (toggle) toggle.setAttribute('aria-expanded', String(!collapsed));
+    list.hidden = collapsed;
+    list.innerHTML = '';
+    if (collapsed) return;
+
+    if (courses.length === 0) {
+        const hint = document.createElement('button');
+        hint.type = 'button';
+        hint.className = 'sb-courses-empty';
+        hint.textContent = 'Your courses show up here once you make practice questions.';
+        hint.onclick = () => document.getElementById('nav-study').click();
+        list.append(hint);
+        return;
+    }
+    if (!courses.some(s => s.category === sidebarCoursesOpen)) sidebarCoursesOpen = null;
+
+    const shown = sidebarCoursesAll ? courses : courses.slice(0, SIDEBAR_COURSES_SHOWN);
+    shown.forEach(s => {
+        const r = s.readiness;
+        const status = readinessStatus(r);
+        const isOpen = sidebarCoursesOpen === s.category;
+        const label = s.category === 'Uncategorized' ? t('No course') : s.category;
+
+        const item = document.createElement('div');
+        item.className = 'sb-course' + (isOpen ? ' is-open' : '');
+
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'sb-course__row';
+        row.setAttribute('aria-expanded', String(isOpen));
+        const dot = document.createElement('i');
+        dot.className = `sb-dot rd-status--${status}`;
+        dot.setAttribute('aria-hidden', 'true');
+        const textBox = document.createElement('span');
+        textBox.className = 'sb-course__text';
+        const name = document.createElement('span');
+        name.className = 'sb-course__name';
+        name.dir = 'auto';
+        name.textContent = label;
+        const meta = document.createElement('span');
+        meta.className = 'sb-course__meta';
+        const when = !s.exam ? '' : s.exam.daysLeft === 0 ? 'Exam today' : s.exam.daysLeft === 1 ? 'Exam tomorrow' : `Exam in ${s.exam.daysLeft} days`;
+        meta.textContent = when ? `${when} · ${READINESS_STATUS[status].label}` : READINESS_STATUS[status].label;
+        if (s.exam && s.exam.daysLeft <= 7) meta.classList.add('is-soon');
+        textBox.append(name, meta);
+        row.title = READINESS_STATUS[status].tip;
+        row.append(dot, textBox);
+        row.onclick = () => {
+            sidebarCoursesOpen = isOpen ? null : s.category;
+            renderSidebarCourses();
+        };
+        item.append(row);
+
+        if (isOpen) {
+            const detail = document.createElement('div');
+            detail.className = 'sb-course__detail';
+            const facts = document.createElement('p');
+            facts.textContent = r.unseen === r.total ? 'You haven\'t practiced this course yet.' : readinessFacts(r);
+            detail.append(facts);
+            const next = sidebarNextStep(s);
+            if (next) {
+                const p = document.createElement('p');
+                p.className = 'sb-course__next';
+                p.textContent = next;
+                detail.append(p);
+            }
+            const actions = document.createElement('div');
+            actions.className = 'sb-course__actions';
+            const practice = document.createElement('button');
+            practice.type = 'button';
+            practice.className = 'btn-primary btn-sm';
+            practice.textContent = 'Practice';
+            practice.onclick = () => practiceCourse(s.category, label);
+            const details = document.createElement('button');
+            details.type = 'button';
+            details.className = 'sb-course__link';
+            details.textContent = 'Details';
+            details.onclick = () => {
+                readinessFocus = s.category;
+                document.getElementById('nav-progress').click();
+            };
+            actions.append(practice, details);
+            detail.append(actions);
+            item.append(detail);
+        }
+        list.append(item);
+    });
+
+    if (courses.length > SIDEBAR_COURSES_SHOWN) {
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'sb-courses-more';
+        more.textContent = sidebarCoursesAll ? 'Show fewer' : `Show all (${courses.length})`;
+        more.onclick = () => { sidebarCoursesAll = !sidebarCoursesAll; renderSidebarCourses(); };
+        list.append(more);
+    }
+}
+
+// One line: the most useful thing to do next in this course.
+function sidebarNextStep(s) {
+    const r = s.readiness;
+    const days = s.exam ? s.exam.daysLeft : null;
+    if (r.sureWrong) return r.sureWrong === 1 ? '1 you were sure about was wrong.' : `${r.sureWrong} you were sure about were wrong.`;
+    if (r.unseen && s.exam && r.perDay > 1 && days > 1) return `About ${r.perDay} new a day until the exam.`;
+    if (r.fading) return r.fading === 1 ? '1 needs a refresh.' : `${r.fading} need a refresh.`;
+    if (r.notKnown) return `${r.notKnown} still to learn.`;
+    if (r.unseen) return `${r.unseen} not practiced yet.`;
+    return '';
+}
+
+// Home (and start-up) fetch the stats themselves; Study and Progress pass
+// theirs to renderSidebarCourses directly. One request at a time.
+let sidebarCoursesLoading = null;
+function refreshSidebarCourses() {
+    if (sidebarCoursesLoading) return sidebarCoursesLoading;
+    sidebarCoursesLoading = ipcRenderer.invoke('get-study-stats')
+        .then(stats => { if (stats && !stats.error && Array.isArray(stats.subjects)) renderSidebarCourses(stats.subjects); })
+        .catch(() => { /* leave the list as it was */ })
+        .finally(() => { sidebarCoursesLoading = null; });
+    return sidebarCoursesLoading;
+}
+
+const sidebarCoursesToggle = document.getElementById('sidebar-courses-toggle');
+if (sidebarCoursesToggle) sidebarCoursesToggle.onclick = () => {
+    const collapsed = !sidebarCoursesCollapsed();
+    try { localStorage.setItem(sidebarCoursesKey, collapsed ? '1' : '0'); } catch (e) { /* storage blocked */ }
+    renderSidebarCourses();
+};
 
 // Builds the two lower panels of the Progress view from the task list. This
 // is what turns the page from three lonely numbers into something worth
@@ -3293,6 +3505,7 @@ let homeRenderTicket = 0;
 
 async function loadAndRenderHome() {
     const myTicket = ++homeRenderTicket;
+    refreshSidebarCourses();   // the sidebar's "My courses" - doesn't hold Home up
     // BUG FIX: completed tasks are archived (status 'completed'), not
     // deleted - so counting every task made the sidebar say "1 open task"
     // and Home's "Open Tasks" stat stay at 1 after the task was done.
@@ -4444,6 +4657,7 @@ async function loadStudyHome() {
 
     renderStudyExams(stats.subjects || []);
     renderStudyCourses(stats.subjects || [], studyItemsCache || []);
+    renderSidebarCourses(stats.subjects || []);
     const startBtn = document.getElementById('start-study-btn');
     if (startBtn) startBtn.textContent = stats.dueCount > 0 ? `Start smart practice · ${stats.dueCount} ready` : 'Start smart practice';
     renderCalibration(stats.calibration, stats.reviewsAllTime, stats.trendByConfidence);
@@ -4892,6 +5106,7 @@ function renderStudyCard() {
     studyState.confidence = null;
     studyState.startedAt = Date.now();
     studyState.aiOutcome = null;
+    studyState.aiChecked = null;
     const typed = document.getElementById('study-typed-answer');
     if (typed) {
         typed.value = '';
@@ -5012,6 +5227,9 @@ function revealAnswer(check = null) {
     const outcomeMap = VERDICT_TO_OUTCOME[item.mode] || VERDICT_TO_OUTCOME.recall;
     studyState.aiOutcome = dontKnow ? outcomeMap.wrong
         : (check && check.verdict ? outcomeMap[check.verdict] : null);
+    // Only a real AI verdict is sent with the answer ("I don't know" wasn't
+    // checked) - the server counts how often students overrule the check.
+    studyState.aiChecked = !dontKnow && check && check.verdict ? outcomeMap[check.verdict] : null;
     if (verdictBox) {
         verdictBox.hidden = !check || dontKnow;
         verdictBox.className = 'study-verdict' + (check && check.verdict ? ` study-verdict--${check.verdict}` : '');
@@ -5134,7 +5352,8 @@ async function submitReview(outcome) {
         res = await ipcRenderer.invoke('submit-study-review', item.id, {
             confidence: studyState.confidence,
             outcome,
-            secondsSpent
+            secondsSpent,
+            ...(studyState.aiChecked ? { aiSuggested: studyState.aiChecked } : {})
         });
     } catch (err) {
         res = { error: (err && err.message) || 'No connection. Try again.' };
