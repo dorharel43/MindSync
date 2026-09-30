@@ -5777,8 +5777,8 @@ async function loadManageList(refetch = true) {
     }
     if (filtersEl) {
         filtersEl.innerHTML = ['all', ...sources].map(src => `
-            <button class="filter-chip ${manageSourceFilter === src ? 'active' : ''}" data-source="${escapeHtml(src)}">
-                ${src === 'all' ? 'All' : escapeHtml(src.length > 28 ? src.slice(0, 28) + '…' : src)}
+            <button class="filter-chip ${manageSourceFilter === src ? 'active' : ''}" data-source="${escapeHtml(src)}" dir="auto">
+                ${src === 'all' ? 'All' : src === 'Manual' ? 'Manual' : escapeHtml((l => (l.length > 28 ? l.slice(0, 28) + '…' : l))(fileLabel(src)))}
             </button>`).join('');
         filtersEl.querySelectorAll('.filter-chip').forEach(chip => {
             chip.onclick = () => { manageSourceFilter = chip.dataset.source; loadManageList(false); };
