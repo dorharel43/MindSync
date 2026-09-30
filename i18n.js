@@ -28,6 +28,24 @@
    not flash English: the <html> dir/lang are set here, before the body
    paints, and the first pass runs on DOMContentLoaded.
    ========================================================================== */
+// Blocked site storage (30/9): some browsers/privacy settings make every
+// localStorage access throw - the app then died at start-up. This is the
+// first script on the page, so it puts an in-memory stand-in in place
+// (preferences just aren't remembered after closing).
+(function () {
+    try { const k = '__ms_probe'; window.localStorage.setItem(k, '1'); window.localStorage.removeItem(k); return; } catch (e) { /* blocked */ }
+    const mem = new Map();
+    const stub = {
+        getItem: (k) => (mem.has(String(k)) ? mem.get(String(k)) : null),
+        setItem: (k, v) => { mem.set(String(k), String(v)); },
+        removeItem: (k) => { mem.delete(String(k)); },
+        clear: () => mem.clear(),
+        key: (i) => [...mem.keys()][i] || null,
+        get length() { return mem.size; }
+    };
+    try { Object.defineProperty(window, 'localStorage', { value: stub, configurable: true }); } catch (e) { /* can't replace - nothing more to do */ }
+})();
+
 (function () {
     'use strict';
 
@@ -105,12 +123,25 @@
     // ---- DOM pass ----
     const ATTRS = ['placeholder', 'title', 'aria-label'];
     const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'CODE', 'PRE', 'NOSCRIPT']);
+    // What the USER wrote is never translated (30/9): a task called "Study"
+    // or "Monday" became "תרגול" / "יום שני". These hold user content only;
+    // any fallback text shown in them ("No course", "Guest") is translated
+    // in the code with t().
+    const USER_CONTENT = [
+        '.task-title-text', '.task-category-tag', '.checklist-item span[dir="auto"]',
+        '.task-card__title', '.board-task__title', '.timeline-title', '.schedule-title', '.week-upcoming__title',
+        '.attention-item__title', '.cat-row__name', '.readiness-row__name', '.study-course__name', '.study-file__name',
+        '.study-exam-row__course', '.file-name', '.folder-name', '.syllabus-row__title', '.upload-row__name',
+        '.blocked-app__name', '.manage-item__q', '.review-item__q', '.review-item__a', '.summary-surewrong__list',
+        '#sidebar-profile-name', '#sidebar-profile-degree', '#home-greeting-name', '#settings-profile-name', '#settings-profile-meta',
+        '#home-next-title', '#sidebar-next-title', '.sum-toolbar__name'
+    ].join(', ');
     function skipped(el) {
         for (let e = el; e && e.nodeType === 1; e = e.parentNode) {
             if (SKIP_TAGS.has(e.tagName)) return true;
             if (e.getAttribute('translate') === 'no') return true;
         }
-        return false;
+        return !!(el && el.nodeType === 1 && el.closest && el.closest(USER_CONTENT));
     }
 
     function translateText(node) {

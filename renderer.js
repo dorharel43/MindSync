@@ -1,6 +1,17 @@
 // Language (i18n.js, loaded before this file). If it's missing, English.
 if (!window.I18N) window.I18N = { lang: 'en', isRtl: false, t: (s, v) => (v ? String(s).replace(/\{(\w+)\}/g, (m, k) => (k in v ? v[k] : m)) : s), setLang() {}, translate() {} };
 if (!window.t) window.t = window.I18N.t;
+
+// Safety net (30/9): an error nobody caught used to fail silently - a
+// button that did nothing. Now it says so (at most once every few seconds).
+let lastUnhandledToast = 0;
+window.addEventListener('unhandledrejection', (e) => {
+    console.error('Unhandled:', e.reason);
+    if (Date.now() - lastUnhandledToast < 4000 || !window.toast) return;
+    lastUnhandledToast = Date.now();
+    const msg = (e.reason && e.reason.message) || String(e.reason || '');
+    window.toast.error(msg && msg.length < 200 ? msg : 'Please try again.', 'Something didn\'t work');
+});
 const { ipcRenderer, clipboard } = require('electron');
 
 // A task's urgency is classified by AI in the background now (see main.js's
@@ -52,7 +63,7 @@ let authMode = 'login'; // 'login' | 'register'
 // both the registration form and the Edit Profile modal, client-side; the
 // real enforcement is the matching validator on User.name in the server
 // model, since a client-side check alone can always be bypassed.
-const NAME_PATTERN = /^[\p{L}\s'-]+$/u;
+const NAME_PATTERN = /^[\p{L}\p{M}\s'\-׳״־]+$/u; // \p{M} vowel marks (שָׁלוֹם), ׳ ״ ־ (ג׳וני) - 30/9
 function isValidName(name) {
     return name.length > 0 && name.length <= 100 && NAME_PATTERN.test(name);
 }
@@ -91,7 +102,8 @@ if (authToggleLink) {
 // Called once, either immediately (a saved session was still valid) or
 // after a successful login/register. Reveals the app and re-runs the loads
 // that may have fired with empty/401 results while the login screen was up.
-let currentUserId = null; // used to keep per-user UI preferences apart on a shared machine
+let currentUserId = null;
+let currentProfile = { name: '', degree: '' };   // from loadProfile (30/9) // used to keep per-user UI preferences apart on a shared machine
 
 function bootApp(user) {
     document.body.classList.remove('auth-pending');
@@ -112,6 +124,11 @@ function bootApp(user) {
     if (typeof loadAndRenderWeeklyBoard === 'function') loadAndRenderWeeklyBoard();
     if (typeof loadStudyHome === 'function') loadStudyHome();
     if (typeof loadAiSettings === 'function') loadAiSettings();
+    // Materials and the focus list used to load only once, at start-up -
+    // before the login, so they stayed empty until a restart (30/9).
+    if (typeof loadAndRenderFolders === 'function') loadAndRenderFolders();
+    if (typeof loadAndRenderFiles === 'function') loadAndRenderFiles();
+    if (typeof loadAndRenderBlockedApps === 'function' && !IS_WEB) loadAndRenderBlockedApps();
     if (IS_WEB) refreshGoogleState();
 }
 
@@ -167,11 +184,10 @@ const authLogoutBtn = document.getElementById('auth-logout-btn');
 if (authLogoutBtn) {
     authLogoutBtn.onclick = async () => {
         await ipcRenderer.invoke('auth-logout');
-        if (authForm) authForm.reset();
-        setAuthMode('login');
-        if (authLoading) authLoading.hidden = true;
-        if (authFormWrap) authFormWrap.hidden = false;
-        document.body.classList.add('auth-pending');
+        // Start clean (30/9): the screens kept the previous account's data -
+        // the next person to log in on this computer saw its folders, files
+        // and even an open question. A reload clears everything.
+        location.reload();
     };
 }
 
@@ -204,6 +220,26 @@ if (authDeleteBtn) {
             toast.error((res && res.error) || 'Please try again.', 'Could not delete the account');
             if (!/password/i.test((res && res.error) || '')) return;
         }
+    };
+}
+
+// Change password (30/9): current, then new twice; other devices are logged out.
+const authChangePwBtn = document.getElementById('auth-change-password-btn');
+if (authChangePwBtn) {
+    authChangePwBtn.onclick = async () => {
+        const current = await promptDialog(t('Change password'), t('Your current password:'), '', { type: 'password', confirmText: t('Next') });
+        if (!current) return;
+        const next = await promptDialog(t('Change password'), t('The new password (at least 8 characters). Every other device will be logged out.'), '', { type: 'password', confirmText: t('Next') });
+        if (!next) return;
+        if (next.length < 8) { toast.error(t('Password must be at least 8 characters.')); return; }
+        const again = await promptDialog(t('Change password'), t('The new password again:'), '', { type: 'password', confirmText: t('Change password') });
+        if (again === null) return;
+        if (again !== next) { toast.error(t('The two new passwords are different. Nothing was changed.')); return; }
+        authChangePwBtn.disabled = true;
+        const res = await ipcRenderer.invoke('auth-change-password', { currentPassword: current, newPassword: next }).catch(e => ({ error: e.message }));
+        authChangePwBtn.disabled = false;
+        if (res && res.success) toast.success(t('Every other device was logged out.'), t('Password changed'));
+        else toast.error((res && res.error) || t('Please try again.'), t('Password not changed'));
     };
 }
 
@@ -519,10 +555,13 @@ const saveEventBtn = document.getElementById('save-event-btn');
 const scheduleList = document.querySelector('.daily-schedule-list');
 
 function openAddEventModal() {
+    // After an edit the box still held that item's sentence - "Add" then
+    // added it a second time (30/9). A new add starts empty.
+    const wasEditing = !!editingEvent;
     setEventModalMode(null);
     addEventModal.style.display = 'flex';
-    const t = document.getElementById('smart-event-input');
-    if (t) t.focus();
+    const box = document.getElementById('smart-event-input');
+    if (box) { if (wasEditing) box.value = ''; box.focus(); }
 }
 if(addEventBtn) addEventBtn.addEventListener('click', openAddEventModal);
 if(triggerAddEventWeekly) triggerAddEventWeekly.addEventListener('click', openAddEventModal);
@@ -583,7 +622,7 @@ function buildScheduleRow(evt, folders) {
     div.innerHTML = `
         <div class="schedule-info">
             <div class="schedule-circle" style="border-color: ${style.border}; ${evt.type === 'exam' ? `background-color: ${style.border};` : ''}"></div>
-            <div class="schedule-time">${evt.time}</div>
+            <div class="schedule-time">${escapeHtml(evt.time)}</div>
             <div class="schedule-title" ${evt.type === 'exam' || evt.type === 'study' ? 'style="font-weight: bold;"' : ''}>${escapeHtml(evt.title)}</div>
         </div>
         ${dest ? `<button class="go-to-related-btn" title="${dest.type === 'materials' ? `Open Materials — ${escapeHtml(dest.folderName)}` : 'Open in Study'}" aria-label="Go to related content">${icon(dest.type === 'materials' ? 'library' : 'brain')}</button>` : ''}
@@ -975,6 +1014,12 @@ function renderWeeklyBoard() {
             const delBtn = taskCard.querySelector('.delete-weekly-btn');
             delBtn.onclick = async (e) => {
                 e.stopPropagation();
+                // Asked first (30/9): a weekly class goes from EVERY week.
+                const ok = await confirmDialog(
+                    weekly ? t('Delete "{name}" from every week?', { name: evt.title }) : t('Delete "{name}"?', { name: evt.title }),
+                    evt.googleEventId ? t('It is removed from Google Calendar too.') : '',
+                    { confirmText: t('Delete'), danger: true });
+                if (!ok) return;
                 delBtn.disabled = true;
                 await ipcRenderer.invoke('delete-event', evt.id);
                 await loadAndRenderWeeklyBoard();
@@ -1668,7 +1713,17 @@ async function loadAndRenderTasks() {
     // from "you have nothing", which is misleading and feels broken.
     renderSkeleton(tasksListContainer, 3);
 
-    cachedTasksData = await ipcRenderer.invoke('get-tasks') || [];
+    // Strict (30/9): "couldn't load" must not look like "no tasks".
+    const loaded = await ipcRenderer.invoke('get-tasks', { strict: true }).catch(e => ({ error: e.message }));
+    if (!Array.isArray(loaded)) {
+        renderEmptyState(tasksListContainer, {
+            icon: 'alert', title: t('Couldn\'t load your tasks'),
+            message: t('MindSync didn\'t answer. Your tasks are safe - try again in a moment.'),
+            actionLabel: t('Try again'), onAction: () => loadAndRenderTasks()
+        });
+        return;
+    }
+    cachedTasksData = loaded;
     cachedFoldersData = await ipcRenderer.invoke('get-folders').catch(() => []) || [];
 
     renderTasksList();
@@ -1703,7 +1758,7 @@ function renderTasksList() {
         filterBar.className = 'category-filter-bar';
         const allCats = ['All', ...categories, 'Uncategorized'];
         filterBar.innerHTML = allCats.map(cat =>
-            `<button class="category-chip ${activeTaskCategory === cat ? 'active' : ''}" data-cat="${escapeHtml(cat)}">${escapeHtml(cat)}</button>`
+            `<button class="category-chip ${activeTaskCategory === cat ? 'active' : ''}" data-cat="${escapeHtml(cat)}"${cat === 'All' || cat === 'Uncategorized' ? '' : ' translate="no"'}>${escapeHtml(cat)}</button>`
         ).join('');
         filterBar.querySelectorAll('.category-chip').forEach(chip => {
             chip.onclick = () => {
@@ -1929,11 +1984,14 @@ function renderTasksList() {
 
         async function addSubtask() {
             const title = subtaskInput.value.trim();
-            if (!title) return;
+            // Busy = ignore (30/9): Enter twice while saving added the step twice.
+            if (!title || addSubtaskBtn.disabled) return;
             addSubtaskBtn.disabled = true;
-            const updated = await ipcRenderer.invoke('add-subtask', task.id, title);
-            addSubtaskBtn.disabled = false;
-            if (updated && updated.error) { toast.error('Could not add step: ' + updated.error); return; }
+            let updated;
+            try { updated = await ipcRenderer.invoke('add-subtask', task.id, title); }
+            catch (e) { updated = { error: e.message }; }
+            finally { addSubtaskBtn.disabled = false; }
+            if (!updated || updated.error) { toast.error('Could not add step: ' + ((updated && updated.error) || 'no connection')); return; }
             task.subtasks = updated.subtasks;
             task.status = updated.status;
             subtaskInput.value = '';
@@ -2093,7 +2151,7 @@ async function loadAndRenderFolders() {
 
     const allFolder = document.createElement('div');
     allFolder.className = 'card folder-card' + (currentActiveFolder === 'All' ? ' is-active' : '');
-    allFolder.innerHTML = `<div class="folder-icon">${icon('library')}</div><div class="folder-name">All files</div>`;
+    allFolder.innerHTML = `<div class="folder-icon">${icon('library')}</div><div class="folder-name">${escapeHtml(t('All files'))}</div>`;
     allFolder.onclick = () => {
         currentActiveFolder = 'All';
         loadAndRenderFolders();
@@ -2121,6 +2179,9 @@ async function loadAndRenderFolders() {
         const delBtn = folderCard.querySelector('.delete-folder-btn');
         delBtn.onclick = async (e) => {
             e.stopPropagation();
+            // Asked first (30/9) - it was one click, no undo.
+            if (!await confirmDialog(t('Delete the folder "{name}"?', { name: folder.name }),
+                t('The files in it are not deleted - they move to "No folder".'), { confirmText: t('Delete folder'), danger: true })) return;
             const result = await ipcRenderer.invoke('delete-folder', folder.id); // Fixed: Pass ID instead of index
             if (result && result.error) { toast.error('Could not delete folder: ' + result.error); return; }
             if (currentActiveFolder === folder.name) currentActiveFolder = 'All';
@@ -2133,7 +2194,7 @@ async function loadAndRenderFolders() {
 
     const addBtn = document.createElement('div');
     addBtn.className = 'card folder-card add-folder';
-    addBtn.innerHTML = `<div class="folder-icon">${icon('plus')}</div><div class="folder-name">New folder</div>`;
+    addBtn.innerHTML = `<div class="folder-icon">${icon('plus')}</div><div class="folder-name">${escapeHtml(t('New folder'))}</div>`;
     addBtn.onclick = () => addFolderModal.style.display = 'flex';
     materialsGrid.appendChild(addBtn);
 
@@ -2148,8 +2209,16 @@ async function loadAndRenderFolders() {
 
 async function loadAndRenderFiles() {
     if (!filesListContainer) return;
-    const files = await ipcRenderer.invoke('get-files');
+    const files = await ipcRenderer.invoke('get-files', { strict: true }).catch(e => ({ error: e.message }));
     filesListContainer.innerHTML = '';
+    if (!Array.isArray(files)) {   // 30/9: not "No files here yet" when the server didn't answer
+        renderEmptyState(filesListContainer, {
+            icon: 'alert', title: t('Couldn\'t load your files'),
+            message: t('MindSync didn\'t answer. Your files are safe - try again in a moment.'),
+            actionLabel: t('Try again'), onAction: () => loadAndRenderFiles()
+        });
+        return;
+    }
 
     const filteredFiles = currentActiveFolder === 'All' 
         ? files 
@@ -2191,6 +2260,9 @@ async function loadAndRenderFiles() {
         fileItem.querySelector('.btn-questions').onclick = (e) => generateQuestionsFor(file, e.currentTarget);
         
         fileItem.querySelector('.delete-file-btn').onclick = async () => {
+            // Asked first (30/9): this also deletes its summary and the uploaded original.
+            if (!await confirmDialog(t('Delete "{name}"?', { name: fileLabel(file.name) }),
+                t('Its summary and the uploaded file go too. Practice questions made from it stay.'), { confirmText: t('Delete file'), danger: true })) return;
             const result = await ipcRenderer.invoke('delete-file', file.id); // Fixed: Pass ID directly without searching
             if (result && result.error) { toast.error('Could not delete file: ' + result.error); return; }
             await loadAndRenderFiles();
@@ -2338,7 +2410,8 @@ async function runUploadBatch() {
             continue;
         }
         const saved = await ipcRenderer.invoke('save-file', {
-            name: read.fileName,
+            // The picker's name (unique within the batch - see select-upload-files).
+            name: f.name || read.fileName,
             content: read.fileContent,
             sourcePath: read.filePath || '',
             folder
@@ -2828,7 +2901,7 @@ async function loadAndRenderBlockedApps() {
         item.className = 'blocked-app';
         item.innerHTML = `
             <span class="blocked-app__name" dir="ltr"></span>
-            <button class="blocked-app__remove" aria-label="Stop blocking ${appName}" title="Remove">${icon('close', { size: 14 })}</button>
+            <button class="blocked-app__remove" aria-label="Stop blocking ${escapeHtml(appName)}" title="Remove">${icon('close', { size: 14 })}</button>
         `;
         item.querySelector('.blocked-app__name').textContent = appName;
 
@@ -2857,11 +2930,23 @@ if (blockedAppAddBtn) blockedAppAddBtn.addEventListener('click', () => window.ad
 // ==========================================
 // 9. Modals closing
 // ==========================================
+// Closing by a click outside or Escape (30/9): respects what the window is
+// doing - an upload or a syllabus import in progress isn't hidden half way -
+// and closes the calendar box the proper way (it left an edit behind).
+function modalIsBusy(modal) {
+    if (modal === uploadModal && uploadBatch && uploadBatch.running) return true;
+    if (modal === syllabusModal && syllabusCancel && syllabusCancel.disabled) return true;
+    return false;
+}
+function closeModalSafely(modal) {
+    if (modalIsBusy(modal)) return;
+    // An edit is closed properly (cleared); a new item being typed keeps its draft.
+    if (modal === addEventModal && editingEvent) { closeAddEventModal(); return; }
+    modal.style.display = 'none';
+}
 document.querySelectorAll('.modal-overlay').forEach(modal => {
     modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-            modal.style.display = 'none';
-        }
+        if (e.target === modal) closeModalSafely(modal);
     });
 });
 
@@ -2963,7 +3048,7 @@ function renderReadiness(subjects) {
         const name = document.createElement('span');
         name.className = 'readiness-row__name';
         name.dir = 'auto';
-        name.textContent = s.category === 'Uncategorized' ? 'No course' : s.category;
+        name.textContent = s.category === 'Uncategorized' ? t('No course') : s.category;
         const pct = document.createElement('span');
         pct.className = 'readiness-row__pct ms-tabular';
         pct.textContent = `${r.percent}%`;
@@ -3065,7 +3150,7 @@ async function renderProgressInsights() {
                 return `
                     <div class="cat-row">
                         <div class="cat-row__head">
-                            <span class="cat-row__name" dir="auto">${escapeHtml(name)}</span>
+                            <span class="cat-row__name" dir="auto">${escapeHtml(name === 'Uncategorized' ? t(name) : name)}</span>
                             <span class="cat-row__count">${v.open} open of ${v.total} · ${pct}% done</span>
                         </div>
                         <div class="cat-row__track">
@@ -3146,14 +3231,18 @@ async function loadProfile() {
     const settingsMeta = document.getElementById('settings-profile-meta');
     const settingsPic = document.getElementById('settings-profile-pic');
 
-    const name = profile.name || 'Guest';
+    // Kept for the Edit dialog (30/9): it used to read the names back from
+    // the screen, where "Guest"/"Student" (or their Hebrew) could be taken
+    // for real values and saved as the degree.
+    currentProfile = { name: profile.name || '', degree: profile.degree || '' };
+    const name = profile.name || t('Guest');
     if (nameEl) nameEl.innerText = name;
-    if (degreeEl) degreeEl.innerText = profile.degree || 'Student';
+    if (degreeEl) degreeEl.innerText = profile.degree || t('Student');
     if (picEl) picEl.innerText = name.charAt(0).toUpperCase();
     if (homeGreetingName) homeGreetingName.innerText = name;
 
     if (settingsName) settingsName.innerText = name;
-    if (settingsMeta) settingsMeta.innerText = profile.degree || 'Student';
+    if (settingsMeta) settingsMeta.innerText = profile.degree || t('Student');
     if (settingsPic) settingsPic.innerText = name.charAt(0).toUpperCase();
 }
 
@@ -3188,10 +3277,8 @@ if (settingsEditBtn) {
         if (onboardScreen) {
             // Pre-fill with the current values rather than opening blank -
             // this is an edit form now, not a first-run questionnaire.
-            const nameEl = document.getElementById('sidebar-profile-name');
-            const degreeEl = document.getElementById('sidebar-profile-degree');
-            document.getElementById('onboard-name').value = (nameEl && nameEl.innerText !== 'Guest') ? nameEl.innerText : '';
-            document.getElementById('onboard-degree').value = (degreeEl && degreeEl.innerText !== 'Student') ? degreeEl.innerText : '';
+            document.getElementById('onboard-name').value = currentProfile.name;
+            document.getElementById('onboard-degree').value = currentProfile.degree;
             onboardScreen.style.display = 'flex';
         }
     };
@@ -3245,9 +3332,9 @@ async function loadAndRenderHome() {
     
     if (todayEvents.length === 0) {
         if (timelineList) timelineList.innerHTML = '<div class="timeline-empty">Nothing on your calendar today.</div>';
-        if (nextTitle) nextTitle.innerText = 'Nothing scheduled';
+        if (nextTitle) nextTitle.innerText = t('Nothing scheduled');
         if (nextTime) nextTime.innerText = 'No classes or exams on your calendar today.';
-        if (sidebarNextTitle) sidebarNextTitle.innerText = "Nothing scheduled today";
+        if (sidebarNextTitle) sidebarNextTitle.innerText = t('Nothing scheduled today');
         if (sidebarNextMeta) sidebarNextMeta.innerText = tasks.length > 0 ? `${tasks.length} open task${tasks.length === 1 ? '' : 's'}` : '';
     } else {
         const now = new Date();
@@ -3279,15 +3366,15 @@ async function loadAndRenderHome() {
                     <span class="timeline-title" dir="auto">${escapeHtml(evt.title)}</span>
                     ${isNext ? '<span class="tag-active" style="margin-inline-start:8px;">Next</span>' : ''}
                 </div>
-                <div class="timeline-time">${evt.time}</div>
+                <div class="timeline-time">${escapeHtml(evt.time)}</div>
             `;
             if (timelineList) timelineList.appendChild(div);
         });
 
         if (!nextEventFound) {
-            if (nextTitle) nextTitle.innerText = 'All done for today';
+            if (nextTitle) nextTitle.innerText = t('All done for today');
             if (nextTime) nextTime.innerText = "Today's classes and events are over.";
-            if (sidebarNextTitle) sidebarNextTitle.innerText = "All done for today";
+            if (sidebarNextTitle) sidebarNextTitle.innerText = t('All done for today');
             if (sidebarNextMeta) sidebarNextMeta.innerText = tasks.length > 0 ? `${tasks.length} open task${tasks.length === 1 ? '' : 's'}` : '';
         }
     }
@@ -3301,7 +3388,7 @@ async function loadAndRenderHome() {
     const greetingEl = document.getElementById('home-greeting-time');
     if (greetingEl) greetingEl.innerText = greeting;
     const dateEl = document.getElementById('home-date');
-    if (dateEl) dateEl.textContent = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+    if (dateEl) dateEl.textContent = new Date().toLocaleDateString(I18N.lang === 'he' ? 'he-IL' : 'en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
 const navHomeBtn = document.getElementById('nav-home');
@@ -3611,19 +3698,30 @@ if (resetBtn) {
 const generateWeeklyAiBtn = document.getElementById('generate-weekly-ai-btn');
 if (generateWeeklyAiBtn) {
     generateWeeklyAiBtn.onclick = async () => {
-        const tasks = await ipcRenderer.invoke('get-tasks') || [];
-        let events = await ipcRenderer.invoke('get-events') || [];
-
-        if (!tasks.some(t => t.status !== 'completed')) {
-            toast.info('No open tasks to plan.');
-            return;
-        }
-
+        // Busy first (30/9): a double click used to start two plans at once
+        // and add every study block twice.
+        if (generateWeeklyAiBtn.disabled) return;
         const originalText = generateWeeklyAiBtn.innerHTML;
-        generateWeeklyAiBtn.innerHTML = 'Planning…';
+        generateWeeklyAiBtn.innerHTML = t('Planning…');
         generateWeeklyAiBtn.disabled = true;
 
         try {
+            // Strict: if the calendar can't be loaded, stop - planning on an
+            // "empty" week would ignore your classes and keep the old plan.
+            const [tasks, loadedEvents] = await Promise.all([
+                ipcRenderer.invoke('get-tasks', { strict: true }).catch(e => ({ error: e.message })),
+                ipcRenderer.invoke('get-events', { strict: true }).catch(e => ({ error: e.message }))
+            ]);
+            if (!Array.isArray(tasks) || !Array.isArray(loadedEvents)) {
+                toast.error('Couldn\'t load your calendar and tasks right now. Nothing was changed - try again in a minute.', 'Could not plan');
+                return;
+            }
+            let events = loadedEvents;
+            if (!tasks.some(t => t.status !== 'completed')) {
+                toast.info('No open tasks to plan.');
+                return;
+            }
+
             // BUG FIX: every click used to ADD a fresh set of blocks on top of
             // the previous plan, so planning twice duplicated everything.
             // Blocks the planner placed last time are removed first (through
@@ -3706,10 +3804,10 @@ function showNotification(title, message) {    // 1. התראה פנימית - n
     window.toast.info(message, title);
 
     // 2. התראת Windows (מופעלת רק אם החלון ממוזער או מוסתר)
-    if (document.hidden) {
-        new Notification(title, {
-            body: message
-        });
+    // Only where it exists and is allowed (30/9): on phones the constructor
+    // throws, which made the same toast repeat every 30 seconds.
+    if (document.hidden && typeof Notification === 'function' && Notification.permission === 'granted') {
+        try { new Notification(title, { body: message }); } catch (e) { /* not supported here */ }
     }
 }
 
@@ -3811,13 +3909,20 @@ function updateBulkBar() {
 
         // Snapshot every selected task before deleting so the whole batch can
         // be restored in one go.
-        const allTasks = (await ipcRenderer.invoke('get-tasks')) || [];
+        // From a strict fetch, falling back to what's on screen (30/9): a
+        // failed fetch used to give an empty snapshot - Undo restored nothing.
+        // dueDate and the time estimate are kept too, like a single delete.
+        const fresh = await ipcRenderer.invoke('get-tasks', { strict: true }).catch(() => null);
+        const allTasks = Array.isArray(fresh) ? fresh : (cachedTasksData || []);
         const snapshots = allTasks
             .filter(t => selectedTaskIds.has(t.id))
             .map(t => ({
-                title: t.title, date: t.date, category: t.category, urgency: t.urgency,
+                title: t.title, date: t.date, dueDate: t.dueDate, estimatedMinutes: t.estimatedMinutes,
+                category: t.category, urgency: t.urgency,
                 subtasks: (t.subtasks || []).map(st => ({ title: st.title, completed: st.completed }))
             }));
+        if (snapshots.length < count && !await confirmDialog(t('Undo won\'t be available'),
+            t('The tasks couldn\'t be loaded to keep a copy. Delete anyway?'), { confirmText: t('Delete'), danger: true })) return;
 
         await runBulk(id => ipcRenderer.invoke('delete-task', id), `Deleted ${count} task(s).`);
 
@@ -3933,8 +4038,14 @@ function normalizeTaskDateInput(raw) {
     const dd = +m[1], mm = +m[2];
     let yyyy = m[3] ? +m[3] : today.getFullYear();
     if (yyyy < 100) yyyy += 2000;
-    const d = new Date(yyyy, mm - 1, dd);
+    let d = new Date(yyyy, mm - 1, dd);
     if (d.getDate() !== dd || d.getMonth() !== mm - 1) return null; // 31/2, 40/13...
+    // No year and well in the past = next year (30/9: "5/1" typed in
+    // December was saved as last January - overdue at once).
+    if (!m[3] && (today - d) / 86400000 > 60) {
+        const next = new Date(yyyy + 1, mm - 1, dd);
+        if (next.getDate() === dd) d = next;
+    }
     return fmt(d);
 }
 
@@ -4040,7 +4151,7 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         const openModal = document.querySelector('.modal-overlay[style*="flex"], .ms-modal-backdrop');
         if (openModal && openModal.classList.contains('modal-overlay')) {
-            openModal.style.display = 'none';
+            closeModalSafely(openModal);
             return;
         }
     }
@@ -4144,15 +4255,15 @@ function pickMultiple(title, options) {
         backdrop.className = 'ms-modal-backdrop';
         backdrop.innerHTML = `
             <div class="ms-modal">
-                <div class="ms-modal__header"><h3 class="ms-modal__title">${title}</h3></div>
+                <div class="ms-modal__header"><h3 class="ms-modal__title">${escapeHtml(title)}</h3></div>
                 <div class="ms-modal__body ms-modal__body--structured">
                     <div class="option-list">
                         ${options.map(o => `
                             <label class="checkbox-field checkbox-field--compact">
-                                <input type="checkbox" value="${o.value}">
+                                <input type="checkbox" value="${escapeHtml(o.value)}">
                                 <span class="checkbox-field__text">
-                                    <span class="checkbox-field__label">${o.label}</span>
-                                    <span class="checkbox-field__hint">${o.value}</span>
+                                    <span class="checkbox-field__label">${escapeHtml(o.label)}</span>
+                                    <span class="checkbox-field__hint">${escapeHtml(o.value)}</span>
                                 </span>
                             </label>`).join('')}
                     </div>
@@ -4203,15 +4314,17 @@ const studyState = {
 // lost - but the PLACE in the queue was, so stopping at question 5 of 20 meant
 // starting from the top next time. For a 20-item session that's enough friction
 // to stop people opening it at all.
-const SESSION_KEY = 'mindsync.activeSession';
+// Per user (30/9): on a shared computer the next student saw - and could
+// wipe - the previous student's paused session.
+const sessionKey = () => `mindsync.activeSession.${currentUserId || 'anon'}`;
 
 function saveSessionProgress() {
     if (!studyState.queue.length || studyState.index >= studyState.queue.length) {
-        localStorage.removeItem(SESSION_KEY);
+        try { localStorage.removeItem(sessionKey()); } catch (e) { /* storage unavailable */ }
         return;
     }
     try {
-        localStorage.setItem(SESSION_KEY, JSON.stringify({
+        localStorage.setItem(sessionKey(), JSON.stringify({
             // Only ids are stored; the items themselves are re-fetched so a
             // resumed session never shows stale content.
             ids: studyState.queue.map(i => i.id),
@@ -4225,14 +4338,14 @@ function saveSessionProgress() {
 
 function readSessionProgress() {
     try {
-        const raw = localStorage.getItem(SESSION_KEY);
+        const raw = localStorage.getItem(sessionKey());
         if (!raw) return null;
         const data = JSON.parse(raw);
 
         // A day-old session is stale: the schedule has moved on and different
         // items are due, so resuming it would be reviewing the wrong things.
         if (Date.now() - data.savedAt > 24 * 60 * 60 * 1000) {
-            localStorage.removeItem(SESSION_KEY);
+            localStorage.removeItem(sessionKey());
             return null;
         }
         return data;
@@ -4240,7 +4353,7 @@ function readSessionProgress() {
 }
 
 function clearSessionProgress() {
-    localStorage.removeItem(SESSION_KEY);
+    try { localStorage.removeItem(sessionKey()); } catch (e) { /* storage unavailable */ }
 }
 
 // Outcome vocabulary differs per mode because the modes measure different
@@ -4423,7 +4536,7 @@ function renderStudyCourses(subjects, items) {
         const name = document.createElement('span');
         name.className = 'study-course__name';
         name.dir = 'auto';
-        name.textContent = s.category === 'Uncategorized' ? 'No course' : s.category;
+        name.textContent = s.category === 'Uncategorized' ? t('No course') : s.category;
         top.append(name);
         if (s.exam) {
             const exam = document.createElement('span');
@@ -4484,7 +4597,7 @@ function renderStudyCourses(subjects, items) {
                 const fn = document.createElement('span');
                 fn.className = 'study-file__name';
                 fn.dir = 'auto';
-                fn.textContent = file ? fileLabel(file) : 'Written by hand';
+                fn.textContent = file ? fileLabel(file) : t('Written by hand');
                 fn.title = file || '';
                 const fc = document.createElement('span');
                 fc.className = 'study-file__count';
@@ -4506,14 +4619,19 @@ async function saveExamAnswer() {
     const course = examAskCourse;
     const input = document.getElementById('study-exam-input');
     const btn = document.getElementById('study-exam-save');
-    if (!course || !input) return;
+    // Busy = ignore (30/9): Enter twice used to add the same exam twice.
+    if (!course || !input || btn.disabled) return;
     const text = input.value.trim();
     if (!text) { toast.warning('Write when the exam is, e.g. "12.2".'); return; }
 
     btn.disabled = true;
+    try { await saveExamAnswerNow(course, input, text); }
+    finally { btn.disabled = false; }
+}
+
+async function saveExamAnswerNow(course, input, text) {
     const res = await ipcRenderer.invoke('parse-exam-dates', text).catch(e => ({ error: e.message }));
     if (!res || res.error) {
-        btn.disabled = false;
         toast.error((res && res.error) || 'Please try again.', 'Couldn\'t read that');
         return;
     }
@@ -4529,10 +4647,9 @@ async function saveExamAnswer() {
             time: e.time || '09:00',
             type: 'exam'
         };
-        const r = await ipcRenderer.invoke('save-event', evt);
+        const r = await ipcRenderer.invoke('save-event', evt).catch(e => ({ error: e.message }));
         if (r && !r.error) saved.push({ ...evt, id: r.id || r._id });
     }
-    btn.disabled = false;
     if (!saved.length) { toast.error('Could not save it. Please try again.'); return; }
     input.value = '';
 
@@ -4691,7 +4808,7 @@ function renderAttentionList(panelId, items, emptyMessage, tone) {
             <span class="attention-item__dot" style="background: ${dotColor}"></span>
             <div class="attention-item__body">
                 <div class="attention-item__title" dir="auto">${escapeHtml(i.question)}</div>
-                <div class="attention-item__meta">${escapeHtml(i.category || 'Uncategorized')} · ${MODE_LABELS[i.mode] || i.mode}${i.accuracy !== undefined ? ` · ${i.accuracy}% (${i.reviewCount})` : ''}</div>
+                <div class="attention-item__meta">${escapeHtml(i.category || 'Uncategorized')} · ${escapeHtml(MODE_LABELS[i.mode] || i.mode)}${i.accuracy !== undefined ? ` · ${i.accuracy}% (${i.reviewCount})` : ''}</div>
             </div>
         </div>`).join('');
 }
@@ -4708,9 +4825,14 @@ async function startStudySession(resume = null, scope = null) {
         // been edited or deleted since the session was paused.
         const all = await ipcRenderer.invoke('get-study-items', {});
         const byId = new Map((all || []).map(i => [i.id, i]));
-        items = resume.ids.map(id => byId.get(id)).filter(Boolean);
+        // Answered part and the rest kept apart (30/9): a question deleted
+        // from the answered part used to shift the place by one, skipping one.
+        const before = resume.ids.slice(0, resume.index).map(id => byId.get(id)).filter(Boolean);
+        const rest = resume.ids.slice(resume.index).map(id => byId.get(id)).filter(Boolean);
+        items = before.concat(rest);
+        resume = { ...resume, index: before.length };
 
-        if (items.length === 0) {
+        if (rest.length === 0) {
             toast.info('Those questions are no longer available. Starting fresh.');
             clearSessionProgress();
             return startStudySession();
@@ -4968,6 +5090,7 @@ function revealAnswer(check = null) {
         // The AI's call is marked; "Next" accepts it, any button overrides it.
         b.classList.toggle('is-suggested', b.dataset.outcome === studyState.aiOutcome);
     });
+    setOutcomeButtonsDisabled(false);
     if (nextRow) nextRow.hidden = !studyState.aiOutcome;
     const outcomePrompt = document.getElementById('study-outcome-prompt');
     if (studyState.aiOutcome) outcomePrompt.textContent = 'The check says:';
@@ -4981,18 +5104,41 @@ function revealAnswer(check = null) {
     document.getElementById('study-answer-step').hidden = false;
 }
 
+// One answer is saved at a time (30/9): a double click on "Next" or an
+// outcome used to save the answer twice and skip the next question.
+let reviewInFlight = false;
+function setOutcomeButtonsDisabled(disabled) {
+    document.querySelectorAll('#study-outcome-row .outcome-btn, #study-next-btn').forEach(b => { b.disabled = disabled; });
+}
+
 async function submitReview(outcome) {
     const item = studyState.queue[studyState.index];
-    if (!item) return;
+    if (!item || reviewInFlight) return;
+    reviewInFlight = true;
+    setOutcomeButtonsDisabled(true);
+    const index = studyState.index;
 
     const secondsSpent = Math.round((Date.now() - studyState.startedAt) / 1000);
-    const res = await ipcRenderer.invoke('submit-study-review', item.id, {
-        confidence: studyState.confidence,
-        outcome,
-        secondsSpent
-    });
+    let res;
+    try {
+        res = await ipcRenderer.invoke('submit-study-review', item.id, {
+            confidence: studyState.confidence,
+            outcome,
+            secondsSpent
+        });
+    } catch (err) {
+        res = { error: (err && err.message) || 'No connection. Try again.' };
+    } finally {
+        reviewInFlight = false;
+    }
+    // Stopped, or moved on, while it was saving: nothing more to do here.
+    if (studyState.queue[index] !== item || studyState.index !== index || document.getElementById('study-session').hidden) return;
 
-    if (res && res.error) { toast.error(res.error, 'Could not save review'); return; }
+    if (!res || res.error) {
+        setOutcomeButtonsDisabled(false);
+        toast.error((res && res.error) || 'Please try again.', 'Could not save review');
+        return;
+    }
 
     studyState.session.reviewed += 1;
     if (res.item && res.item.reviews) {
@@ -5405,7 +5551,7 @@ async function loadManageList(refetch = true) {
             <div class="manage-item__body">
                 <div class="manage-item__q" dir="auto">${escapeHtml(i.question)}</div>
                 <div class="manage-item__meta">
-                    ${MODE_LABELS[i.mode] || i.mode}
+                    ${escapeHtml(MODE_LABELS[i.mode] || i.mode)}
                     ${i.category ? ' · ' + escapeHtml(i.category) : ''}
                     ${i.repetitions > 0 ? ` · reviewed ${i.repetitions}×` : ' · never reviewed'}
                 </div>
@@ -5442,6 +5588,8 @@ async function loadManageList(refetch = true) {
         }
 
         row.querySelector('.manage-item__delete').onclick = async () => {
+            // Asked first (30/9) - its practice history goes with it.
+            if (!await confirmDialog(t('Delete this question?'), t('Its practice history goes too. This cannot be undone.'), { confirmText: t('Delete'), danger: true })) return;
             const res = await ipcRenderer.invoke('delete-study-item', row.dataset.id);
             if (res && res.error) { toast.error(res.error, 'Could not delete'); return; }
             toast.info('Question deleted.');
@@ -5543,7 +5691,7 @@ function renderReviewList() {
                        </details>`
                     : '<div class="review-item__a review-item__a--empty">No answer passage — this will be a practice prompt.</div>'}
                 <div class="review-item__meta">
-                    ${MODE_LABELS[item.mode] || item.mode}
+                    ${escapeHtml(MODE_LABELS[item.mode] || item.mode)}
                     ${item.solutionSource === 'ai'
                         ? '<span class="review-item__source review-item__source--ai">AI solution — check this one</span>'
                         : '<span class="review-item__source review-item__source--doc">From the document</span>'}

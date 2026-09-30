@@ -940,6 +940,15 @@
                     </div>
                     <button id="auth-logout-btn" class="btn-secondary">Log out</button>
                 </div>
+                <!-- 30/9: changing the password also logs out every other device
+                     (a lost laptop, a shared computer, a stolen session). -->
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-row__title">Change password</div>
+                        <div class="settings-hint settings-hint--inline">Also logs you out on every other device.</div>
+                    </div>
+                    <button id="auth-change-password-btn" class="btn-secondary">Change password</button>
+                </div>
                 <div class="settings-row">
                     <div>
                         <div class="settings-row__title">Delete account</div>

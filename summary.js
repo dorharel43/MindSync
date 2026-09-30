@@ -1,3 +1,5 @@
+// Language (i18n.js); English if it's missing.
+const t = window.t || ((x) => x);
 // summary.js - runs inside the separate summary window (summary.html).
 // Shows the saved summary of one file, or generates and saves one if the
 // file doesn't have one yet.
@@ -104,6 +106,9 @@ function inline(text, math) {
 }
 
 function renderSummary(text) {
+    // \u0000 is this renderer's own placeholder marker - a summary that
+    // contains one used to crash the page (30/9).
+    text = String(text == null ? '' : text).replace(/\u0000/g, '');
     const { text: withoutCode, blocks } = extractCode(text);
     const { text: body, math } = extractMath(withoutCode);
     const lines = body.split(/\r?\n/);
@@ -228,12 +233,12 @@ copyBtn.onclick = () => {
     if (!fileId) { showError('No file was specified.'); return; }
     const result = await ipcRenderer.invoke('get-file', fileId);
     if (!result || result.error) {
-        nameEl.textContent = 'Summary';
+        nameEl.textContent = t('Summary');
         showError((result && result.error) || 'Could not load this file.');
         return;
     }
     file = result;
-    nameEl.textContent = file.name || 'Summary';
+    nameEl.textContent = file.name || t('Summary');
     document.title = `Summary - ${file.name || ''}`;
 
     if (file.summary && file.summary.trim()) {

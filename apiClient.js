@@ -169,6 +169,7 @@ module.exports = {
   getMe: () => request('GET', '/auth/me'),
   updateMe: (updates) => request('PUT', '/auth/me', updates),
   deleteMe: (password) => request('DELETE', '/auth/me', { password }),
+  changePassword: (currentPassword, newPassword) => request('POST', '/auth/change-password', { currentPassword, newPassword }),
 
   // ---- Stats: removed with /api/stats (XP/levels/streak dropped server-side) ----
 

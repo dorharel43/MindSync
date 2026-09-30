@@ -1768,8 +1768,18 @@ ipcMain.handle('select-upload-files', async (event, mode = 'files') => {
     }
     const truncated = paths.length > UPLOAD_MAX_FILES;
     paths = paths.slice(0, UPLOAD_MAX_FILES);
+    // Two files with the same name in different subfolders (Week 1/HW.pdf,
+    // Week 2/HW.pdf) keep their subfolder in the name - otherwise the second
+    // was taken for "already uploaded" and silently not saved (30/9).
+    const baseCount = {};
+    paths.forEach(p => { const b = path.basename(p); baseCount[b] = (baseCount[b] || 0) + 1; });
+    const root = isFolder ? result.filePaths[0] : null;
     return {
-        files: paths.map(p => ({ path: p, name: path.basename(p) })),
+        files: paths.map(p => {
+            const base = path.basename(p);
+            const name = root && baseCount[base] > 1 ? path.relative(root, p).split(path.sep).join('/') : base;
+            return { path: p, name };
+        }),
         folderName,
         truncated,
         maxFiles: UPLOAD_MAX_FILES,
@@ -1863,6 +1873,18 @@ ipcMain.handle('auth-delete-account', async (event, password) => {
   }
 });
 
+// New password: the server logs out every other device and returns a
+// fresh token for this one (30/9).
+ipcMain.handle('auth-change-password', async (event, { currentPassword, newPassword } = {}) => {
+  try {
+    const { token, user } = await api.changePassword(String(currentPassword || ''), String(newPassword || ''));
+    authClient.saveSession({ token, user });
+    return { success: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
 // =====================================
 // Profile
 // =====================================
@@ -1883,9 +1905,11 @@ ipcMain.handle('save-profile', async (event, profileData) => {
 // =====================================
 // Tasks
 // =====================================
-ipcMain.handle('get-tasks', async () => {
-  try { return await api.getTasks(); } 
-  catch (err) { return []; }
+// opts.strict (30/9): report a failure as { error } instead of an empty
+// list - for callers that must not mistake "couldn't load" for "none".
+ipcMain.handle('get-tasks', async (event, opts = {}) => {
+  try { return await api.getTasks(); }
+  catch (err) { return opts && opts.strict ? { error: err.message } : []; }
 });
 
 ipcMain.handle('save-task', async (event, newTask) => {
@@ -2688,9 +2712,11 @@ async function syncToGoogleCalendar(evtData) {
 // =====================================
 // Events
 // =====================================
-ipcMain.handle('get-events', async () => {
-  try { return await api.getEvents(); } 
-  catch (err) { return []; }
+// opts.strict (30/9): report a failure as { error } instead of an empty
+// list - for callers that must not mistake "couldn't load" for "none".
+ipcMain.handle('get-events', async (event, opts = {}) => {
+  try { return await api.getEvents(); }
+  catch (err) { return opts && opts.strict ? { error: err.message } : []; }
 });
 
 ipcMain.handle('save-event', async (event, newEvent) => {
@@ -2935,8 +2961,8 @@ ipcMain.handle('get-files-light', async () => {
   try { return await api.getFilesLight(); } catch (err) { return []; }
 });
 
-ipcMain.handle('get-files', async () => {
-  try { return await api.getFiles(); } catch (err) { return []; }
+ipcMain.handle('get-files', async (event, opts = {}) => {
+  try { return await api.getFiles(); } catch (err) { return opts && opts.strict ? { error: err.message } : []; }
 });
 ipcMain.handle('save-file', async (event, newFile) => {
   try { return await api.createFile(newFile); } catch (err) { return { error: err.message }; }
