@@ -123,6 +123,12 @@ if (authToggleLink) {
         setAuthMode(authMode === 'login' ? 'register' : 'login');
     };
 }
+// The website's "Create an account" button opens /app/#signup (30/9): straight
+// to the sign-up form, not the login a new student has to find a way out of.
+if (/(^|[#&])signup(&|$)/.test(location.hash || '')) {
+    setAuthMode('register');
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* old browser */ }
+}
 
 // Called once, either immediately (a saved session was still valid) or
 // after a successful login/register. Reveals the app and re-runs the loads
@@ -152,7 +158,17 @@ function handleVerifiedLink(user) {
     ), 400);
 }
 
+// "Was logged in on this device" - read by i18n.js before the page shows.
+function rememberSession(on, { keepFlag = false } = {}) {
+    try {
+        if (on) localStorage.setItem('mindsync.session', '1');
+        else if (!keepFlag) localStorage.removeItem('mindsync.session');
+    } catch (e) { /* storage blocked */ }
+    if (!on) document.documentElement.classList.remove('has-session');
+}
+
 function bootApp(user) {
+    rememberSession(true);
     document.body.classList.remove('auth-pending');
     currentUserId = user && (user.id || user._id) ? String(user.id || user._id) : null;
     handleVerifiedLink(user);
@@ -233,6 +249,7 @@ const authLogoutBtn = document.getElementById('auth-logout-btn');
 if (authLogoutBtn) {
     authLogoutBtn.onclick = async () => {
         await ipcRenderer.invoke('auth-logout');
+        rememberSession(false);
         // Start clean (30/9): the screens kept the previous account's data -
         // the next person to log in on this computer saw its folders, files
         // and even an open question. A reload clears everything.
@@ -259,6 +276,11 @@ if (authDeleteBtn) {
             authDeleteBtn.disabled = false;
             if (res && res.success) {
                 toast.success('Your account and its data were deleted.', 'Account deleted');
+                // A clean page (review fix 30/9): the account's screens stayed
+                // filled behind the login form. Same as logging out.
+                rememberSession(false);
+                // (The website goes to its home page by itself - web-shim.)
+                if (!window.MINDSYNC_WEB) setTimeout(() => location.reload(), 1200);
                 if (authForm) authForm.reset();
                 setAuthMode('register');
                 if (authLoading) authLoading.hidden = true;
@@ -301,8 +323,13 @@ if (authChangePwBtn) {
             bootApp(session.user);
             return;
         }
+        // Really logged out: forget "was logged in here".
+        rememberSession(false, { keepFlag: !!(session && session.offline) });
     } catch (err) {
         console.error('auth-get-session failed:', err.message);
+        // Couldn't ask (offline): show the form now, but keep the flag - the
+        // next load, online, should still skip the login screen.
+        rememberSession(false, { keepFlag: true });
     }
     // Not logged in (or the check itself failed) - swap the spinner for the
     // actual form instead of leaving the person staring at "Checking...".
@@ -513,6 +540,17 @@ document.querySelectorAll('[data-appearance]').forEach((btn) => {
 });
 
 // Language (i18n.js): switching reloads the page in the other language.
+// The sidebar's language button offers the other language (30/9).
+const sidebarLangBtn = document.getElementById('sidebar-lang-btn');
+if (sidebarLangBtn) {
+    const other = I18N.lang === 'he' ? 'en' : 'he';
+    sidebarLangBtn.dataset.lang = other;
+    sidebarLangBtn.lang = other;
+    sidebarLangBtn.dir = other === 'he' ? 'rtl' : 'ltr';
+    document.getElementById('sidebar-lang-name').textContent = other === 'he' ? 'עברית' : 'English';
+    // translate="no" keeps the NAME as written; the tooltip is in the page's language.
+    sidebarLangBtn.title = other === 'he' ? 'Switch to Hebrew' : t('Switch to English');
+}
 document.querySelectorAll('[data-lang]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.lang === I18N.lang);
     btn.addEventListener('click', () => { if (btn.dataset.lang !== I18N.lang) I18N.setLang(btn.dataset.lang); });
@@ -693,7 +731,8 @@ function buildScheduleRow(evt, folders) {
     deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         deleteBtn.disabled = true;
-        await ipcRenderer.invoke('delete-event', evt.id);
+        const delRes = await ipcRenderer.invoke('delete-event', evt.id).catch(err => ({ error: err.message }));
+        if (delRes && delRes.error) { deleteBtn.disabled = false; toast.error(delRes.error, t('Could not delete')); return; }
         await loadAndRenderEvents();
         await loadAndRenderWeeklyBoard();
         await loadAndRenderHome();
@@ -1041,7 +1080,7 @@ function renderWeeklyBoard() {
                     <button class="btn-icon edit-weekly-btn" title="${weekly ? 'Edit - changes it in every week' : 'Edit'}" aria-label="Edit">${icon('edit')}</button>
                     <button class="btn-icon btn-icon--danger delete-weekly-btn" title="${weekly ? 'Delete - removes it from every week' : 'Delete from calendar'}" aria-label="Delete from calendar">${icon('trash')}</button>
                 </div>
-                <div class="task-time">${escapeHtml(evt.time)}${weekly ? ` <span class="task-repeat" title="${evt.until ? `Every week until ${untilLabel(evt.until)}` : 'Every week'}">↻${evt.until ? ` until ${untilLabel(evt.until)}` : ''}</span>` : ''}</div>
+                <div class="task-time">${escapeHtml(evt.time)}${weekly ? ` <span class="task-repeat" title="${escapeHtml(evt.until ? t('Every week until {d}', { d: untilLabel(evt.until) }) : t('Every week'))}">↻${evt.until ? ` ${escapeHtml(t('until {d}', { d: untilLabel(evt.until) }))}` : ''}</span>` : ''}</div>
                 <div class="task-card__title" dir="auto">${escapeHtml(evt.title)}</div>
             `;
 
@@ -1070,7 +1109,8 @@ function renderWeeklyBoard() {
                     { confirmText: t('Delete'), danger: true });
                 if (!ok) return;
                 delBtn.disabled = true;
-                await ipcRenderer.invoke('delete-event', evt.id);
+                const delRes = await ipcRenderer.invoke('delete-event', evt.id).catch(err => ({ error: err.message }));
+                if (delRes && delRes.error) { delBtn.disabled = false; toast.error(delRes.error, t('Could not delete')); return; }
                 await loadAndRenderWeeklyBoard();
                 await loadAndRenderHome();
             };
@@ -1838,10 +1878,20 @@ function renderTasksList() {
                 message: `Nothing matches "${taskSearchQuery}". Try a different search.`
             });
         } else if (activeTaskStatusFilter !== 'all') {
+            // The chip's own words, not the internal key ("urgent" showed
+            // up in English in the Hebrew app - review fix 30/9).
+            const chipLabel = (document.querySelector(`#task-status-filters [data-filter="${activeTaskStatusFilter}"]`) || {}).textContent || activeTaskStatusFilter;
             renderEmptyState(empty, {
                 icon: 'plus',
                 title: 'Nothing here',
-                message: `No tasks match the "${activeTaskStatusFilter}" filter right now.`
+                message: t('No tasks in "{f}" right now.', { f: chipLabel.trim() })
+            });
+        } else if (activeTaskCategory === 'All') {
+            // Everything done (the list only shows open tasks): say so.
+            renderEmptyState(empty, {
+                icon: 'checkCircle',
+                title: tasks.length ? 'All done' : 'No tasks yet',
+                message: tasks.length ? 'No open tasks. Nice.' : 'Add one above - write it in your own words.'
             });
         } else {
             renderEmptyState(empty, {
@@ -3115,6 +3165,7 @@ function readinessSentence(s) {
         if (status === 'at_risk' && r.reason === 'knowledge') parts.push('Go over the ones you got wrong first.');
         if (status === 'ready' && s.exam) parts.push('Keep it fresh until the exam.');
     }
+    if (s.lastMock) parts.push(`Last mock exam: ${s.lastMock.score} out of 100.`);
     if (!s.exam) parts.push('No exam date yet - add it (Study or Planner) and practice is timed to it.');
     if (r.filesWithoutQuestions) parts.push(r.filesWithoutQuestions === 1
         ? '1 file in this course has no questions yet.'
@@ -3206,7 +3257,18 @@ function renderReadiness(subjects) {
 
         const foot = document.createElement('div');
         foot.className = 'readiness-row__foot';
-        foot.append(text, practice);
+        const buttons = document.createElement('div');
+        buttons.className = 'readiness-row__buttons';
+        // Mock exam (30/9): the evidence behind "how ready am I".
+        if ((r.total || 0) >= 5) {
+            const mock = document.createElement('button');
+            mock.className = 'btn-secondary btn-sm';
+            mock.textContent = t('Mock exam');
+            mock.onclick = () => { document.getElementById('nav-study').click(); setTimeout(() => openExamSetup(s.category, name.textContent, r.total), 60); };
+            buttons.append(mock);
+        }
+        buttons.append(practice);
+        foot.append(text, buttons);
         row.append(head, bar, foot);
         list.append(row);
     });
@@ -3532,30 +3594,39 @@ async function loadProfile() {
     // Email not confirmed yet (30/9): one quiet row in Settings, only when
     // the server can send email at all.
     const verifyRow = document.getElementById('email-verify-row');
-    if (verifyRow) verifyRow.hidden = !(profile.mailEnabled && profile.emailVerified === false);
+    const unconfirmed = !!(profile.mailEnabled && profile.emailVerified === false);
+    if (verifyRow) verifyRow.hidden = !unconfirmed;
+    // ...and on Home too (30/9): until it's confirmed the AI does only a few
+    // file actions a day, and a student who never opens Settings didn't know why.
+    const homeVerify = document.getElementById('home-verify');
+    if (homeVerify) homeVerify.hidden = !unconfirmed;
     // The server writes our emails in the app's language - keep it in step.
     const lang = (window.I18N && I18N.lang) || 'en';
     if (profile.lang && profile.lang !== lang) ipcRenderer.invoke('save-profile', { lang }).catch(() => {});
 }
 
-const emailResendBtn = document.getElementById('email-resend-btn');
-if (emailResendBtn) emailResendBtn.onclick = async () => {
-    if (emailResendBtn.disabled) return;
-    emailResendBtn.disabled = true;
+async function resendVerification(btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
     try {
         const res = await ipcRenderer.invoke('auth-resend-verification').catch(e => ({ error: e.message }));
         if (res && res.alreadyVerified) {
             toast.success('Your email is already confirmed.');
             document.getElementById('email-verify-row').hidden = true;
+            const hv = document.getElementById('home-verify'); if (hv) hv.hidden = true;
         } else if (res && res.sent) {
             toast.success('Sent. Check your inbox (and the spam folder).', 'Confirmation email');
         } else {
             toast.error((res && res.error) || 'Please try again later.', 'Couldn\'t send it');
         }
     } finally {
-        emailResendBtn.disabled = false;
+        btn.disabled = false;
     }
-};
+}
+const emailResendBtn = document.getElementById('email-resend-btn');
+if (emailResendBtn) emailResendBtn.onclick = () => resendVerification(emailResendBtn);
+const homeVerifyBtn = document.getElementById('home-verify-btn');
+if (homeVerifyBtn) homeVerifyBtn.onclick = () => resendVerification(homeVerifyBtn);
 
 const finishOnboardBtn = document.getElementById('finish-onboard-btn');
 if (finishOnboardBtn) {
@@ -3702,18 +3773,19 @@ async function loadAndRenderHome() {
         });
 
         if (!nextEventFound) {
-            if (nextTitle) nextTitle.innerText = t('All done for today');
+            // "Done for today" read oddly with open tasks on the same screen.
+            if (nextTitle) nextTitle.innerText = t('Nothing more on the calendar today');
             if (nextTime) nextTime.innerText = "Today's classes and events are over.";
-            if (sidebarNextTitle) sidebarNextTitle.innerText = t('All done for today');
+            if (sidebarNextTitle) sidebarNextTitle.innerText = t('Nothing more on the calendar today');
             if (sidebarNextMeta) sidebarNextMeta.innerText = tasks.length > 0 ? `${tasks.length} open task${tasks.length === 1 ? '' : 's'}` : '';
         }
     }
     
     const hour = new Date().getHours();
-    let greeting = "Good night";
-    if (hour >= 6 && hour < 12) greeting = "Good morning";
-    else if (hour >= 12 && hour < 18) greeting = "Good afternoon";
-    else if (hour >= 18 && hour < 22) greeting = "Good evening";
+    // No "Good night" (review fix 30/9): in Hebrew "לילה טוב" is a goodbye.
+    let greeting = "Good evening";
+    if (hour >= 5 && hour < 12) greeting = "Good morning";
+    else if (hour >= 12 && hour < 17) greeting = "Good afternoon";
     
     const greetingEl = document.getElementById('home-greeting-time');
     if (greetingEl) greetingEl.innerText = greeting;
@@ -4013,11 +4085,13 @@ if (copyLogBtn) {
 const resetBtn = document.getElementById('settings-hard-reset-btn');
 if (resetBtn) {
     resetBtn.onclick = async () => {
-        const sure = await confirmDialog("Reset everything?", "This deletes all tasks, calendar events, folders and files. Your profile is kept. This cannot be undone.", { confirmText: "Reset everything", danger: true });
+        const sure = await confirmDialog("Reset everything?", "This deletes all tasks, calendar events, folders and files, and all your practice questions, answers and mock exams. Your account is kept. This cannot be undone.", { confirmText: "Reset everything", danger: true });
         if (sure) {
-            await ipcRenderer.invoke('hard-reset');
+            const res = await ipcRenderer.invoke('hard-reset').catch(e => ({ error: e.message }));
+            // Said "done" even when it failed (review fix 30/9).
+            if (res && res.error) { toast.error(res.error, t('Nothing was reset')); return; }
             toast.success("A new semester begins!", "System reset");
-            location.reload(); 
+            location.reload();
         }
     };
 }
@@ -4057,16 +4131,19 @@ if (generateWeeklyAiBtn) {
             // Blocks the planner placed last time are removed first (through
             // delete-event, so their Google Calendar copies go too); events
             // the user added themselves are never touched.
+            // The new plan is built FIRST, around everything except the old
+            // plan's blocks; only when it came back are those removed (review
+            // fix 30/9 - a failed plan used to leave the student with none).
             const previousPlan = events.filter(e => e.autoScheduled);
-            for (const old of previousPlan) {
-                await ipcRenderer.invoke('delete-event', old.id);
-            }
             if (previousPlan.length) events = events.filter(e => !e.autoScheduled);
 
             const aiResponse = await ipcRenderer.invoke('generate-weekly-plan', tasks, events);
             const parsed = JSON.parse(aiResponse);
             const newPlan = Array.isArray(parsed) ? parsed : (parsed.plan || []);
             const unplaced = (parsed && parsed.unplaced) || [];
+            if (!parsed.error && newPlan.length > 0) {
+                for (const old of previousPlan) await ipcRenderer.invoke('delete-event', old.id);
+            }
 
             if (parsed.error) {
                 toast.error("Could not build a plan: " + parsed.error);
@@ -4913,7 +4990,21 @@ function renderStudyCourses(subjects, items) {
             };
             actions.append(toggle);
         }
+        // Mock exam (30/9) - once there's enough to make an exam of.
+        if ((s.items || 0) >= 5) {
+            const mock = document.createElement('button');
+            mock.className = 'btn-secondary btn-sm';
+            mock.textContent = t('Mock exam');
+            mock.onclick = () => openExamSetup(s.category, name.textContent, s.items);
+            actions.append(mock);
+        }
         actions.append(practice);
+        if (s.lastMock) {
+            const m = document.createElement('span');
+            m.className = 'study-course__mock';
+            m.textContent = `${t('Last mock exam:')} ${s.lastMock.score} \u2066±${s.lastMock.margin}\u2069`;
+            meta.append(document.createTextNode(' · '), m);
+        }
 
         const main = document.createElement('div');
         main.className = 'study-course__main';
@@ -5046,14 +5137,27 @@ let courseFixDone = false;
 async function fixFileNamedCourses() {
     if (courseFixDone) return;
     courseFixDone = true;
+    // Once per account (30/9): it ran on EVERY launch, and a course the user
+    // had deliberately named like a file ("Statistics" for Statistics.pdf in
+    // "Semester A") was moved back into the folder each time.
+    const doneKey = `mindsync.courseFix.${currentUserId || 'anon'}`;
+    try { if (localStorage.getItem(doneKey) === '1') return; } catch (e) { return; }
     const [cats, files] = await Promise.all([
-        ipcRenderer.invoke('get-study-categories').catch(() => []),
-        ipcRenderer.invoke('get-files-light').catch(() => [])
+        ipcRenderer.invoke('get-study-categories').catch(() => null),
+        ipcRenderer.invoke('get-files-light').catch(() => null)
     ]);
+    // Marked done only after a real look (review fix): offline, or before the
+    // question list loaded, it would have been "done" without doing anything.
+    if (!Array.isArray(cats) || !Array.isArray(files) || !Array.isArray(studyItemsCache)) return;
+    try { localStorage.setItem(doneKey, '1'); } catch (e) { /* ignore */ }
     let moved = 0;
     for (const cat of cats || []) {
         const file = (files || []).find(f => f.name && f.name.replace(/\.[^.]+$/, '').trim() === String(cat).trim() && realFolder(f));
         if (!file) continue;
+        // Only a course that is really "the questions of that one file" (the
+        // old bug) - not one the user filled from other files too.
+        const inCourse = (studyItemsCache || []).filter(i => (i.category || '') === cat);
+        if (!inCourse.length || inCourse.some(i => (i.sourceFile || '') !== file.name)) continue;
         const r = await ipcRenderer.invoke('recategorize-study-items', cat, realFolder(file));
         if (r && r.updated) moved += r.updated;
     }
@@ -5154,6 +5258,25 @@ async function startStudySession(resume = null, scope = null) {
     let items;
     if (resume && resume.scope) scope = resume.scope;
 
+    // Don't silently throw away what's on the screen (30/9): new questions
+    // waiting for review cost an AI call, and a session in the middle is work.
+    const reviewEl = document.getElementById('study-review');
+    if (reviewEl && !reviewEl.hidden && reviewDraft && reviewDraft.length) {
+        const ok = await confirmDialog(t('Discard the new questions?'),
+            t('The questions from your file are still waiting for you to look them over. Starting practice now discards them.'),
+            { confirmText: t('Discard and practice'), danger: true });
+        if (!ok) return;
+        closeReviewScreen();
+    }
+    if (!(await stopExam())) return;   // a mock exam on screen: ask first
+    const sessionEl = document.getElementById('study-session');
+    if (!resume && sessionEl && !sessionEl.hidden && studyState.queue && studyState.index < studyState.queue.length) {
+        const ok = await confirmDialog(t('Leave this session?'),
+            t('You are in the middle of a practice session. Start the new one instead?'),
+            { confirmText: t('Start the new one') });
+        if (!ok) return;
+    }
+
     if (resume && Array.isArray(resume.ids)) {
         // Re-fetch by id rather than trusting a stored copy: an item may have
         // been edited or deleted since the session was paused.
@@ -5177,17 +5300,32 @@ async function startStudySession(resume = null, scope = null) {
             clearSessionProgress();
             return startStudySession();
         }
+    } else if (scope && Array.isArray(scope.ids)) {
+        // Chosen questions (30/9: "Practice what I missed" after a mock exam).
+        const all = await ipcRenderer.invoke('get-study-items', { strict: true }).catch(e => ({ error: e.message }));
+        if (!Array.isArray(all)) { toast.error(t('Couldn\'t load your questions right now. Check the connection and try again.')); return; }
+        const byId = new Map(all.map(i => [i.id, i]));
+        items = scope.ids.map(id => byId.get(id)).filter(Boolean);
+        if (!items.length) { toast.info('There are no questions here yet.'); return; }
     } else {
         const filter = scope ? { category: scope.category, ...(scope.sourceFile !== undefined ? { sourceFile: scope.sourceFile } : {}) } : {};
-        items = await ipcRenderer.invoke('get-due-study-items', { limit: 20, ...filter });
-        if ((!items || items.length === 0) && scope) {
+        items = await ipcRenderer.invoke('get-due-study-items', { limit: 20, strict: true, ...filter }).catch(e => ({ error: e.message }));
+        if (!Array.isArray(items)) {
+            toast.error(t('Couldn\'t load your questions right now. Check the connection and try again.'));
+            return;
+        }
+        if (items.length === 0 && scope) {
             // Nothing DUE in this course/file - say why, and offer the rest.
             const ok = await confirmDialog(
                 `Nothing to practice in ${scope.label} right now`,
                 'You practiced these recently, so none is due yet. Spacing questions out is what makes you remember them longer. You can still go over them now - handy right before an exam.',
                 { confirmText: 'Practice anyway', cancelText: 'Not now' });
             if (!ok) return;
-            items = await ipcRenderer.invoke('get-due-study-items', { limit: 20, all: true, ...filter });
+            items = await ipcRenderer.invoke('get-due-study-items', { limit: 20, all: true, strict: true, ...filter }).catch(e => ({ error: e.message }));
+            if (!Array.isArray(items)) {
+                toast.error(t('Couldn\'t load your questions right now. Check the connection and try again.'));
+                return;
+            }
         }
         if (!items || items.length === 0) {
             toast.info(scope
@@ -5204,8 +5342,11 @@ async function startStudySession(resume = null, scope = null) {
     studyState.index = resume ? Math.min(resume.index, items.length - 1) : 0;
     studyState.session = resume ? resume.session : { reviewed: 0, correct: 0, lucky: 0, overconfident: 0 };
     if (!Array.isArray(studyState.session.sureWrong)) studyState.session.sureWrong = [];
+    studyState.checkOff = null;           // AI allowance ran out this session (reason)
+    studyState.shortAnswers = new Map();  // "I don't know" answers already fetched
 
     clearManageSelection();
+    document.getElementById('study-exam').hidden = true;
     document.getElementById('study-home').hidden = true;
     document.getElementById('study-summary').hidden = true;
     document.getElementById('study-review').hidden = true;
@@ -5221,7 +5362,8 @@ function renderStudyCard() {
 
     studyState.confidence = null;
     studyState.sureNoteShown = false;
-    document.querySelectorAll('.confidence-btn.is-picked').forEach(b => b.classList.remove('is-picked'));
+    studyState.answerId = null;
+    document.querySelectorAll('#study-confidence-step .confidence-btn.is-picked').forEach(b => b.classList.remove('is-picked'));
     studyState.startedAt = Date.now();
     studyState.aiOutcome = null;
     studyState.aiChecked = null;
@@ -5231,7 +5373,7 @@ function renderStudyCard() {
         typed.placeholder = TYPE_PLACEHOLDERS[item.mode] || TYPE_PLACEHOLDERS.recall;
         typed.disabled = false;
     }
-    document.querySelectorAll('.confidence-btn, #study-dont-know-btn').forEach(b => { b.disabled = false; });
+    document.querySelectorAll('#study-confidence-step .confidence-btn, #study-dont-know-btn').forEach(b => { b.disabled = false; });
 
     const total = studyState.queue.length;
     document.getElementById('study-position').textContent = `${studyState.index + 1} / ${total}`;
@@ -5244,6 +5386,8 @@ function renderStudyCard() {
     const badgeText = (item.mode === 'practice' && item.skillTag) ? item.skillTag : item.category;
     if (badgeText) { catBadge.textContent = badgeText; catBadge.hidden = false; }
     else catBadge.hidden = true;
+    const twinBadge = document.getElementById('study-twin-badge');
+    if (twinBadge) twinBadge.hidden = !item.twinOf;
 
     document.getElementById('study-question').textContent = item.question;
     // Last time: sure, and wrong. Say so - that's the whole point of the list.
@@ -5270,29 +5414,34 @@ const CONFIDENCE_HINT_TIMES = 5;
 function confidenceHintKey() { return `mindsync.confidenceHintSeen.${currentUserId || 'anon'}`; }
 
 // Step 1 -> 2: confidence is locked in before anything is revealed.
-document.querySelectorAll('.confidence-btn').forEach(btn => {
+document.querySelectorAll('#study-confidence-step .confidence-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
         const seen = Number(localStorage.getItem(confidenceHintKey()) || 0);
         if (seen < CONFIDENCE_HINT_TIMES) localStorage.setItem(confidenceHintKey(), String(seen + 1));
         studyState.confidence = btn.dataset.confidence;
-        document.querySelectorAll('.confidence-btn').forEach(b => b.classList.toggle('is-picked', b === btn));
+        document.querySelectorAll('#study-confidence-step .confidence-btn').forEach(b => b.classList.toggle('is-picked', b === btn));
         const item = studyState.queue[studyState.index];
         const typed = document.getElementById('study-typed-answer');
         const text = typed ? typed.value.trim() : '';
         if (!item || !text) { revealAnswer(); return; }   // answered in the head
+        // The AI allowance ran out earlier in this session: straight to
+        // marking yourself, with the reason - not another wait for a "no".
+        if (studyState.checkOff) { revealAnswer({ failed: studyState.checkOff, typed: text }); return; }
 
         // Typed: the AI checks it. The buttons stay put (no jump), just busy.
-        const buttons = document.querySelectorAll('.confidence-btn, #study-dont-know-btn');
+        const buttons = document.querySelectorAll('#study-confidence-step .confidence-btn, #study-dont-know-btn');
         buttons.forEach(b => { b.disabled = true; });
         typed.disabled = true;
         const prompt = document.getElementById('study-confidence-prompt');
         const promptText = prompt.textContent;
         prompt.textContent = 'Checking your answer…';
-        const res = await ipcRenderer.invoke('grade-study-answer', {
-            question: item.question, expected: item.answer || item.mySolution || '', mode: item.mode, userAnswer: text
-        }).catch(e => ({ error: e.message }));
+        const res = await withTimeout(ipcRenderer.invoke('grade-study-answer', {
+            question: item.question, expected: item.answer || item.mySolution || '', mode: item.mode, userAnswer: text,
+            solutionSource: item.solutionSource || 'document'
+        }).catch(e => ({ error: e.message })), CHECK_TIMEOUT_MS);
         prompt.textContent = promptText;
         if (studyState.queue[studyState.index] !== item) return;   // stopped meanwhile
+        if (res && res.error && isAiLimit(res.error)) studyState.checkOff = res.error;   // no point asking again this session
         revealAnswer(res && !res.error ? { ...res, typed: text } : { failed: (res && res.error) || 'no answer', typed: text });
     });
 });
@@ -5300,6 +5449,15 @@ document.querySelectorAll('.confidence-btn').forEach(btn => {
 // "I don't know": straight to the answer. No check (nothing to check), and no
 // "How did you do?" - it's already known how it went. Saved as not known
 // (missed / wrong), so it comes back soon.
+// The check waits at most this long (30/9): the server may retry an
+// overloaded AI for over a minute, with every button greyed out.
+const CHECK_TIMEOUT_MS = 25000;
+function withTimeout(promise, ms) {
+    return Promise.race([promise, new Promise(resolve => setTimeout(() => resolve({ error: 'timeout' }), ms))]);
+}
+// "You've used today's AI allowance" and the like - a reason, not a glitch.
+const isAiLimit = (msg) => /resets at midnight|confirm your email|quota|resource_exhausted|\b429\b|daily limit/i.test(String(msg || ''));
+
 const dontKnowBtn = document.getElementById('study-dont-know-btn');
 if (dontKnowBtn) dontKnowBtn.onclick = () => {
     const item = studyState.queue[studyState.index];
@@ -5309,7 +5467,7 @@ if (dontKnowBtn) dontKnowBtn.onclick = () => {
     // The stored answer is a quote from the material - often long, with an
     // intro. Ask for the short direct one (or a solution when there's none).
     const stored = (item.answer || item.mySolution || '').trim();
-    if (!stored || stored.length > SHORT_ENOUGH) fetchShortAnswer(item);
+    if ((!stored || stored.length > SHORT_ENOUGH) && !studyState.checkOff) fetchShortAnswer(item);
 };
 const SHORT_ENOUGH = 200;
 
@@ -5319,11 +5477,22 @@ async function fetchShortAnswer(item) {
     const text = document.getElementById('study-short-answer-text');
     if (!box || !text) return;
     box.hidden = false;
+    // Asked once per question (30/9) - it comes back after "I don't know"
+    // often, and each ask used a bit of the day's AI allowance.
+    studyState.shortAnswers = studyState.shortAnswers || new Map();
+    const cached = studyState.shortAnswers.get(item.id);
+    if (cached) {
+        text.textContent = cached;
+        document.getElementById('study-answer').classList.add('study-answer--source');
+        return;
+    }
     box.classList.add('is-loading');
     text.textContent = t('Getting a short answer…');
-    const res = await ipcRenderer.invoke('grade-study-answer', {
+    const res = await withTimeout(ipcRenderer.invoke('grade-study-answer', {
         question: item.question, expected: item.answer || item.mySolution || '', mode: item.mode, explainOnly: true
-    }).catch(() => null);
+    }).catch(() => null), CHECK_TIMEOUT_MS);
+    if (res && res.error && isAiLimit(res.error)) studyState.checkOff = res.error;
+    if (res && res.answer) studyState.shortAnswers.set(item.id, res.answer);
     if (studyState.index !== index || studyState.queue[index] !== item) return;   // moved on meanwhile
     box.classList.remove('is-loading');
     if (res && res.answer) {
@@ -5344,8 +5513,11 @@ function revealAnswer(check = null) {
     const nextRow = document.getElementById('study-next-row');
     const dontKnow = !!(check && check.dontKnow);
     const outcomeMap = VERDICT_TO_OUTCOME[item.mode] || VERDICT_TO_OUTCOME.recall;
+    // A check that says it isn't sure (30/9) is shown, but nothing is
+    // pre-selected - the student decides.
+    const unsure = !!(check && check.verdict && check.sure === false);
     studyState.aiOutcome = dontKnow ? outcomeMap.wrong
-        : (check && check.verdict ? outcomeMap[check.verdict] : null);
+        : (check && check.verdict && !unsure ? outcomeMap[check.verdict] : null);
     // Only a real AI verdict is sent with the answer ("I don't know" wasn't
     // checked) - the server counts how often students overrule the check.
     studyState.aiChecked = !dontKnow && check && check.verdict ? outcomeMap[check.verdict] : null;
@@ -5354,9 +5526,14 @@ function revealAnswer(check = null) {
         verdictBox.className = 'study-verdict' + (check && check.verdict ? ` study-verdict--${check.verdict}` : '');
         if (check) {
             document.getElementById('study-verdict-title').textContent = check.verdict
-                ? VERDICT_TITLES[check.verdict]
+                ? (unsure ? `${t(VERDICT_TITLES[check.verdict])} ${t('(the check is not sure - you decide)')}` : VERDICT_TITLES[check.verdict])
                 : 'Couldn\'t check it right now - mark yourself below';
-            document.getElementById('study-verdict-feedback').textContent = check.verdict ? (check.feedback || '') : '';
+            // Why it couldn't (30/9): "used today's allowance" / "confirm your
+            // email" is something the student can act on; a timeout isn't.
+            const why = !check.verdict && check.failed
+                ? (isAiLimit(check.failed) ? check.failed : check.failed === 'timeout' ? t('The check took too long.') : '')
+                : '';
+            document.getElementById('study-verdict-feedback').textContent = check.verdict ? (check.feedback || '') : why;
             document.getElementById('study-verdict-yours').textContent = `${t('You wrote:')} ${check.typed}`;
         }
         // The core moment, said right where it happens (same words as the
@@ -5473,10 +5650,13 @@ async function submitReview(outcome) {
     const secondsSpent = Math.round((Date.now() - studyState.startedAt) / 1000);
     let res;
     try {
+        // One id per shown card - a retry of the same answer is saved once.
+        if (!studyState.answerId) studyState.answerId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
         res = await ipcRenderer.invoke('submit-study-review', item.id, {
             confidence: studyState.confidence,
             outcome,
             secondsSpent,
+            clientId: studyState.answerId,
             ...(studyState.aiChecked ? { aiSuggested: studyState.aiChecked } : {})
         });
     } catch (err) {
@@ -5487,6 +5667,15 @@ async function submitReview(outcome) {
     // Stopped, or moved on, while it was saving: nothing more to do here.
     if (studyState.queue[index] !== item || studyState.index !== index || document.getElementById('study-session').hidden) return;
 
+    // Deleted meanwhile (another tab or device, 30/9): every button kept
+    // failing on it. Skip to the next one.
+    if (res && res.error && /not found|404/i.test(res.error)) {
+        toast.info(t('This question was deleted - skipping it.'));
+        studyState.index += 1;
+        saveSessionProgress();
+        if (studyState.index >= studyState.queue.length) endStudySession(); else renderStudyCard();
+        return;
+    }
     if (!res || res.error) {
         setOutcomeButtonsDisabled(false);
         toast.error((res && res.error) || 'Please try again.', 'Could not save review');
@@ -5513,10 +5702,16 @@ async function submitReview(outcome) {
         if (!studyState.sureNoteShown) toast.warning('You were sure about that one. It will come back soon.', 'Sure but wrong');
     }
 
+    // The mistake loop: not known -> a twin question on the same idea.
+    const lastReview = res.item && res.item.reviews ? res.item.reviews[res.item.reviews.length - 1] : null;
+    if (lastReview && lastReview.wasCorrect === false) makeTwin(item);
+
     // A same-session retry (interval 0) goes back in the queue rather than
     // being lost until tomorrow.
     if (res.nextInterval === 0) {
-        studyState.queue.push(item);
+        // The item as saved just now (30/9) - with this answer in its
+        // history, so the card says "last time you were sure - and wrong".
+        studyState.queue.push(res.item ? { ...item, ...res.item, id: item.id } : item);
     }
 
     studyState.index += 1;
@@ -5524,6 +5719,366 @@ async function submitReview(outcome) {
 
     if (studyState.index >= studyState.queue.length) endStudySession();
     else renderStudyCard();
+}
+
+
+// ==========================================
+// Mock exams (30/9)
+// ==========================================
+// One course under exam conditions: typed answers, a clock, nothing checked
+// or shown until the end - then every answer is checked (the same AI check as
+// practice), and one score comes back with its margin. The latest score is
+// shown with the course as "Last mock exam" - evidence, not a feeling. Every
+// checked answer also counts as practice on the server (routes/study.js).
+const examState = { course: '', label: '', count: 15, timed: true, items: [], answers: [], index: 0, startedAt: 0, limitSec: 0, timer: null, running: false, checking: false, runId: 0 };
+
+// Another screen wants Study while an exam is running or being checked
+// (review fix 30/9): ask, then stop it for real - the clock and any checking
+// in flight - instead of it carrying on out of sight and saving a run later.
+async function stopExam(ask = true) {
+    if (!examState.running && !examState.checking) return true;
+    if (ask) {
+        const ok = await confirmDialog(t('Leave the mock exam?'), t('The answers you wrote in it are not saved.'), { confirmText: t('Leave the exam'), danger: true });
+        if (!ok) return false;
+    }
+    clearInterval(examState.timer);
+    examState.running = false;
+    examState.checking = false;
+    examState.runId += 1;          // anything still checking belongs to the old run
+    const box = document.getElementById('study-exam');
+    if (box) box.hidden = true;
+    return true;
+}
+const PAST_EXAM_FILE = /מבחן|בחינה|מועד|בוחן|\bexams?\b|midterm|quiz|final exam/i;
+const EXAM_SECONDS_PER_QUESTION = 120;
+
+function showExamPart(part) {
+    ['exam-setup', 'exam-run', 'exam-checking', 'exam-result'].forEach(id => { document.getElementById(id).hidden = id !== part; });
+}
+
+async function openExamSetup(course, label, total) {
+    if (!(await stopExam())) return;
+    examState.course = course;
+    examState.label = label || course;
+    ['study-home', 'study-session', 'study-summary', 'study-review', 'study-manage'].forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
+    document.getElementById('study-exam').hidden = false;
+    document.getElementById('exam-course-name').textContent = examState.label;
+    // Question counts that make sense for this course: 10 always, 15 and 25
+    // only when there are that many. The default is the largest up to 15.
+    const n = total || 0;
+    let chosen = null;
+    document.querySelectorAll('#exam-count .filter-chip').forEach(b => {
+        const c = Number(b.dataset.count);
+        b.hidden = c > 10 && c > n;
+        if (!b.hidden && c <= 15) chosen = b;
+    });
+    document.querySelectorAll('#exam-count .filter-chip').forEach(b => b.classList.toggle('active', b === chosen));
+    const past = (studyItemsCache || []).some(i => studyCourseOf(i) === course && !i.twinOf && PAST_EXAM_FILE.test(i.sourceFile || ''));
+    document.getElementById('exam-past-note').hidden = !past;
+    showExamPart('exam-setup');
+    window.scrollTo(0, 0);
+}
+
+document.querySelectorAll('#exam-count .filter-chip, #exam-time .filter-chip').forEach(b => {
+    b.addEventListener('click', () => {
+        b.parentElement.querySelectorAll('.filter-chip').forEach(x => x.classList.toggle('active', x === b));
+    });
+});
+
+function leaveExam() {
+    stopExam(false);
+    document.getElementById('study-exam').hidden = true;
+    document.getElementById('study-home').hidden = false;
+    loadStudyHome();
+}
+document.getElementById('exam-cancel-btn').onclick = leaveExam;
+document.getElementById('exam-done-btn').onclick = leaveExam;
+
+document.getElementById('exam-start-btn').onclick = async () => {
+    const btn = document.getElementById('exam-start-btn');
+    const active = document.querySelector('#exam-count .filter-chip.active');
+    examState.count = active ? Number(active.dataset.count) : 15;
+    examState.timed = (document.querySelector('#exam-time .filter-chip.active') || {}).dataset.timed !== '0';
+    btn.disabled = true;
+    const qs = await ipcRenderer.invoke('study-exam-questions', examState.course, examState.count).catch(e => ({ error: e.message }));
+    btn.disabled = false;
+    if (!Array.isArray(qs)) { toast.error((qs && qs.error) || t('Couldn\'t load your questions right now. Check the connection and try again.')); return; }
+    if (qs.length < 3) { toast.info(t('A mock exam needs at least 3 questions in this course.')); return; }
+    examState.items = qs;
+    examState.answers = qs.map(() => ({ typed: '', confidence: 'none', done: false }));
+    examState.index = 0;
+    examState.limitSec = examState.timed ? qs.length * EXAM_SECONDS_PER_QUESTION : 0;
+    examState.startedAt = Date.now();
+    examState.running = true;
+    clearInterval(examState.timer);
+    examState.timer = setInterval(tickExam, 1000);
+    tickExam();
+    showExamPart('exam-run');
+    renderExamCard();
+};
+
+function tickExam() {
+    const el = document.getElementById('exam-timer');
+    if (!examState.running) return;
+    const used = Math.floor((Date.now() - examState.startedAt) / 1000);
+    const fmt = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+    if (!examState.limitSec) { el.textContent = fmt(used); el.classList.remove('is-low'); return; }
+    const left = Math.max(0, examState.limitSec - used);
+    el.textContent = `${t('Time left')} ${fmt(left)}`;
+    el.classList.toggle('is-low', left <= 60);
+    if (left === 0) finishExam(true);
+}
+
+function renderExamCard() {
+    const i = examState.index;
+    const item = examState.items[i];
+    const n = examState.items.length;
+    document.getElementById('exam-position').textContent = `${i + 1} / ${n}`;
+    document.getElementById('exam-progress-fill').style.width = `${(i / n) * 100}%`;
+    document.getElementById('exam-course-badge').textContent = examState.label;
+    document.getElementById('exam-past-badge').hidden = !item.fromPastExam;
+    document.getElementById('exam-question').textContent = item.question;
+    const box = document.getElementById('exam-answer');
+    box.value = examState.answers[i].typed;
+    box.placeholder = t(item.mode === 'practice' ? 'Your solution - the steps and the result' : 'Your answer');
+    box.focus();
+}
+
+function storeMockAnswer(confidence) {
+    const a = examState.answers[examState.index];
+    a.typed = document.getElementById('exam-answer').value.trim();
+    a.confidence = a.typed ? confidence : 'none';
+    a.done = true;
+}
+document.querySelectorAll('.exam-conf').forEach(b => {
+    b.addEventListener('click', () => {
+        if (!examState.running) return;
+        if (!document.getElementById('exam-answer').value.trim()) {
+            toast.info(t('Write an answer first - or press "Skip" if you don\'t know it.'));
+            return;
+        }
+        storeMockAnswer(b.dataset.confidence);
+        nextExamCard();
+    });
+});
+document.getElementById('exam-skip-btn').onclick = () => {
+    if (!examState.running) return;
+    document.getElementById('exam-answer').value = '';
+    storeMockAnswer('none');
+    nextExamCard();
+};
+function nextExamCard() {
+    if (examState.index + 1 >= examState.items.length) return finishExam(false);
+    examState.index += 1;
+    renderExamCard();
+}
+document.getElementById('exam-finish-btn').onclick = async () => {
+    const left = examState.answers.filter(a => !a.done).length;
+    if (left > 0) {
+        const ok = await confirmDialog(t('Finish the exam now?'),
+            t('{n} questions have no answer yet - they count as wrong.', { n: left }),
+            { confirmText: t('Finish and check') });
+        if (!ok) return;
+    }
+    finishExam(false);
+};
+
+async function finishExam(timeUp) {
+    if (!examState.running) return;
+    examState.running = false;
+    examState.checking = true;
+    clearInterval(examState.timer);
+    // What's typed on the current card counts, even without a button press.
+    const cur = examState.answers[examState.index];
+    if (cur && !cur.done) { cur.typed = document.getElementById('exam-answer').value.trim(); cur.confidence = cur.typed ? 'think_so' : 'none'; }
+    const usedSec = Math.round((Date.now() - examState.startedAt) / 1000);
+    // This run's own copy: a new exam started meanwhile can't mix into it.
+    const run = { id: examState.runId, items: examState.items, answers: examState.answers, course: examState.course, startedAt: examState.startedAt, limitSec: examState.limitSec,
+        clientRunId: `${examState.startedAt.toString(36)}${Math.random().toString(36).slice(2, 8)}` };
+    const stale = () => examState.runId !== run.id;
+    if (timeUp) toast.info(t('Time is up - checking what you wrote.'));
+    showExamPart('exam-checking');
+    const text = document.getElementById('exam-checking-text');
+
+    // Check, three at a time. A used-up AI allowance stops the checking: the
+    // rest is "not checked" (left out of the score), and the result says so.
+    const results = run.items.map(() => null);
+    let next = 0, done = 0, stopReason = null;
+    const toCheck = run.answers.filter(a => a.typed).length;
+    const worker = async () => {
+        while (next < run.items.length && !stale()) {
+            const i = next++;
+            const item = run.items[i];
+            const a = run.answers[i];
+            if (!a.typed) { results[i] = { verdict: 'blank' }; continue; }
+            if (stopReason) { results[i] = { verdict: 'unchecked' }; continue; }
+            const res = await withTimeout(ipcRenderer.invoke('grade-study-answer', {
+                question: item.question, expected: item.answer || '', mode: item.mode, userAnswer: a.typed, solutionSource: item.solutionSource || 'document'
+            }).catch(e => ({ error: e.message })), CHECK_TIMEOUT_MS);
+            if (res && res.verdict) results[i] = res;
+            else {
+                results[i] = { verdict: 'unchecked', error: res && res.error };
+                if (res && res.error && isAiLimit(res.error)) stopReason = res.error;
+            }
+            done += 1;
+            if (!stale()) text.textContent = t('Checking your answers… {done} of {total}', { done, total: toCheck });
+        }
+    };
+    text.textContent = t('Checking your answers… {done} of {total}', { done: 0, total: toCheck });
+    await Promise.all([worker(), worker(), worker()]);
+    if (stale()) return;   // left the exam while it was being checked
+
+    const answers = run.items.map((item, i) => ({ itemId: item.id, confidence: run.answers[i].confidence, verdict: results[i].verdict }));
+    const saved = await ipcRenderer.invoke('study-exam-save', {
+        course: run.course, startedAt: new Date(run.startedAt).toISOString(), limitSec: run.limitSec, usedSec, answers, clientRunId: run.clientRunId
+    }).catch(e => ({ error: e.message }));
+    if (stale()) return;
+    examState.checking = false;
+    if (saved && saved.error) toast.error(t('The result couldn\'t be saved - it is shown here, but won\'t be in your history.'));
+    renderExamResult(saved && !saved.error ? saved : null, results, stopReason, run);
+}
+
+function renderExamResult(saved, results, stopReason, run) {
+    const items = run.items;
+    const answers = run.answers;
+    // Same arithmetic as the server (routes/study.js examScore) - used when saving failed.
+    const inScore = results.filter(r => r.verdict !== 'unchecked');
+    const points = inScore.reduce((n, r) => n + (r.verdict === 'correct' ? 1 : r.verdict === 'partial' ? 0.5 : 0), 0);
+    const p = inScore.length ? points / inScore.length : 0;
+    const score = saved ? saved.score : Math.round(p * 100);
+    const margin = saved ? saved.margin : Math.round(100 * Math.sqrt(Math.max(p * (1 - p), 0.04) / Math.max(1, inScore.length)));
+    document.getElementById('exam-score').textContent = inScore.length ? score : '-';
+    document.getElementById('exam-margin').textContent = inScore.length ? ` ±${margin}` : '';
+    const count = (v) => results.filter(r => r.verdict === v).length;
+    document.getElementById('exam-n-correct').textContent = count('correct');
+    document.getElementById('exam-n-partial').textContent = count('partial');
+    document.getElementById('exam-n-wrong').textContent = count('wrong') + count('blank');
+    const sureWrong = results.filter((r, i) => answers[i].confidence === 'sure' && (r.verdict === 'wrong' || r.verdict === 'partial')).length;
+    document.getElementById('exam-n-surewrong').textContent = sureWrong;
+    const unchecked = count('unchecked');
+    document.getElementById('exam-score-text').textContent = [
+        t('Out of 100, from {n} checked answers. {m} because a short exam is a rough measure - more questions give a tighter number.', { n: inScore.length, m: `\u2066±${margin}\u2069` }),
+        unchecked ? t('{n} answers couldn\'t be checked and are left out.', { n: unchecked }) + (stopReason && isAiLimit(stopReason) ? ` ${stopReason}` : '') : ''
+    ].filter(Boolean).join(' ');
+
+    // By topic: the skill, else the file - weakest first.
+    const topics = new Map();
+    items.forEach((item, i) => {
+        const r = results[i];
+        if (r.verdict === 'unchecked') return;
+        const key = item.skillTag || (item.sourceFile ? fileLabel(item.sourceFile) : t('General'));
+        const tp = topics.get(key) || { n: 0, pts: 0 };
+        tp.n += 1; tp.pts += r.verdict === 'correct' ? 1 : r.verdict === 'partial' ? 0.5 : 0;
+        topics.set(key, tp);
+    });
+    const topicRows = [...topics.entries()].map(([k, v]) => ({ k, n: v.n, pct: Math.round((v.pts / v.n) * 100) })).sort((a, b) => a.pct - b.pct || b.n - a.n);
+    const topicsEl = document.getElementById('exam-topics');
+    topicsEl.innerHTML = '';
+    topicRows.forEach(r => {
+        const row = document.createElement('div');
+        row.className = 'exam-topic';
+        row.innerHTML = `<div class="exam-topic__head"><bdi class="exam-topic__name"></bdi><span class="exam-topic__pct ms-tabular">${r.pct}%</span></div><div class="exam-topic__bar"><div style="width:${r.pct}%"></div></div><div class="exam-topic__n"></div>`;
+        row.querySelector('.exam-topic__name').textContent = r.k;
+        row.querySelector('.exam-topic__n').textContent = r.n === 1 ? t('1 question') : t('{n} questions', { n: r.n });
+        row.classList.toggle('is-weak', r.pct < 50);
+        topicsEl.append(row);
+    });
+
+    const VERDICT_LABELS = { correct: 'Right', partial: 'Half right', wrong: 'Wrong', blank: 'Skipped', unchecked: 'Not checked' };
+    const CONF_LABELS = { sure: 'I\'m sure', think_so: 'I think so', guessing: 'Guessing', none: '' };
+    const list = document.getElementById('exam-answers');
+    list.innerHTML = '';
+    items.forEach((item, i) => {
+        const r = results[i];
+        const a = answers[i];
+        const el = document.createElement('div');
+        el.className = `exam-answer is-${r.verdict}`;
+        el.innerHTML = `
+            <div class="exam-answer__top"><span class="exam-answer__verdict"></span><span class="exam-answer__conf"></span></div>
+            <div class="exam-answer__q" dir="auto" translate="no"></div>
+            <div class="exam-answer__line"><span class="exam-answer__label"></span> <span class="exam-answer__yours" dir="auto" translate="no"></span></div>
+            <div class="exam-answer__feedback" dir="auto" translate="no"></div>
+            <div class="exam-answer__line exam-answer__right"><span class="exam-answer__label"></span> <span class="exam-answer__correct" dir="auto" translate="no"></span></div>`;
+        el.querySelector('.exam-answer__verdict').textContent = t(VERDICT_LABELS[r.verdict]);
+        el.querySelector('.exam-answer__conf').textContent = a.confidence !== 'none' ? `${t('You said:')} ${t(CONF_LABELS[a.confidence])}` : '';
+        el.querySelector('.exam-answer__q').textContent = item.question;
+        el.querySelectorAll('.exam-answer__label')[0].textContent = t('Your answer:');
+        el.querySelector('.exam-answer__yours').textContent = a.typed || '-';
+        el.querySelector('.exam-answer__feedback').textContent = r.feedback || '';
+        el.querySelectorAll('.exam-answer__label')[1].textContent = t('The answer:');
+        const right = r.answer || String(item.answer || '').slice(0, 400);
+        el.querySelector('.exam-answer__correct').textContent = right;
+        el.querySelector('.exam-answer__right').hidden = !right || r.verdict === 'correct';
+        list.append(el);
+    });
+
+    const missed = items.filter((it, i) => ['wrong', 'partial', 'blank'].includes(results[i].verdict)).map(it => it.id);
+    const btn = document.getElementById('exam-practice-missed-btn');
+    btn.hidden = missed.length === 0;
+    btn.onclick = () => {
+        document.getElementById('study-exam').hidden = true;
+        startStudySession(null, { category: run.course, label: t('Missed in the mock exam'), ids: missed });
+    };
+    showExamPart('exam-result');
+    window.scrollTo(0, 0);
+}
+
+// ---- The mistake loop (30/9) ------------------------------------------------
+// After a wrong / half / "I don't know" answer, the AI writes a TWIN: the same
+// idea from another angle (or the same method with other numbers). It's
+// saved to the deck and comes up a few cards later in this session. Getting
+// the twin right is evidence of understanding - the original's answer was
+// just on screen, so getting the original right again proves little.
+// A few per session (each is a small AI job); never a twin of a twin.
+const MAX_TWINS_PER_SESSION = 5;
+async function makeTwin(item) {
+    const session = studyState.session;
+    if (!session || item.twinOf || studyState.checkOff) return;
+    const base = String(item.answer || item.mySolution || '').trim();
+    if (!base) return;
+    // An array, not a Set: the session is saved as JSON (to resume it).
+    if (!Array.isArray(session.twinsAsked)) session.twinsAsked = [];
+    if (session.twinsAsked.includes(item.id) || session.twinsAsked.length >= MAX_TWINS_PER_SESSION) return;
+    session.twinsAsked.push(item.id);
+    const queue = studyState.queue;
+    const res = await withTimeout(ipcRenderer.invoke('make-twin-question', {
+        question: item.question, answer: base, mode: item.mode, solutionSource: item.solutionSource || 'document'
+    }).catch(e => ({ error: e.message })), 50000);
+    if (!res || res.error || !res.question) {
+        if (res && res.error && isAiLimit(res.error)) studyState.checkOff = res.error;
+        return;
+    }
+    const saved = await ipcRenderer.invoke('save-study-items', [{
+        question: res.question, answer: res.answer, mode: item.mode, solutionSource: 'ai',
+        skillTag: item.skillTag || '', category: item.category || '', sourceFile: item.sourceFile || '', twinOf: item.id
+    }]).catch(() => null);
+    const twin = saved && Array.isArray(saved.items) && saved.items[0];
+    if (!twin) return;
+    const withId = { ...twin, id: twin.id || twin._id, twinOf: twin.twinOf || item.id };
+    session.twins = (session.twins || 0) + 1;
+    // Still the same session on screen: slot it in a few cards ahead.
+    const sessionOn = !document.getElementById('study-session').hidden && studyState.queue === queue;
+    if (sessionOn) {
+        const at = Math.min(queue.length, studyState.index + 3);
+        queue.splice(at, 0, withId);
+        saveSessionProgress();
+        const pos = document.getElementById('study-position');
+        if (pos) pos.textContent = `${studyState.index + 1} / ${queue.length}`;
+        if (session.twins === 1) toast.info(t('A new question on the idea you missed was added - it comes up in a few questions.'), t('Same idea, new question'));
+    } else if (!document.getElementById('study-summary').hidden && studyState.session === session) {
+        showTwinSummary(session.twins);
+    }
+}
+
+// The summary's "N new questions" line - also refreshed when a twin for the
+// last card arrives after the summary is already up.
+function showTwinSummary(n) {
+    const el = document.getElementById('summary-twins');
+    if (!el) return;
+    el.hidden = n === 0;
+    el.textContent = n === 1
+        ? t('1 new question was written on an idea you missed. It stays in your deck and comes back with the rest.')
+        : t('{n} new questions were written on ideas you missed. They stay in your deck and come back with the rest.', { n });
 }
 
 function endStudySession() {
@@ -5543,6 +6098,7 @@ function endStudySession() {
             : `${n} more were right while you were guessing. That doesn't count as knowing them - they come back tomorrow to check.`;
     }
     document.getElementById('summary-overconfident').textContent = s.overconfident;
+    showTwinSummary(s.twins || 0);
 
     const swBox = document.getElementById('summary-surewrong');
     const swList = document.getElementById('summary-surewrong-list');
@@ -5648,8 +6204,13 @@ async function generateQuestionsFor(file, button = null) {
             // The PDF itself: layout, formulas and Hebrew order intact.
             response = await ipcRenderer.invoke('generate-study-items-pdf', file.sourcePath, opts);
             const first = JSON.parse(response);
-            // Out of quota: the text path asks the same Gemini - just say so.
-            if (first.error && !/quota/i.test(first.error)) {
+            // Fall back to the extracted text only when reading the PDF itself
+            // failed (30/9). Not for a used-up allowance or a busy AI (the
+            // text path would hit the same wall - and on the website it used
+            // a SECOND file action), and not for "no examinable content"
+            // (the text says the same thing, for another file action).
+            const noPoint = (e) => isAiLimit(e) || /another ai job|no examinable content/i.test(String(e || ''));
+            if (first.error && !noPoint(first.error)) {
                 console.warn('⚠️ PDF generation failed, falling back to extracted text:', first.error);
                 toast.info('Reading the PDF directly didn\'t work right now - using the text extracted from it instead. Formulas and tables may come out worse, so check the questions before adding them.', 'Using the extracted text');
                 response = await ipcRenderer.invoke('generate-study-items', file.content, opts);
@@ -5907,7 +6468,7 @@ async function loadManageList(refetch = true) {
                 <div class="manage-item__meta">
                     ${escapeHtml(MODE_LABELS[i.mode] || i.mode)}
                     ${i.category ? ' · ' + escapeHtml(i.category) : ''}
-                    ${i.repetitions > 0 ? ` · reviewed ${i.repetitions}×` : ' · never reviewed'}
+                    ${i.repetitions > 0 ? ` · reviewed ${i.repetitions}×` : i.lapses > 0 ? ` · ${t('answered, not known yet')}` : ' · never reviewed'}
                 </div>
             </div>
             <button class="btn-icon btn-icon--danger manage-item__delete" aria-label="Delete question">${icon('trash', { size: 16 })}</button>
@@ -6009,6 +6570,20 @@ if (copyQuestionBtn) {
 let reviewDraft = [];
 
 function openReviewScreen(items, meta = {}) {
+    // Questions finished while a practice session is on screen (30/9): both
+    // screens used to show at once. Offer them instead; the session's place
+    // is kept (it resumes from Study).
+    const sessionEl = document.getElementById('study-session');
+    const examOn = examState.running || examState.checking;
+    if (((sessionEl && !sessionEl.hidden) || examOn) && !meta._fromToast) {
+        showActionToast(t('Your new questions are ready to look over.'), t('Look over now'), async () => {
+            if (!(await stopExam())) return;
+            sessionEl.hidden = true;
+            openReviewScreen(items, { ...meta, _fromToast: true });
+        }, { duration: 60000 });
+        return;
+    }
+    if (sessionEl) sessionEl.hidden = true;
     reviewDraft = items.map((it, i) => ({ ...it, _id: i, _selected: true }));
 
     const courseInput = document.getElementById('review-course-input');
@@ -6136,10 +6711,12 @@ if (reviewConfirmBtn) reviewConfirmBtn.onclick = async () => {
     if (res && res.error) { toast.error(res.error, 'Could not save'); return; }
 
     const discarded = reviewDraft.length - chosen.length;
+    // What the server really saved, not what was sent (30/9).
+    const added = res && Number.isInteger(res.created) ? res.created : chosen.length;
     toast.success(
         discarded > 0
-            ? `Added ${chosen.length} questions. ${discarded} discarded.`
-            : `Added ${chosen.length} questions.`,
+            ? `Added ${added} questions. ${discarded} discarded.`
+            : `Added ${added} questions.`,
         'Ready to study'
     );
     closeReviewScreen();

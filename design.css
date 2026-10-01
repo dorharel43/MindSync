@@ -1268,8 +1268,9 @@ html:not(.is-web) .web-only { display: none !important; }
   }
   .day-column:first-child { border-top: none; }
   .day-column .day-header { padding: 0 0 6px; }
-  .day-column:not(:has(.task-card))::after { content: 'Nothing planned'; font-size: var(--text-xs); color: var(--text-tertiary, var(--text-secondary)); }
-  .day-column:not(:has(.task-card)) .day-header { padding-bottom: 2px; }
+  /* An empty day says so - with the translatable "Free" the JS adds (a CSS
+     content: text can't be translated, and missed days with only tasks). */
+  .day-empty { display: block; text-align: start; padding: 0; min-height: 0; border: 0; background: none; font-size: var(--text-xs); color: var(--text-tertiary, var(--text-secondary)); }
   .week-nav { flex-wrap: wrap; row-gap: 8px; }
   .week-nav__label { flex: 1; text-align: center; }
   .week-nav__today { order: 5; margin-inline-end: 0; }
@@ -1814,3 +1815,93 @@ html[dir="rtl"] .study-verdict__feedback, html[dir="rtl"] .study-verdict__yours,
 @media (max-width: 860px) {
     .study-hero { grid-template-columns: 1fr; }
 }
+
+/* ---------- Sidebar language button (30/9) ---------- */
+.sidebar-footer { display: flex; align-items: center; gap: 6px; }
+.sidebar-lang-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 10px; border-radius: 999px;
+    border: 1px solid var(--border-color); background: var(--bg-card);
+    color: var(--text-secondary); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
+}
+.sidebar-lang-btn:hover { color: var(--text-primary); border-color: var(--border-strong); }
+.sidebar-lang-btn:focus-visible { outline: 2px solid var(--accent-purple); outline-offset: 2px; }
+[data-theme="slate"] body:not(.dark-mode) .sidebar-lang-btn { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.12); color: #cbd5e1; }
+
+/* ---------- Returning user: a quiet loading screen, not the login (30/9) ---------- */
+html.has-session body.auth-pending #auth-screen { grid-template-columns: 1fr; }
+html.has-session body.auth-pending .auth-brand,
+html.has-session body.auth-pending .auth-langs,
+html.has-session body.auth-pending #auth-form-wrap { display: none !important; }
+html.has-session body.auth-pending .auth-main { min-height: 100vh; }
+
+/* Mistake loop (30/9): the twin question's pill */
+.study-card__mode .ms-badge--twin { background: var(--status-warning-bg); color: var(--status-warning); }
+.summary-twins { margin-top: 6px; }
+
+/* =====================================================================
+   Mock exam (30/9)
+   ===================================================================== */
+.exam-setup { max-width: 640px; margin: 0 auto; padding: 26px 28px; }
+.exam-setup__title { margin: 0; font-size: 22px; font-weight: 700; }
+.exam-setup__course { font-size: var(--text-base); color: var(--text-secondary); margin: 2px 0 12px; }
+.exam-setup__row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 14px; }
+.exam-setup__row .form-label { min-width: 90px; margin: 0; }
+.exam-setup__past { margin-top: 14px; }
+.exam-setup__actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.exam-setup .filter-chip[hidden] { display: none; }
+.exam-timer { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-primary); }
+.exam-timer.is-low { color: var(--status-danger); }
+.exam-checking { max-width: 480px; margin: 40px auto; text-align: center; padding: 34px; }
+.exam-checking .auth-spinner { margin: 0 auto 14px; }
+.exam-checking__text { margin: 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.exam-hero { grid-template-columns: 1.3fr 1fr; }
+.exam-score { font-size: 56px; line-height: 1; letter-spacing: -0.03em; }
+.exam-score__margin { font-size: 22px; font-weight: 600; color: var(--hero-muted); margin-inline-start: 6px; letter-spacing: 0; }
+.exam-block { margin-bottom: 16px; padding: 20px 22px; }
+.exam-block .section-title { margin: 0 0 4px; }
+.exam-topic { padding: 10px 0; }
+.exam-topic + .exam-topic { border-top: 1px solid var(--border-color); }
+.exam-topic__head { display: flex; justify-content: space-between; gap: 12px; font-size: var(--text-sm); }
+.exam-topic__name { font-weight: 600; color: var(--text-primary); }
+.exam-topic__pct { font-weight: 700; }
+.exam-topic__bar { height: 6px; border-radius: 999px; background: var(--bg-subtle); margin: 6px 0 4px; overflow: hidden; }
+.exam-topic__bar > div { height: 100%; background: var(--status-success); border-radius: inherit; }
+.exam-topic.is-weak .exam-topic__bar > div { background: var(--status-danger); }
+.exam-topic.is-weak .exam-topic__pct { color: var(--status-danger); }
+.exam-topic__n { font-size: var(--text-xs); color: var(--text-tertiary); }
+.exam-answer { padding: 14px 0; }
+.exam-answer + .exam-answer { border-top: 1px solid var(--border-color); }
+.exam-answer__top { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.exam-answer__verdict { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); font-weight: 600; }
+.exam-answer__verdict::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--text-tertiary); }
+.exam-answer.is-correct .exam-answer__verdict { color: var(--status-success); }
+.exam-answer.is-correct .exam-answer__verdict::before { background: var(--status-success); }
+.exam-answer.is-partial .exam-answer__verdict { color: var(--status-warning); }
+.exam-answer.is-partial .exam-answer__verdict::before { background: var(--status-warning); }
+.exam-answer.is-wrong .exam-answer__verdict, .exam-answer.is-blank .exam-answer__verdict { color: var(--status-danger); }
+.exam-answer.is-wrong .exam-answer__verdict::before, .exam-answer.is-blank .exam-answer__verdict::before { background: var(--status-danger); }
+.exam-answer__conf { font-size: var(--text-xs); color: var(--text-tertiary); }
+.exam-answer__q { font-weight: 600; color: var(--text-primary); margin-bottom: 6px; line-height: 1.45; }
+.exam-answer__line { font-size: var(--text-sm); color: var(--text-secondary); margin-top: 2px; }
+.exam-answer__line[hidden] { display: none; }
+.exam-answer__label { color: var(--text-tertiary); }
+.exam-answer__feedback { font-size: var(--text-sm); color: var(--text-primary); margin-top: 4px; }
+.exam-answer__feedback:empty { display: none; }
+.exam-result__actions { display: flex; justify-content: center; margin: 8px 0 24px; }
+.study-course__mock { color: var(--accent-text); font-weight: 500; }
+@media (max-width: 860px) { .exam-hero { grid-template-columns: 1fr; } }
+@media (max-width: 760px) {
+    .exam-setup { padding: 20px 18px; }
+    .exam-setup__actions .btn-primary, .exam-setup__actions .btn-secondary { flex: 1; }
+    .exam-score { font-size: 46px; }
+}
+.readiness-row__buttons { display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+
+/* Email not confirmed (30/9) */
+.home-verify { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 16px; margin-bottom: 16px; border-radius: 12px; background: var(--status-warning-bg); border: 1px solid color-mix(in srgb, var(--status-warning) 30%, transparent); }
+.home-verify[hidden] { display: none; }
+.home-verify__text { display: flex; flex-direction: column; gap: 2px; font-size: var(--text-sm); color: var(--text-secondary); }
+.home-verify__text strong { color: var(--text-primary); }
+.home-verify .btn-sm { flex-shrink: 0; }
+@media (max-width: 760px) { .home-verify { flex-direction: column; align-items: stretch; } }

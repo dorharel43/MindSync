@@ -163,6 +163,10 @@
             <button id="theme-toggle-btn" class="btn-icon sidebar-theme-btn" aria-label="Toggle dark mode" title="Toggle dark mode">
                 <span data-icon="moon" data-icon-size="17"></span>
             </button>
+            <!-- Language (30/9): was only in Settings > Appearance and hard to
+                 find. Shows the OTHER language's name; data-lang is set by
+                 renderer.js (bound with the other language buttons). -->
+            <button type="button" class="sidebar-lang-btn" id="sidebar-lang-btn" translate="no"><span data-icon="globe" data-icon-size="15"></span><span id="sidebar-lang-name">עברית</span></button>
         </div>
 
         <div class="user-profile" id="sidebar-profile-trigger" role="button" tabindex="0" title="Open settings">
@@ -186,6 +190,15 @@
                     <span id="home-greeting-time">Good afternoon</span>, <span id="home-greeting-name">Guest</span>
                 </div>
                 <div class="home-date" id="home-date"></div>
+            </div>
+
+            <!-- Email not confirmed (30/9) - see loadProfile. -->
+            <div class="home-verify" id="home-verify" hidden>
+                <div class="home-verify__text">
+                    <strong>Confirm your email</strong>
+                    <span>The link is in your inbox - check the spam folder too. Until it's confirmed, the AI does only a few file actions a day.</span>
+                </div>
+                <button class="btn-secondary btn-sm" id="home-verify-btn">Send it again</button>
             </div>
 
             <!-- Getting started: shown to new users until the first steps are
@@ -541,6 +554,7 @@
                     <div class="study-card__mode">
                         <span class="ms-badge ms-badge--accent" id="study-category-badge" hidden></span>
                         <span class="ms-badge" id="study-mode-badge">Recall</span>
+                        <span class="ms-badge ms-badge--twin" id="study-twin-badge" hidden title="Written after a mistake: the same idea from another angle">Same idea, new question</span>
                     </div>
 
                     <div class="study-question" id="study-question" translate="no" dir="auto"></div>
@@ -640,11 +654,101 @@
                     </div>
                     <div id="summary-message" class="settings-hint"></div>
                     <div id="summary-lucky" class="settings-hint" hidden></div>
+                    <div id="summary-twins" class="settings-hint summary-twins" hidden></div>
                     <div class="summary-surewrong" id="summary-surewrong" hidden>
                         <div class="summary-surewrong__title">You were sure about these - and got them wrong. They come back first next time:</div>
                         <ul class="summary-surewrong__list" id="summary-surewrong-list"></ul>
                     </div>
                     <button class="btn-primary" id="summary-done-btn">Finish</button>
+                </div>
+            </div>
+
+            <!-- Mock exam (30/9): one course under exam conditions - typed
+                 answers, nothing checked or shown until the end, then one
+                 score with its margin. renderer.js "Mock exams". -->
+            <div id="study-exam" hidden>
+                <div class="card exam-setup" id="exam-setup">
+                    <h3 class="exam-setup__title">Mock exam</h3>
+                    <div class="exam-setup__course" dir="auto" id="exam-course-name"></div>
+                    <p class="settings-hint">Exam conditions: you type an answer to each question and say how sure you are. Nothing is checked or shown until you finish - then everything is checked together, and you get one score.</p>
+                    <div class="exam-setup__row">
+                        <span class="form-label">Questions</span>
+                        <div class="filter-group" id="exam-count">
+                            <button class="filter-chip" data-count="10">10</button>
+                            <button class="filter-chip active" data-count="15">15</button>
+                            <button class="filter-chip" data-count="25">25</button>
+                        </div>
+                    </div>
+                    <div class="exam-setup__row">
+                        <span class="form-label">Time</span>
+                        <div class="filter-group" id="exam-time">
+                            <button class="filter-chip active" data-timed="1">2 minutes a question</button>
+                            <button class="filter-chip" data-timed="0">No limit</button>
+                        </div>
+                    </div>
+                    <p class="settings-hint exam-setup__past" id="exam-past-note" hidden>Questions from past exams you uploaded come first.</p>
+                    <div class="exam-setup__actions">
+                        <button class="btn-secondary" id="exam-cancel-btn">Cancel</button>
+                        <button class="btn-primary" id="exam-start-btn">Start the exam</button>
+                    </div>
+                </div>
+
+                <div id="exam-run" hidden>
+                    <div class="study-progress-bar"><div class="study-progress-fill" id="exam-progress-fill"></div></div>
+                    <div class="study-session-meta">
+                        <span id="exam-position">1 / 15</span>
+                        <span class="exam-timer" id="exam-timer" aria-live="off"></span>
+                        <button class="btn-secondary btn-sm" id="exam-finish-btn">Finish now</button>
+                    </div>
+                    <div class="card study-card">
+                        <div class="study-card__mode">
+                            <span class="ms-badge ms-badge--accent" id="exam-course-badge" dir="auto"></span>
+                            <span class="ms-badge ms-badge--twin" id="exam-past-badge" hidden>From a past exam</span>
+                        </div>
+                        <div class="study-question" id="exam-question" translate="no" dir="auto"></div>
+                        <textarea id="exam-answer" class="input-field study-typed-answer" dir="auto" rows="4" placeholder="Your answer"></textarea>
+                        <div class="study-prompt">How sure are you? This saves the answer and moves on.</div>
+                        <div class="confidence-row">
+                            <button class="confidence-btn exam-conf" data-confidence="sure"><strong>I'm sure</strong><span>I know this</span></button>
+                            <button class="confidence-btn exam-conf" data-confidence="think_so"><strong>I think so</strong><span>Fairly likely</span></button>
+                            <button class="confidence-btn exam-conf" data-confidence="guessing"><strong>Guessing</strong><span>I have a guess</span></button>
+                        </div>
+                        <button class="study-dont-know" id="exam-skip-btn" type="button">Skip - I don't know this one</button>
+                    </div>
+                </div>
+
+                <div class="card exam-checking" id="exam-checking" hidden>
+                    <div class="auth-spinner"></div>
+                    <p class="exam-checking__text" id="exam-checking-text">Checking your answers…</p>
+                </div>
+
+                <div id="exam-result" hidden>
+                    <section class="home-hero exam-hero">
+                        <div class="home-hero__practice">
+                            <div class="home-hero__label">If the exam were today</div>
+                            <div class="home-hero__title exam-score"><span class="ms-tabular" id="exam-score">0</span><span class="exam-score__margin ms-tabular" id="exam-margin" dir="ltr"></span></div>
+                            <div class="home-hero__text" id="exam-score-text"></div>
+                            <button class="btn-primary home-hero__btn" id="exam-practice-missed-btn">Practice what I missed</button>
+                        </div>
+                        <div class="home-hero__next">
+                            <ul class="hero-stats">
+                                <li><span class="hero-stats__label">Right</span><span class="hero-stats__value ms-tabular" id="exam-n-correct">0</span></li>
+                                <li><span class="hero-stats__label">Half right</span><span class="hero-stats__value ms-tabular" id="exam-n-partial">0</span></li>
+                                <li><span class="hero-stats__label">Wrong or skipped</span><span class="hero-stats__value ms-tabular" id="exam-n-wrong">0</span></li>
+                                <li><span class="hero-stats__label">Sure but wrong</span><span class="hero-stats__value ms-tabular" id="exam-n-surewrong">0</span></li>
+                            </ul>
+                        </div>
+                    </section>
+                    <div class="card exam-block">
+                        <h3 class="section-title">By topic</h3>
+                        <p class="settings-hint">Weakest first - that's where the next hour of studying pays most.</p>
+                        <div id="exam-topics"></div>
+                    </div>
+                    <div class="card exam-block">
+                        <h3 class="section-title">Your answers</h3>
+                        <div id="exam-answers"></div>
+                    </div>
+                    <div class="exam-result__actions"><button class="btn-secondary" id="exam-done-btn">Back to Study</button></div>
                 </div>
             </div>
         </div>

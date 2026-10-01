@@ -61,6 +61,11 @@
 
     const lang = detect();
     const root = document.documentElement;
+    // Not about language, but this is the first script on the page (30/9):
+    // someone who was logged in last time gets a quiet loading screen while
+    // the session is checked, instead of the login screen flashing up (on
+    // every reload - switching the language reloads too).
+    try { if (localStorage.getItem('mindsync.session') === '1') root.classList.add('has-session'); } catch (e) { /* storage blocked */ }
     root.lang = lang;
     root.dir = lang === 'he' ? 'rtl' : 'ltr';
     root.classList.toggle('is-rtl', lang === 'he');
