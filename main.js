@@ -2682,10 +2682,13 @@ Return ONLY JSON:
   "durationMin": the exam length in minutes as stated, or null,
   "materials": "the allowed material as stated (formula sheet, calculator...), or ''",
   "instructions": "the general instructions at the top, short, in the exam's language",
-  "totalPoints": the points of a whole exam,
+  "totalPoints": the points of a whole exam, WITHOUT bonus questions,
+  "maxGrade": null, "maxGradeQuote": "",
+  "dontKnowShare": null, "dontKnowQuote": "",
+  "bonusQuote": "",
   "questions": [
     {"n": 1, "points": 25, "title": "a short name, e.g. נכון / לא נכון",
-     "choosePartsCount": 0,
+     "choosePartsCount": 0, "bonus": false,
      "parts": [{"label": "א", "type": "mc|tf|open|code", "points": 6.25, "topic": "...", "reasonRequired": true}],
      "style": "one sentence on what these questions look like"}
   ],
@@ -2699,6 +2702,9 @@ Rules:
 - Several questions that share one text, code or data (e.g. questions 6-11 about one algorithm) = ONE question with parts. A long list of independent multiple-choice questions = ONE question with that many "mc" parts.
 - "choosePartsCount": N when the student answers only N of the parts (e.g. "prove ONE of the two theorems" = 1); otherwise 0.
 - Points as printed; if not printed, split the question's points evenly between its parts.
+- "bonus": true ONLY on a question the exam itself calls a bonus (בונוס / bonus); copy those words into "bonusQuote". Its points are on top of "totalPoints". No such words = no bonus.
+- "maxGrade": only when the exam says the grade is capped below the points (e.g. "the questions add up to 108 points, the top grade is 100" = 100); copy the words into "maxGradeQuote". Otherwise null.
+- "dontKnowShare": only when the exam says that answering "I don't know" (לא יודע/ת) gets part of the points - as a fraction (25% = 0.25); copy the words into "dontKnowQuote". Otherwise null.
 - "recurring": only what appears in 2 or more of the exams, most frequent first, up to 12. One exam = [].
 - "pool": up to 25 past questions or parts, spread over the topics and kinds. ${MATH_AS_TEXT}
 - Don't invent: what the exams don't show is null or ''.`;
@@ -2719,6 +2725,7 @@ function buildExamWritePrompt(course, blueprint, material) {
     const structure = blueprint ? JSON.stringify({
         durationMin: blueprint.durationMin, materials: blueprint.materials, totalPoints: blueprint.totalPoints, questions: blueprint.questions
     }) : null;
+    const bonus = !!(blueprint && Array.isArray(blueprint.questions) && blueprint.questions.some(q => q.bonus === true));
     const pool = blueprint && Array.isArray(blueprint.pool) ? blueprint.pool.slice(0, 25) : [];
     const recurring = blueprint && Array.isArray(blueprint.recurring) ? blueprint.recurring.slice(0, 12) : [];
     return `Write a NEW exam for the university course "${course}", as this course's lecturer would - for a student to sit as practice before the real exam.
@@ -2734,9 +2741,10 @@ Rules:
 - ${MATH_AS_TEXT}
 ${EXAM_PART_RULES}
 - SOLVE EVERY PART YOURSELF AND CHECK IT: substitute back, compute a second way, test the counterexample. A part you can't solve with certainty: replace it with one you can.
+- ${bonus ? 'A question with "bonus": true is a BONUS question: HARDER than every other question in the exam (it is for the strongest students), its points on top of the total. Keep "bonus": true on it.' : 'No bonus questions.'}
 
 Return ONLY JSON:
-{"title": "...", "durationMin": number, "materials": "...", "instructions": "...", "questions": [{"n": 1, "title": "...", "points": number, "stem": "", "choosePartsCount": 0, "parts": [{"label": "א", "type": "mc|tf|open|code", "text": "...", "options": [], "correct": "", "reasonRequired": false, "points": number, "answer": "...", "rubric": [{"criterion": "...", "points": number}], "topic": "..."}]}]}`;
+{"title": "...", "durationMin": number, "materials": "...", "instructions": "...", "questions": [{"n": 1, "title": "...", "points": number, "stem": "", "choosePartsCount": 0, "bonus": false, "parts": [{"label": "א", "type": "mc|tf|open|code", "text": "...", "options": [], "correct": "", "reasonRequired": false, "points": number, "answer": "...", "rubric": [{"criterion": "...", "points": number}], "topic": "..."}]}]}`;
 }
 
 // An answer key for a question that already exists (a real past exam's) -
@@ -2814,6 +2822,8 @@ function normaliseExam(raw, blueprint) {
     const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : d; };
     const text = (v, max, isCode = false) => cleanExamText(String(v == null ? '' : v), isCode).slice(0, max);
     const questions = [];
+    // A bonus question only where the (checked) structure has one.
+    let bonusLeft = blueprint && Array.isArray(blueprint.questions) ? blueprint.questions.filter(q => q && q.bonus === true).length : 0;
     for (const [qi, q] of (raw && Array.isArray(raw.questions) ? raw.questions : []).slice(0, 30).entries()) {
         const parts = [];
         for (const p of (Array.isArray(q.parts) ? q.parts : []).slice(0, 60)) {
@@ -2844,18 +2854,33 @@ function normaliseExam(raw, blueprint) {
         const choose = Math.min(Math.floor(num(q.choosePartsCount)), parts.length - 1);
         // "answer N of M": the question is worth N parts' points.
         const qPoints = choose > 0 ? Math.round((partSum / parts.length) * choose * 100) / 100 : partSum;
-        questions.push({ n: qi + 1, title: String(q.title || '').slice(0, 200), stem: text(q.stem, 8000), points: Math.min(1000, qPoints || num(q.points)), choosePartsCount: choose > 0 ? choose : 0, parts });
+        const bonus = q.bonus === true && bonusLeft > 0;
+        if (bonus) bonusLeft -= 1;
+        questions.push({ n: qi + 1, title: String(q.title || '').slice(0, 200), stem: text(q.stem, 8000), points: Math.min(1000, qPoints || num(q.points)), choosePartsCount: choose > 0 ? choose : 0, bonus, parts });
     }
     if (!questions.length) return null;
-    const total = Math.round(questions.reduce((n, q) => n + q.points, 0) * 100) / 100;
-    return {
+    return examTotals({
         title: String(raw.title || '').slice(0, 200),
         durationMin: Math.min(600, Math.max(5, Math.round(num(raw.durationMin) || num(blueprint && blueprint.durationMin) || 120))),
         materials: String(raw.materials || (blueprint && blueprint.materials) || '').slice(0, 400),
         instructions: String(raw.instructions || (blueprint && blueprint.instructions) || '').slice(0, 2000),
-        totalPoints: total,
+        maxGrade: blueprint && Number(blueprint.maxGrade) > 0 ? Number(blueprint.maxGrade) : 0,
+        dontKnowShare: blueprint && Number(blueprint.dontKnowShare) > 0 ? Number(blueprint.dontKnowShare) : 0,
         questions
-    };
+    });
+}
+
+// The exam's points: the regular questions' total, the bonus on top, and a
+// capped top grade only while it is below the total (after a part is dropped
+// it may not be). An exam of bonus questions only has no bonus.
+function examTotals(exam) {
+    if (!exam.questions.some(q => !q.bonus)) exam.questions.forEach(q => { q.bonus = false; });
+    const sum = (qs) => Math.round(qs.reduce((n, q) => n + q.points, 0) * 100) / 100;
+    exam.totalPoints = sum(exam.questions.filter(q => !q.bonus));
+    exam.bonusPoints = sum(exam.questions.filter(q => q.bonus));
+    if (!(exam.maxGrade > 0 && exam.maxGrade < exam.totalPoints)) exam.maxGrade = 0;
+    if (!(exam.dontKnowShare > 0 && exam.dontKnowShare <= 0.5)) exam.dontKnowShare = 0;
+    return exam;
 }
 
 // Course material as one text, a fair share of each file (the exam covers
@@ -2903,7 +2928,31 @@ async function examBlueprint(course, past) {
     let blueprint;
     try { blueprint = JSON.parse(extractJsonFromText(String(raw))); } catch (e) { blueprint = null; }
     if (blueprint && (!Array.isArray(blueprint.questions) || !blueprint.questions.length)) blueprint = { ...blueprint, questions: null };
-    return blueprint;
+    return blueprint ? verifyBlueprintRules(blueprint, past) : blueprint;
+}
+
+// A bonus question, a grade capped below the points and "I don't know" for
+// part of the points are kept ONLY when the past exams really say so - never
+// on the AI's word alone. With the files' text: the words must be in it
+// (also reversed - right-to-left text often comes out of a PDF backwards).
+// A scanned PDF with no text: the AI's quote of those words must have them.
+function verifyBlueprintRules(blueprint, past) {
+    const text = (past || []).map(f => String(f.text || '')).join('\n');
+    const hasText = text.replace(/\s+/g, '').length > 300;
+    const shown = (re, quote) => re.test(hasText ? text : String(quote || ''));
+    const out = { ...blueprint };
+    const qs = Array.isArray(out.questions) ? out.questions : null;
+    const bonusOk = !!qs && qs.some(q => q && q.bonus === true) && qs.some(q => q && q.bonus !== true)
+        && shown(/בונוס|סונוב|bonus/i, out.bonusQuote);
+    if (qs) out.questions = qs.map(q => ({ ...q, bonus: bonusOk && q.bonus === true }));
+    const regular = qs ? qs.filter(q => !q.bonus || !bonusOk).reduce((n, q) => n + (Number(q.points) || 0), 0) : Number(out.totalPoints) || 0;
+    const mg = Number(out.maxGrade);
+    out.maxGrade = Number.isFinite(mg) && mg > 0 && regular > mg && mg >= regular * 0.75
+        && shown(new RegExp(`(^|\\D)${mg}(\\D|$)`), out.maxGradeQuote) ? mg : null;
+    const dk = Number(out.dontKnowShare);
+    out.dontKnowShare = Number.isFinite(dk) && dk > 0 && dk <= 0.5
+        && shown(/לא\s*יודע|עדוי\s*אל|don['’]?t\s+know|do\s+not\s+know/i, out.dontKnowQuote) ? Math.round(dk * 100) / 100 : null;
+    return out;
 }
 
 // 2. The exam itself, with answers and marking schemes. `blueprint` is a
@@ -2962,7 +3011,7 @@ async function checkExam(exam) {
                 q.choosePartsCount = Math.min(q.choosePartsCount, Math.max(0, q.parts.length - 1));
                 q.points = q.choosePartsCount ? Math.round((s / q.parts.length) * q.choosePartsCount * 100) / 100 : Math.round(s * 100) / 100;
             });
-            exam.totalPoints = Math.round(exam.questions.reduce((n, q) => n + q.points, 0) * 100) / 100;
+            if (exam.questions.length) examTotals(exam);
             if (!exam.questions.length) throw new Error('The AI\'s exam didn\'t pass its own check. Try again.');
         }
     } catch (err) {
@@ -3033,12 +3082,19 @@ ipcMain.handle('full-exam-build', async (event, payload = {}) => {
     }
 });
 
-const answerIsBlank = (a) => !a || (!String(a.choice || '').trim() && !String(a.text || '').trim());
+const answerIsBlank = (a) => !a || (a.dontKnow !== true && !String(a.choice || '').trim() && !String(a.text || '').trim());
+// Parts marked by the choice alone (no written answer to grade).
+const partIsAutoMarked = (part) => part.type === 'mc' || (part.type === 'tf' && !part.reasonRequired);
 
 // Parts marked here, without the AI: multiple choice, true/false without a
-// reason, and a wrong true/false verdict (0, whatever the reasoning).
+// reason, a wrong true/false verdict (0, whatever the reasoning), and "I don't
+// know" where the exam gives part of the points for it (dontKnowShare).
 // Returns { points, feedback }, or null when the AI grades the part.
-function autoMarkPart(part, answer, he) {
+function autoMarkPart(part, answer, he, dontKnowShare = 0) {
+    if (answer.dontKnow === true && dontKnowShare > 0 && !partIsAutoMarked(part)) {
+        const pct = Math.round(dontKnowShare * 100);
+        return { points: Math.round(part.points * dontKnowShare * 100) / 100, feedback: he ? `"לא יודע/ת": ${pct} אחוז מהנקודות, כמו שכתוב במבחן.` : `"I don't know" - ${pct}% of the points, as the exam says.` };
+    }
     if (part.type === 'mc' || (part.type === 'tf' && !part.reasonRequired)) {
         const right = String(answer.choice) === String(part.correct);
         return {
@@ -3091,7 +3147,7 @@ async function solveExamParts(course, question) {
 
 // The stages above, for the owner's exam check on the server (exported by
 // tools/port-main.py; unused in the desktop app).
-const EXAM_STAGES = { examBlueprint, writeExam, checkExam, autoMarkPart, gradeExamQuestion, solveExamParts, normaliseExam, answerIsBlank };
+const EXAM_STAGES = { examBlueprint, verifyBlueprintRules, writeExam, checkExam, autoMarkPart, gradeExamQuestion, solveExamParts, normaliseExam, answerIsBlank };
 
 // Graded sittings whose save failed: a retry only saves again, it doesn't
 // pay for the AI grading twice.
@@ -3112,7 +3168,13 @@ async function gradeFullExam({ examId, answers, startedAt, usedSec, limitSec, cl
     const exam = await api.getFullExam(examId);
     // Messages written here (not by the AI) in the exam's language.
     const he = exam.language === 'he' || /[\u0590-\u05ff]/.test(exam.questions.map(q => q.parts.map(p => p.text).join(' ')).join(' '));
-    const byKey = new Map((answers || []).map(a => [`${a.q}:${a.p}`, a]));
+    // "I don't know" counts only where this exam gives points for it.
+    const dontKnowOk = (a) => {
+        const part = exam.questions[a.q] && exam.questions[a.q].parts[a.p];
+        // never on a bonus question: points for nothing on top of the exam
+        return a.dontKnow === true && exam.dontKnowShare > 0 && !!part && !partIsAutoMarked(part) && !exam.questions[a.q].bonus;
+    };
+    const byKey = new Map((answers || []).map(a => [`${a.q}:${a.p}`, { ...a, dontKnow: dontKnowOk(a) }]));
     const out = [];
     const toAi = [];   // { qi, items: [{ part, index, answer, row }] }
     exam.questions.forEach((q, qi) => {
@@ -3129,11 +3191,12 @@ async function gradeFullExam({ examId, answers, startedAt, usedSec, limitSec, cl
         const items = [];
         q.parts.forEach((part, pi) => {
             const a = byKey.get(`${qi}:${pi}`) || { choice: '', text: '' };
-            const row = { q: qi, p: pi, choice: String(a.choice || '').slice(0, 20), text: String(a.text || '').slice(0, 20000), points: 0, max: part.points, feedback: '', status: 'graded' };
+            const dontKnow = a.dontKnow === true;
+            const row = { q: qi, p: pi, choice: String(a.choice || '').slice(0, 20), text: String(a.text || '').slice(0, 20000), dontKnow, points: 0, max: part.points, feedback: '', status: 'graded' };
             out.push(row);
             if (allowed && !allowed.has(pi)) { row.status = 'not_chosen'; row.max = 0; return; }
             if (answerIsBlank(a)) { row.status = 'blank'; return; }
-            const auto = autoMarkPart(part, a, he);
+            const auto = autoMarkPart(part, { ...a, dontKnow }, he, exam.dontKnowShare);
             if (auto) { row.points = auto.points; row.feedback = auto.feedback; return; }
             items.push({ part, index: pi, answer: { choice: row.choice, text: row.text }, row });
         });
@@ -3187,7 +3250,7 @@ ipcMain.handle('full-exam-grade', async (event, payload = {}) => {
         const examId = String((payload && payload.examId) || '');
         if (!/^[a-f0-9]{24}$/i.test(examId)) return { error: 'No exam to grade.' };
         const answers = (Array.isArray(payload.answers) ? payload.answers : []).slice(0, 400).map(a => ({
-            q: Number(a.q) || 0, p: Number(a.p) || 0, choice: String(a.choice || '').slice(0, 20), text: String(a.text || '').slice(0, 20000)
+            q: Number(a.q) || 0, p: Number(a.p) || 0, choice: String(a.choice || '').slice(0, 20), text: String(a.text || '').slice(0, 20000), dontKnow: a.dontKnow === true
         }));
         const meta = {
             startedAt: payload.startedAt || null, usedSec: Number(payload.usedSec) || 0, limitSec: Number(payload.limitSec) || 0,

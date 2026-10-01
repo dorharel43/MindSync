@@ -7618,6 +7618,10 @@ async function openFullIntro(examId) {
     const partsCount = exam.questions.reduce((n, q) => n + q.parts.length, 0);
     const fact = (txt) => { const li = document.createElement('li'); li.textContent = txt; facts.appendChild(li); };
     fact(t('{q} questions, {p} parts · {pts} points').replace('{q}', exam.questions.length).replace('{p}', partsCount).replace('{pts}', Math.round(exam.totalPoints)));
+    if (exam.bonusPoints > 0) fact(t('Plus a bonus question of {b} points - harder than the rest, as in the past exams.').replace('{b}', Math.round(exam.bonusPoints * 100) / 100));
+    if (exam.maxGrade > 0) fact(t('The questions add up to {t} points and the grade is at most {m}, as in the past exams.').replace('{t}', Math.round(exam.totalPoints * 100) / 100).replace('{m}', exam.maxGrade));
+    else if (exam.bonusPoints > 0) fact(t('The grade is at most 100.'));
+    if (exam.dontKnowShare > 0) fact(t('Writing "I don\'t know" on a part gets {p}% of its points, as in the past exams.').replace('{p}', Math.round(exam.dontKnowShare * 100)));
     fact(exam.basis === 'past_exams'
         ? t('Built on the structure of {n} past exams of the course.').replace('{n}', (exam.pastExamFiles || []).length)
         : t('Built from the course material - no past exams were given, so the structure is a general one.'));
@@ -7724,7 +7728,15 @@ function tickFullExam() {
 }
 
 const fullKey = (qi, pi) => `${qi}:${pi}`;
-const fullAnswered = (a) => !!a && (!!String(a.choice || '').trim() || !!String(a.text || '').trim());
+const fullAnswered = (a) => !!a && (a.dontKnow === true || !!String(a.choice || '').trim() || !!String(a.text || '').trim());
+// Parts marked by the choice alone - "I don't know" doesn't apply to them.
+const fullAutoMarked = (p) => p.type === 'mc' || (p.type === 'tf' && !p.reasonRequired);
+function fullBonusBadge() {
+    const b = document.createElement('span');
+    b.className = 'full-bonus';
+    b.textContent = t('Bonus');
+    return b;
+}
 
 function renderFullNav() {
     const nav = document.getElementById('full-nav');
@@ -7776,7 +7788,8 @@ function renderFullQuestion() {
     }
     const pts = document.createElement('span');
     pts.className = 'full-q__points';
-    pts.textContent = t('{n} points').replace('{n}', Math.round(q.points * 100) / 100);
+    pts.textContent = t(q.bonus ? '{n} bonus points' : '{n} points').replace('{n}', Math.round(q.points * 100) / 100);
+    if (q.bonus) h.prepend(fullBonusBadge());
     head.append(h, pts);
     paper.appendChild(head);
     if (q.choosePartsCount > 0) {
@@ -7880,6 +7893,21 @@ function renderFullQuestion() {
                 box.appendChild(ta);
             }
         }
+        // "I don't know" - only where the past exams give points for it.
+        if (exam.dontKnowShare > 0 && !fullAutoMarked(p) && !q.bonus) {
+            const dk = document.createElement('label');
+            dk.className = 'full-dontknow';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = a.dontKnow === true;
+            const s = document.createElement('span');
+            s.textContent = t('I don\'t know ({p}% of the points)').replace('{p}', Math.round(exam.dontKnowShare * 100));
+            dk.append(cb, s);
+            const lock = () => box.querySelectorAll('textarea, input[type=radio]').forEach(el => { el.disabled = cb.checked; });
+            cb.onchange = () => { setFullAnswer(qi, pi, { dontKnow: cb.checked }); lock(); };
+            box.appendChild(dk);
+            lock();
+        }
         paper.appendChild(box);
     });
     const nav = document.createElement('div');
@@ -7931,7 +7959,7 @@ async function submitFullExam(timeUp) {
     const token = ++fullState.token;
     const answers = Object.entries(fullState.answers).map(([k, a]) => {
         const [q, p] = k.split(':').map(Number);
-        return { q, p, choice: a.choice || '', text: a.text || '' };
+        return { q, p, choice: a.choice || '', text: a.text || '', dontKnow: a.dontKnow === true };
     });
     const usedSec = Math.round((Date.now() - fullState.startedAt) / 1000);
     const clientRunId = fullState.clientRunId;
@@ -7987,8 +8015,12 @@ function renderFullResult(exam, run) {
     document.getElementById('full-score').textContent = String(run.percent);
     const usedMin = Math.round((run.usedSec || 0) / 60);
     const unchecked = (run.answers || []).filter(a => a.status === 'unchecked').length;
+    // Older sittings have no outOf: the grade was out of the points graded.
+    const outOf = run.outOf > 0 ? run.outOf : run.max;
+    const capped = outOf > 0 && run.score > outOf;
     document.getElementById('full-score-text').textContent =
-        `${t('{s} of {m} points').replace('{s}', Math.round(run.score * 10) / 10).replace('{m}', Math.round(run.max * 10) / 10)} · ${t('{n} minutes').replace('{n}', usedMin)}` +
+        `${t('{s} of {m} points').replace('{s}', Math.round(run.score * 10) / 10).replace('{m}', Math.round(outOf * 10) / 10)} · ${t('{n} minutes').replace('{n}', usedMin)}` +
+        (capped ? ` · ${t('Over the top - the grade is capped at 100.')}` : '') +
         (unchecked ? ` · ${t('{n} parts couldn\'t be checked and are left out.').replace('{n}', unchecked)}` : '');
     const weak = document.getElementById('full-weak');
     weak.textContent = '';
@@ -8018,6 +8050,7 @@ function renderFullResult(exam, run) {
         h.className = 'full-q__title';
         h.textContent = `${t('Question')} ${qi + 1}`;
         if (q.title) { const sub = document.createElement('span'); sub.setAttribute('translate', 'no'); sub.dir = 'auto'; sub.textContent = ` · ${q.title}`; h.appendChild(sub); }
+        if (q.bonus) h.prepend(fullBonusBadge());
         const sc = document.createElement('span');
         sc.className = 'full-rq__score';
         sc.textContent = `${Math.round(got * 10) / 10} / ${Math.round(q.points * 10) / 10}`;
@@ -8063,7 +8096,8 @@ function renderFullResult(exam, run) {
                 mine.setAttribute('translate', 'no');
                 mine.dir = 'auto';
                 let shown = '';
-                if (p.type === 'mc') shown = r.choice !== '' && p.options[Number(r.choice)] != null ? `${Number(r.choice) + 1}. ${p.options[Number(r.choice)]}` : '';
+                if (r.dontKnow) shown = t('I don\'t know');
+                else if (p.type === 'mc') shown = r.choice !== '' && p.options[Number(r.choice)] != null ? `${Number(r.choice) + 1}. ${p.options[Number(r.choice)]}` : '';
                 else if (p.type === 'tf') shown = [r.choice === 'true' ? t('True') : r.choice === 'false' ? t('False') : '', r.text].filter(Boolean).join(' - ');
                 else shown = r.text;
                 mine.textContent = shown || t('No answer');
