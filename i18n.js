@@ -134,7 +134,7 @@
     // in the code with t().
     const USER_CONTENT = [
         '.task-title-text', '.task-category-tag', '.checklist-item span[dir="auto"]',
-        '.task-card__title', '.board-task__title', '.timeline-title', '.schedule-title', '.week-upcoming__title',
+        '.task-card__title', '.task-card__location', '.board-task__title', '.timeline-title', '.schedule-title', '.week-upcoming__title',
         '.attention-item__title', '.cat-row__name', '.readiness-row__name', '.study-course__name', '.study-file__name',
         '.study-exam-row__course', '.file-name', '.folder-name', '.syllabus-row__title', '.upload-row__name',
         '.blocked-app__name', '.manage-item__q', '.review-item__q', '.review-item__a', '.summary-surewrong__list',

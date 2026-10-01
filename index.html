@@ -295,6 +295,12 @@
                     <button id="generate-weekly-ai-btn" class="btn-secondary">
                         <span data-icon="clock"></span> Plan study time
                     </button>
+                    <!-- Weekly timetable from a photo (1/10): a screenshot of the
+                         college portal or a phone photo -> weekly classes. -->
+                    <button id="timetable-photo-btn" class="btn-secondary">
+                        <span data-icon="calendar"></span> Timetable from a photo
+                    </button>
+                    <input type="file" id="timetable-file" accept="image/*,application/pdf" hidden>
                 </div>
 
                 <div class="weekly-toolbar__view">
@@ -318,7 +324,7 @@
 
             <!-- How this screen works, in one line per action (29/9): users
                  don't explore, and a phone has no hover for tooltips. -->
-            <ul class="screen-help"><li><strong>Add to calendar</strong> - write it the way you'd say it, e.g. <bdi dir="rtl">"שיעור סטטיסטיקה כל יום שני ב-10"</bdi> or <bdi dir="rtl">"מבחן ב-12.2 ב-9"</bdi>.</li><li><strong>Plan study time</strong> - finds free time this week for your open tasks and puts study blocks before their deadlines.</li><li><strong>↻</strong> repeats every week. The pencil on a card changes it, the bin deletes it.</li></ul>
+            <ul class="screen-help"><li><strong>Add to calendar</strong> - write it the way you'd say it, e.g. <bdi dir="rtl">"שיעור סטטיסטיקה כל יום שני ב-10"</bdi> or <bdi dir="rtl">"מבחן ב-12.2 ב-9"</bdi>.</li><li><strong>Plan study time</strong> - finds free time this week for your open tasks and puts study blocks before their deadlines.</li><li><strong>Timetable from a photo</strong> - a screenshot or photo of your weekly timetable; you check the classes, then they go in every week until the semester ends.</li><li><strong>↻</strong> repeats every week. The pencil on a card changes it, the bin deletes it.</li></ul>
 
             <!-- Which week is on the board. Events with a date show only in
                  their week; weekly ones (↻) show in every week. -->
@@ -1320,15 +1326,32 @@
          Tasks (renderer.js openSyllabusImport). -->
     <div id="syllabus-modal" class="modal-overlay" style="display: none;">
         <div class="modal-content card syllabus-modal">
-            <h3>Exams &amp; deadlines</h3>
+            <h3 id="syllabus-heading">Exams &amp; deadlines</h3>
             <div class="syllabus-file" id="syllabus-file" dir="auto"></div>
             <p class="smart-help" id="syllabus-intro"></p>
 
+            <!-- Timetable only: ONE end date for every class (1/10). -->
+            <div class="syllabus-until" id="syllabus-until-wrap" hidden>
+                <label class="form-label" for="syllabus-until-text">When does the semester end?</label>
+                <div class="syllabus-until__row">
+                    <input id="syllabus-until-text" class="input-field" maxlength="100" dir="auto" placeholder='לדוגמה: 15.2'>
+                    <input id="syllabus-until-date" class="input-field" type="date" aria-label="Last day of classes">
+                </div>
+                <p class="settings-hint" id="syllabus-until-hint">The classes repeat every week until this day.</p>
+                <label class="checkbox-field" for="syllabus-no-end">
+                    <input type="checkbox" id="syllabus-no-end">
+                    <span class="checkbox-field__text"><span class="checkbox-field__label">I don't know yet - add them with no end date</span></span>
+                </label>
+            </div>
+
             <div class="syllabus-list" id="syllabus-list"></div>
 
-            <label class="form-label" for="syllabus-course">Course</label>
-            <input id="syllabus-course" class="input-field" maxlength="80" dir="auto" placeholder="Course name">
-            <p class="settings-hint">Added to the names in the Planner, and used as the category of the tasks.</p>
+            <div id="syllabus-course-wrap">
+                <label class="form-label" for="syllabus-course">Course</label>
+                <input id="syllabus-course" class="input-field" maxlength="80" dir="auto" placeholder="Course name">
+                <p class="settings-hint">Added to the names in the Planner, and used as the category of the tasks.</p>
+            </div>
+            <datalist id="syllabus-courses"></datalist>
 
             <label class="checkbox-field" for="syllabus-google" id="syllabus-google-row">
                 <input type="checkbox" id="syllabus-google">

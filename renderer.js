@@ -1082,6 +1082,7 @@ function renderWeeklyBoard() {
                 </div>
                 <div class="task-time">${escapeHtml(evt.time)}${weekly ? ` <span class="task-repeat" title="${escapeHtml(evt.until ? t('Every week until {d}', { d: untilLabel(evt.until) }) : t('Every week'))}">↻${evt.until ? ` ${escapeHtml(t('until {d}', { d: untilLabel(evt.until) }))}` : ''}</span>` : ''}</div>
                 <div class="task-card__title" dir="auto">${escapeHtml(evt.title)}</div>
+                ${evt.location ? `<div class="task-card__location" dir="auto" title="${escapeHtml(evt.location)}">${escapeHtml(evt.location)}</div>` : ''}
             `;
 
             // Clicking a study/exam event (or one whose title names a
@@ -2710,6 +2711,7 @@ function syllabusNote(item) {
 
 function updateSyllabusConfirm() {
     if (!syllabusState) return;
+    if (syllabusState.mode === 'timetable') { updateTimetableConfirm(); return; }
     const picked = syllabusState.items.filter(i => i.checked);
     const exams = picked.filter(i => i.kind === 'exam').length;
     const classes = picked.filter(i => i.kind === 'class').length;
@@ -2728,6 +2730,7 @@ function updateSyllabusConfirm() {
 }
 
 function renderSyllabusList() {
+    if (syllabusState && syllabusState.mode === 'timetable') { renderTimetableList(); return; }
     syllabusList.innerHTML = '';
     syllabusState.items.forEach((item, index) => {
         const note = syllabusNote(item);
@@ -2836,6 +2839,7 @@ function closeSyllabusModal() {
     if (syllabusState && syllabusState.saving) return;
     syllabusModal.style.display = 'none';
     syllabusState = null;
+    setSyllabusMode('syllabus');
 }
 
 async function openSyllabusImport(file, btn) {
@@ -2865,6 +2869,7 @@ async function openSyllabusImport(file, btn) {
         const note = syllabusNote(i);
         return { ...i, checked: !note };   // classes carry a (soft) note -> unticked
     });
+    setSyllabusMode('syllabus');
     syllabusState = { file, items, saving: false };
     document.getElementById('syllabus-file').textContent = file.name;
     // Folder first, then the course named in the syllabus (matched to one
@@ -2881,7 +2886,9 @@ async function confirmSyllabusImport() {
     if (!state || state.saving) return;
     const picked = state.items.filter(i => i.checked);
     if (!picked.length) return;
-    const course = syllabusCourse.value.trim();
+    const timetable = state.mode === 'timetable';
+    if (timetable && !state.until && !state.noEnd) return;
+    const course = timetable ? '' : syllabusCourse.value.trim();
     const syncToGoogle = !!(syllabusGoogle && syllabusGoogle.checked && picked.some(i => i.kind === 'exam' || i.kind === 'class'));
 
     state.saving = true;
@@ -2891,7 +2898,8 @@ async function confirmSyllabusImport() {
     let res;
     try {
         res = await ipcRenderer.invoke('import-syllabus-items',
-            picked.map(({ kind, title, date, until, time, durationMinutes, weekday, endTime }) => ({ kind, title, date, until, time, durationMinutes, weekday, endTime })),
+            timetable ? picked.map(i => timetableImportItem(i, state))
+                : picked.map(({ kind, title, date, until, time, durationMinutes, weekday, endTime }) => ({ kind, title, date, until, time, durationMinutes, weekday, endTime })),
             { course, syncToGoogle });
     } catch (e) {
         res = { created: { events: [], tasks: [] }, errors: [e.message], syncErrors: [] };
@@ -2935,6 +2943,319 @@ async function confirmSyllabusImport() {
 
 if (syllabusConfirm) syllabusConfirm.onclick = confirmSyllabusImport;
 if (syllabusCancel) syllabusCancel.onclick = closeSyllabusModal;
+
+// ---- Weekly timetable from a photo (1/10) ----
+// The student picks a photo / screenshot (or a PDF) of their weekly timetable;
+// it is shrunk here (a phone photo is 4-8MB, the web server takes 3MB), the
+// AI lists the classes (read-timetable in main.js), and the syllabus window
+// opens in "timetable" mode: a course, day and hours per row, one end date
+// for all. Adding goes through import-syllabus-items, with Undo.
+const timetableBtn = document.getElementById('timetable-photo-btn');
+const timetableFileInput = document.getElementById('timetable-file');
+const syllabusUntilWrap = document.getElementById('syllabus-until-wrap');
+const syllabusUntilText = document.getElementById('syllabus-until-text');
+const syllabusUntilDate = document.getElementById('syllabus-until-date');
+const syllabusUntilHint = document.getElementById('syllabus-until-hint');
+const syllabusNoEnd = document.getElementById('syllabus-no-end');
+const TIMETABLE_MAX_BYTES = 2100 * 1024;   // ~2.8MB once base64 - under the server's 3MB
+const TIMETABLE_TYPE_LABEL = {
+    lecture: ['Lecture', 'הרצאה'], tutorial: ['Tutorial', 'תרגול'], lab: ['Lab', 'מעבדה'],
+    seminar: ['Seminar', 'סמינר'], other: ['Class', 'שיעור']
+};
+const TIMETABLE_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// The window is shared with the syllabus import; these are its two faces.
+function setSyllabusMode(mode) {
+    const timetable = mode === 'timetable';
+    const heading = document.getElementById('syllabus-heading');
+    if (heading) heading.textContent = timetable ? t('Weekly timetable') : t('Exams & deadlines');
+    const courseWrap = document.getElementById('syllabus-course-wrap');
+    if (courseWrap) courseWrap.hidden = timetable;
+    if (syllabusUntilWrap) syllabusUntilWrap.hidden = !timetable;
+}
+
+// "Statistics (Tutorial)" / "למידה סטטיסטית (תרגול)" - in the course's language.
+function timetableTitle(item) {
+    const course = String(item.course || '').trim();
+    if (item.classType === 'other') return course;
+    const [en, he] = TIMETABLE_TYPE_LABEL[item.classType] || TIMETABLE_TYPE_LABEL.other;
+    return `${course} (${/[\u0590-\u05FF]/.test(course) ? he : en})`;
+}
+const timeToMin = (hm) => { const m = /^(\d\d):(\d\d)$/.exec(hm || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+function timetableImportItem(item, state) {
+    const s = timeToMin(item.time), e = timeToMin(item.endTime);
+    const len = s !== null && e !== null && e > s ? e - s : null;
+    return {
+        kind: 'class', title: timetableTitle(item), course: String(item.course || '').trim(),
+        weekday: item.weekday, time: item.time, endTime: item.endTime || null,
+        durationMinutes: len && len >= 15 && len <= 720 ? len : null,
+        until: state.noEnd ? null : state.until, location: item.location || ''
+    };
+}
+
+function readAsBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result).split(',')[1] || '');
+        r.onerror = () => reject(new Error(t('The file could not be read.')));
+        r.readAsDataURL(blob);
+    });
+}
+function loadImage(file) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode')); };
+        img.src = url;
+    });
+}
+// A picture -> a JPEG of at most 2000px on its long side (text stays
+// readable, a phone photo drops from megabytes to a few hundred KB).
+async function timetablePayload(file) {
+    if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '')) {
+        if (file.size > TIMETABLE_MAX_BYTES) throw new Error(t('This PDF is too large. Take a screenshot of the timetable instead.'));
+        return { mimeType: 'application/pdf', data: await readAsBase64(file) };
+    }
+    try {
+        const img = await loadImage(file);
+        const scale = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';   // a transparent PNG would turn black as a JPEG
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.9));
+        if (!blob) throw new Error('encode');
+        if (blob.size > TIMETABLE_MAX_BYTES) throw new Error(t('The picture is too large. Take a screenshot instead, or crop it to the timetable.'));
+        return { mimeType: 'image/jpeg', data: await readAsBase64(blob) };
+    } catch (err) {
+        if (err.message !== 'decode' && err.message !== 'encode') throw err;
+        // A format this browser can't draw (HEIC on Chrome): send it as it is, if small enough.
+        if (/^image\/(png|jpeg|webp|heic|heif)$/.test(file.type) && file.size <= TIMETABLE_MAX_BYTES) {
+            return { mimeType: file.type, data: await readAsBase64(file) };
+        }
+        throw new Error(t('This picture can\'t be opened here. Take a screenshot of it and choose that instead.'));
+    }
+}
+
+async function openTimetableImport(file, btn) {
+    const originalHTML = btn ? btn.innerHTML : '';
+    if (btn) { btn.textContent = t('Reading…'); btn.disabled = true; }
+    let res;
+    let known = [];
+    try {
+        const payload = await timetablePayload(file);
+        known = await knownCourses().catch(() => []);
+        res = await ipcRenderer.invoke('read-timetable', { ...payload, knownCourses: known });
+    } catch (e) {
+        res = { error: e.message };
+    } finally {
+        if (btn) { btn.innerHTML = originalHTML; btn.disabled = false; }
+    }
+    if (!res || res.error) {
+        toast.error((res && res.error) || t('Please try again.'), t('Could not read the timetable'));
+        return;
+    }
+    if (!res.items.length) {
+        toast.info(t('No classes found in this picture. Try a clearer screenshot of the whole week.'), t('Nothing found'));
+        return;
+    }
+    setSyllabusMode('timetable');
+    syllabusState = {
+        mode: 'timetable', file: { name: file.name }, saving: false,
+        // Ticked unless already in the Planner or not every week.
+        items: res.items.map(i => ({ ...i, checked: !i.alreadyExists && i.everyWeek !== false })),
+        until: res.suggestedUntil || null, noEnd: false, untilError: null
+    };
+    document.getElementById('syllabus-file').textContent = file.name;
+    const list = document.getElementById('syllabus-courses');
+    if (list) {
+        list.innerHTML = '';
+        for (const k of known) { const o = document.createElement('option'); o.value = k; list.appendChild(o); }
+    }
+    if (syllabusUntilText) syllabusUntilText.value = '';
+    if (syllabusUntilDate) syllabusUntilDate.value = syllabusState.until || '';
+    if (syllabusNoEnd) syllabusNoEnd.checked = false;
+    if (syllabusGoogle) syllabusGoogle.checked = false;
+    renderSyllabusList();
+    syllabusModal.style.display = 'flex';
+}
+
+function timetableNote(item) {
+    if (item.alreadyExists) return { text: t('Already in your Planner at that time') };
+    if (item.everyWeek === false) return { text: t('Not every week - check it before adding'), soft: true };
+    if (item.note) return { text: item.note, soft: true, user: true };
+    return null;
+}
+
+function renderTimetableList() {
+    const state = syllabusState;
+    syllabusList.innerHTML = '';
+    state.items.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'syllabus-row timetable-row';
+
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = !!item.checked;
+        box.setAttribute('aria-label', t('Add this class'));
+        box.onchange = () => { item.checked = box.checked; updateSyllabusConfirm(); };
+
+        const body = document.createElement('span');
+        body.className = 'syllabus-row__body';
+        const top = document.createElement('span');
+        top.className = 'syllabus-row__top';
+        const kind = document.createElement('span');
+        kind.className = 'syllabus-kind syllabus-kind--class';
+        kind.textContent = t((TIMETABLE_TYPE_LABEL[item.classType] || TIMETABLE_TYPE_LABEL.other)[0]);
+        top.append(kind);
+        if (item.matched && item.printedCourse && item.printedCourse !== item.course) {
+            const was = document.createElement('span');
+            was.className = 'syllabus-row__meta';
+            was.textContent = t('In the timetable: {name}', { name: item.printedCourse });
+            top.append(was);
+        }
+
+        const fields = document.createElement('span');
+        fields.className = 'timetable-row__fields';
+        const course = document.createElement('input');
+        course.className = 'input-field timetable-row__course';
+        course.dir = 'auto';
+        course.maxLength = 80;
+        course.value = item.course || '';
+        course.setAttribute('list', 'syllabus-courses');
+        course.setAttribute('aria-label', t('Course'));
+        course.oninput = () => { item.course = course.value; updateSyllabusConfirm(); };
+        const day = document.createElement('select');
+        day.className = 'input-field timetable-row__day';
+        day.setAttribute('aria-label', t('Day'));
+        for (const d of TIMETABLE_DAYS) {
+            const o = document.createElement('option');
+            o.value = d;
+            o.textContent = t(d);
+            day.appendChild(o);
+        }
+        day.value = item.weekday;
+        day.onchange = () => { item.weekday = day.value; };
+        const start = document.createElement('input');
+        start.type = 'time';
+        start.className = 'input-field timetable-row__time';
+        start.value = item.time || '';
+        start.setAttribute('aria-label', t('Starts'));
+        start.onchange = () => { item.time = start.value; updateSyllabusConfirm(); };
+        const dash = document.createElement('span');
+        dash.className = 'timetable-row__dash';
+        dash.textContent = '–';
+        const end = document.createElement('input');
+        end.type = 'time';
+        end.className = 'input-field timetable-row__time';
+        end.value = item.endTime || '';
+        end.setAttribute('aria-label', t('Ends'));
+        end.onchange = () => { item.endTime = end.value; };
+        const hours = document.createElement('span');
+        hours.className = 'timetable-row__hours';   // start and end wrap together on a phone
+        hours.append(start, dash, end);
+        fields.append(course, day, hours);
+        body.append(top, fields);
+
+        const where = [item.location, item.lecturer].filter(Boolean).join(' · ');
+        if (where) {
+            const meta = document.createElement('span');
+            meta.className = 'syllabus-row__meta';
+            meta.dir = 'auto';
+            meta.textContent = where;
+            body.append(meta);
+        }
+        const note = timetableNote(item);
+        if (note) {
+            const n = document.createElement('span');
+            n.className = 'syllabus-row__note' + (note.soft ? ' syllabus-row__note--soft' : '');
+            if (note.user) n.dir = 'auto';
+            n.textContent = note.text;
+            body.append(n);
+        }
+        row.append(box, body);
+        syllabusList.appendChild(row);
+    });
+    updateSyllabusConfirm();
+}
+
+function updateTimetableConfirm() {
+    const state = syllabusState;
+    const picked = state.items.filter(i => i.checked);
+    // A ticked class needs a course and a start time.
+    const incomplete = picked.filter(i => !String(i.course || '').trim() || !/^\d\d:\d\d$/.test(i.time || '')).length;
+    const ready = !!(state.until || state.noEnd);
+    syllabusConfirm.disabled = picked.length === 0 || !ready || incomplete > 0 || state.saving;
+    syllabusConfirm.textContent = picked.length === 0 ? t('Add') : t(picked.length === 1 ? 'Add 1 item' : `Add ${picked.length} items`);
+    if (syllabusGoogleRow) syllabusGoogleRow.hidden = picked.length === 0;
+    if (syllabusUntilHint) {
+        syllabusUntilHint.textContent = state.untilError ? state.untilError
+            : state.until ? t('The classes repeat every week until {d}.', { d: untilLabel(state.until) })
+            : t('The classes repeat every week until this day.');
+    }
+    syllabusIntro.textContent = picked.length === 0 ? t('Tick what you want to add.')
+        : incomplete ? t('Every ticked class needs a course and a start time.')
+        : !ready ? t('Write when the semester ends - or tick "I don\'t know yet".')
+        : t(picked.length === 1 ? '1 weekly class to the Planner' : `${picked.length} weekly classes to the Planner`) + '.';
+}
+
+// The one end date: a typed "15.2" (read like every date in the app) or the date picker.
+async function applyTimetableUntil(text) {
+    const state = syllabusState;
+    if (!state || state.mode !== 'timetable') return;
+    const r = await ipcRenderer.invoke('parse-exam-dates', text).catch(e => ({ error: e.message }));
+    if (!syllabusState || syllabusState !== state) return;
+    if (!r || r.error || !r.exams || !r.exams.length) {
+        state.untilError = (r && r.error) || t('Couldn\'t tell the date. Try writing it like "15.2".');
+    } else {
+        state.until = r.exams[0].date;
+        state.untilError = null;
+        state.noEnd = false;
+        if (syllabusUntilDate) syllabusUntilDate.value = state.until;
+        if (syllabusNoEnd) syllabusNoEnd.checked = false;
+    }
+    updateSyllabusConfirm();
+}
+if (syllabusUntilText) {
+    syllabusUntilText.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); const v = syllabusUntilText.value.trim(); if (v) applyTimetableUntil(v); }
+    });
+    syllabusUntilText.addEventListener('change', () => { const v = syllabusUntilText.value.trim(); if (v) applyTimetableUntil(v); });
+}
+if (syllabusUntilDate) {
+    syllabusUntilDate.addEventListener('change', () => {
+        const state = syllabusState;
+        if (!state || state.mode !== 'timetable') return;
+        const v = syllabusUntilDate.value;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(v) && v < localIsoDate(new Date())) {
+            state.until = null;
+            state.untilError = t('That day has already passed.');
+        } else {
+            state.until = /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+            state.untilError = null;
+            if (state.until) { state.noEnd = false; if (syllabusNoEnd) syllabusNoEnd.checked = false; }
+        }
+        updateSyllabusConfirm();
+    });
+}
+if (syllabusNoEnd) {
+    syllabusNoEnd.addEventListener('change', () => {
+        if (!syllabusState || syllabusState.mode !== 'timetable') return;
+        syllabusState.noEnd = syllabusNoEnd.checked;
+        updateSyllabusConfirm();
+    });
+}
+if (timetableBtn && timetableFileInput) {
+    timetableBtn.onclick = () => { timetableFileInput.value = ''; timetableFileInput.click(); };
+    timetableFileInput.onchange = () => {
+        const f = timetableFileInput.files && timetableFileInput.files[0];
+        if (f) openTimetableImport(f, timetableBtn);
+    };
+}
 
 const saveFolderBtnFinal = document.getElementById('save-folder-btn');
 if (saveFolderBtnFinal) {

@@ -596,6 +596,7 @@ body.dark-mode .day-column {
     padding-inline-end: 44px;
 }
 .task-repeat { opacity: 0.7; white-space: nowrap; }
+.task-card__location { font-size: var(--text-xs); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-card__title {
     line-height: 1.35;
     overflow-wrap: break-word;
@@ -1107,8 +1108,26 @@ body.auth-pending #auth-screen { background: var(--bg-sidebar); }
 .syllabus-modal > * { flex-shrink: 0; }
 .syllabus-modal > .syllabus-file { margin-top: 0; text-align: start; font-size: var(--text-sm); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .syllabus-modal > .smart-help { margin-bottom: 0; }
-.syllabus-modal > .form-label { margin-top: 16px; margin-bottom: 6px; display: block; }
-.syllabus-modal > .form-label + .input-field { margin-top: 0; }
+.syllabus-modal > .form-label,
+#syllabus-course-wrap > .form-label,
+.syllabus-until > .form-label { margin-top: 16px; margin-bottom: 6px; display: block; }
+.syllabus-modal > .form-label + .input-field,
+#syllabus-course-wrap > .form-label + .input-field { margin-top: 0; }
+/* Timetable from a photo (1/10): one end date for all, and a row per class
+   with its own course, day and hours. */
+.syllabus-until[hidden], #syllabus-course-wrap[hidden] { display: none; }
+.syllabus-until { margin-bottom: 12px; }
+.syllabus-until > .form-label { margin-top: 4px; }
+.syllabus-until__row { display: flex; gap: 8px; flex-wrap: wrap; }
+.syllabus-until__row .input-field { margin: 0; flex: 1 1 140px; min-width: 0; }
+.syllabus-until .checkbox-field { margin-top: 6px; }
+.timetable-row__fields { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.timetable-row__fields .input-field { margin: 0; padding: 4px 8px; font-size: var(--text-sm); min-width: 0; width: auto; height: auto; }
+.timetable-row__fields .timetable-row__course { flex: 1 1 100%; width: 100%; font-weight: var(--font-medium); }
+.timetable-row__day { flex: 0 1 auto; }
+.timetable-row__fields .timetable-row__time { flex: 0 1 118px; width: 118px; font-variant-numeric: tabular-nums; }
+.timetable-row__dash { color: var(--text-tertiary); }
+.timetable-row__hours { display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
 .syllabus-list {
     overflow-y: auto;
     min-height: 0;

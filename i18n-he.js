@@ -180,6 +180,29 @@
         'Already in your Planner at that time': 'כבר נמצא בלוח בשעה הזאת',
         'Repeats every week. Write until when (e.g. "15.1"), or just tick it to keep it with no end date.': 'חוזר כל שבוע. אפשר לכתוב עד מתי (למשל "15.1"), או פשוט לסמן בלי תאריך סיום.',
         'Already in MindSync': 'כבר נמצא ב-MindSync', 'Already passed': 'כבר עבר', "This date isn't written like this in the file - check it": 'התאריך לא כתוב כך בקובץ - כדאי לבדוק',
+        // Weekly timetable from a photo (1/10)
+        'Timetable from a photo': 'מערכת שעות מתמונה', 'Weekly timetable': 'מערכת שעות שבועית',
+        'When does the semester end?': 'מתי מסתיים הסמסטר?', 'Last day of classes': 'היום האחרון של השיעורים',
+        'The classes repeat every week until this day.': 'השיעורים יחזרו כל שבוע עד היום הזה.',
+        'The classes repeat every week until {d}.': 'השיעורים יחזרו כל שבוע עד {d}.',
+        "I don't know yet - add them with no end date": 'עוד לא ידוע - להוסיף בלי תאריך סיום',
+        'The file could not be read.': 'לא הצלחנו לקרוא את הקובץ.',
+        'This PDF is too large. Take a screenshot of the timetable instead.': 'ה-PDF גדול מדי. אפשר לצלם מסך של המערכת במקום.',
+        'The picture is too large. Take a screenshot instead, or crop it to the timetable.': 'התמונה גדולה מדי. אפשר לצלם מסך במקום, או לחתוך אותה רק למערכת.',
+        "This picture can't be opened here. Take a screenshot of it and choose that instead.": 'אי אפשר לפתוח את התמונה הזאת כאן. אפשר לצלם אותה במסך ולבחור את צילום המסך.',
+        'Choose a picture (a photo or a screenshot) or a PDF of your timetable.': 'בוחרים תמונה (צילום או צילום מסך) או PDF של מערכת השעות.',
+        'The picture could not be read. Try again.': 'לא הצלחנו לקרוא את התמונה. כדאי לנסות שוב.',
+        'Reading a timetable picture needs the cloud AI (a Gemini key in Settings).': 'קריאת תמונה של מערכת שעות צריכה את ה-AI בענן (מפתח Gemini בהגדרות).',
+        'Reading…': 'קוראים…', 'Could not read the timetable': 'לא הצלחנו לקרוא את המערכת',
+        'No classes found in this picture. Try a clearer screenshot of the whole week.': 'לא נמצאו שיעורים בתמונה. כדאי לנסות צילום מסך ברור יותר של כל השבוע.',
+        'Not every week - check it before adding': 'לא כל שבוע - כדאי לבדוק לפני שמוסיפים',
+        'Add this class': 'להוסיף את השיעור', 'In the timetable: {name}': 'במערכת: {name}',
+        'Lecture': 'הרצאה', 'Tutorial': 'תרגול', 'Lab': 'מעבדה', 'Seminar': 'סמינר',
+        'Day': 'יום', 'Starts': 'מתחיל', 'Ends': 'נגמר',
+        'Every ticked class needs a course and a start time.': 'לכל שיעור מסומן צריך קורס ושעת התחלה.',
+        'Write when the semester ends - or tick "I don\'t know yet".': 'כותבים מתי מסתיים הסמסטר - או מסמנים "עוד לא ידוע".',
+        'Couldn\'t tell the date. Try writing it like "15.2".': 'לא הצלחנו להבין את התאריך. אפשר לכתוב למשל "15.2".',
+        'That day has already passed.': 'היום הזה כבר עבר.',
         'Tick what you want to add.': 'מסמנים מה להוסיף.', 'Set end': 'קביעת סיום', 'Set date': 'קביעת תאריך',
         "Couldn't tell the date. Try writing it like \"15.1\".": 'לא הצלחתי להבין את התאריך. אפשר לכתוב כמו "15.1".',
         "Couldn't tell the date. Try writing it like \"12.2\".": 'לא הצלחתי להבין את התאריך. אפשר לכתוב כמו "12.2".',
@@ -485,6 +508,8 @@
             '<strong>הוספה ללוח</strong> - כותבים כמו שאומרים, למשל <bdi dir="rtl">"שיעור סטטיסטיקה כל יום שני ב-10"</bdi> או <bdi dir="rtl">"מבחן ב-12.2 ב-9"</bdi>.',
         '<strong>Plan study time</strong> - finds free time this week for your open tasks and puts study blocks before their deadlines.':
             '<strong>תכנון זמני לימוד</strong> - מוצא זמן פנוי השבוע למשימות הפתוחות ומשבץ זמני לימוד לפני הדדליינים.',
+        '<strong>Timetable from a photo</strong> - a screenshot or photo of your weekly timetable; you check the classes, then they go in every week until the semester ends.':
+            '<strong>מערכת שעות מתמונה</strong> - צילום מסך או תמונה של מערכת השעות; עוברים על השיעורים, והם נכנסים לכל שבוע עד סוף הסמסטר.',
         '<strong>↻</strong> repeats every week. The pencil on a card changes it, the bin deletes it.':
             '<strong>↻</strong> חוזר כל שבוע. העיפרון על כרטיס משנה אותו, הפח מוחק.',
         '<strong>New task</strong> - write it in your own words; a date or <bdi dir="rtl">"מחר"</bdi> is enough, the rest is worked out for you.':
@@ -656,6 +681,14 @@
         [/^(\d+) submissions to Tasks$/, '$1 הגשות למשימות'],
         [/^1 weekly class$/, 'שיעור שבועי אחד'],
         [/^(\d+) weekly classes$/, '$1 שיעורים שבועיים'],
+        // "Added 9 weekly classes and 2 exams to the Planner and 3 submissions to Tasks." (1/10:
+        // only "Added" was translated - the rest stayed English).
+        [/^Added (.+ to (?:the Planner|Tasks))\.$/, (m, x) => `${(x.match(/\d+/g) || []).reduce((t, v) => t + Number(v), 0) === 1 ? (/submission/.test(x) ? 'נוספה' : 'נוסף') : 'נוספו'} ${x
+            .replace(/(\d+) weekly class(?:es)?/g, (k, c) => n(c, 'שיעור שבועי אחד', '# שיעורים שבועיים'))
+            .replace(/(\d+) exams?/g, (k, c) => n(c, 'מבחן אחד', '# מבחנים'))
+            .replace(/(\d+) submissions?/g, (k, c) => n(c, 'הגשה אחת', '# הגשות'))
+            .replace(/ to the Planner/g, ' ללוח השבועי').replace(/ to Tasks/g, ' למשימות')
+            .replace(/ and (?=\d)/g, ' ו-').replace(/ and /g, ' ו')}.`],
         [/^Added (.+)\.$/, 'נוספו $1.'],
         // Focus mode
         [/^(.+) removed from the block list\.$/, '$1 הוסר מרשימת החסימה.'],

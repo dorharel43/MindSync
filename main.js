@@ -796,12 +796,16 @@ ipcMain.handle('import-syllabus-items', async (event, items = [], options = {}) 
                 const day = normalizeWeekday(item.weekday);
                 const time = normalizeTimeText(item.time);
                 if (!day || !time) { errors.push(`"${title}" has no day or time`); continue; }
+                // A timetable has a course per class; a syllabus, one for all.
+                const itemCourse = String(item.course || '').trim().slice(0, 80) || course;
+                const location = String(item.location || '').replace(/\s+/g, ' ').trim().slice(0, 200);
                 const evt = {
-                    title: titleWithCourse(title, course),
+                    title: titleWithCourse(title, itemCourse),
                     day, date: null,           // null = repeats every week
                     // ...until this date, when known (the semester's end).
                     until: /^\d{4}-\d{2}-\d{2}$/.test(item.until || '') ? item.until : null,
                     time, type: 'lesson',
+                    ...(location ? { location } : {}),
                     ...(item.durationMinutes ? { durationMinutes: item.durationMinutes } : {})
                 };
                 if (options.syncToGoogle) {
@@ -846,6 +850,111 @@ ipcMain.handle('import-syllabus-items', async (event, items = [], options = {}) 
         }
     }
     return { created, errors, syncErrors };
+});
+
+// ==========================================
+// Weekly timetable from a photo (1/10)
+// ==========================================
+// Most syllabi have no class times, so the student photographs (or screenshots)
+// their timetable - usually a Hebrew grid from the college portal - and the
+// classes go to the Planner as weekly events, through the syllabus review
+// window (a course per row, one "until" for all) and import-syllabus-items.
+const TIMETABLE_TYPES = ['lecture', 'tutorial', 'lab', 'seminar', 'other'];
+
+function buildTimetablePrompt(known) {
+    return `This is a student's weekly university timetable - a screenshot or a photo, often from the college portal, usually in Hebrew. Days are columns or rows (Sunday to Saturday); each class is a block with its course, its kind and its hours.
+
+List EVERY class block. For each:
+- "course": the course name exactly as printed, WITHOUT the class kind.
+- "type": "lecture" (שיעור / שעור / הרצאה), "tutorial" (תרגול / תרגיל), "lab" (מעבדה), "seminar" (סמינר / סמינריון) or "other".
+- "weekday": the day in English (Sunday ... Saturday) - from the column or row the block is in.
+- "start" and "end": "HH:MM", 24-hour. Printed right-to-left, "10:00 - 08:30" means 08:30 to 10:00. If no hours are printed in the block, read them from the hour grid.
+- "room" and "lecturer": as printed, or "".
+- "everyWeek": false only when the block says it is NOT every week (every other week, given dates, part of the semester); otherwise true.
+- "note": "" - or a few words, in the timetable's language, when something can't be read with confidence (a block cut off at the edge, unclear hours).
+- "match": the name from KNOWN COURSES below that is the SAME course, written exactly as it appears in that list - the same course is often written differently (abbreviations like חדו"א for חשבון דיפרנציאלי ואינטגרלי / אינפיניטסימלי, "2" for "ב'", with or without a course number). "" when none is the same course. Never a similar but different course (סטטיסטיקה 1 is not סטטיסטיקה 2).
+
+KNOWN COURSES:
+${known.length ? known.map(k => `- ${k}`).join('\n') : '(none)'}
+
+Don't invent blocks, and don't merge two blocks into one. Return ONLY JSON: {"classes": [{"course": "...", "type": "...", "weekday": "...", "start": "HH:MM", "end": "HH:MM", "room": "", "lecturer": "", "everyWeek": true, "note": "", "match": ""}]}`;
+}
+
+ipcMain.handle('read-timetable', async (event, payload = {}) => {
+    try {
+        const mimeType = String(payload.mimeType || '').toLowerCase();
+        const data = String(payload.data || '');
+        const isPdf = mimeType === 'application/pdf';
+        if (!/^image\/(png|jpeg|webp|heic|heif)$/.test(mimeType) && !isPdf) return { error: 'Choose a picture (a photo or a screenshot) or a PDF of your timetable.' };
+        if (!data || !/^[A-Za-z0-9+/=\s]+$/.test(data)) return { error: 'The picture could not be read. Try again.' };
+        // Base64 of ~2.9MB at most - the renderer shrinks photos before sending.
+        if (data.length > 4 * 1024 * 1024) return { error: 'The picture is too large. Take a screenshot instead, or crop it to the timetable.' };
+        if (!aiProvider.supportsVision()) return { error: 'Reading a timetable picture needs the cloud AI (a Gemini key in Settings).' };
+
+        const known = (Array.isArray(payload.knownCourses) ? payload.knownCourses : [])
+            .map(k => String(k || '').trim().slice(0, 80)).filter(Boolean).slice(0, 60);
+        const prompt = buildTimetablePrompt(known);
+        const opts = { forceJson: true, maxTokens: 8192, thinkingLevel: 'medium', timeoutMs: 120000, withMeta: true, noFallback: true };
+        const r = isPdf
+            ? await aiProvider.generateFromPdf(Buffer.from(data, 'base64'), prompt, opts)
+            : await aiProvider.generateFromImages([{ mimeType, data }], prompt, opts);
+        let parsed;
+        try { parsed = JSON.parse(extractJsonFromText(r.text || '')); } catch (e) {
+            console.error('❌ read-timetable: not JSON:', String(r.text).slice(0, 300));
+            return { error: 'The AI answer could not be read. Try again.' };
+        }
+        const raw = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.classes) ? parsed.classes : []);
+
+        // Classes already in the Planner (weekly, same day, time and course)
+        // start unticked, so importing the same timetable twice adds nothing.
+        const events = await api.getEvents().catch(() => []);
+        const weekly = (events || []).filter(e => !e.date);
+        const toMin = (hm) => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
+        const items = [];
+        const seen = new Set();
+        for (const c of raw.slice(0, 80)) {
+            if (!c || typeof c !== 'object') continue;
+            const printed = String(c.course || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+            const weekday = normalizeWeekday(c.weekday);
+            let start = normalizeTimeText(c.start);
+            let end = normalizeTimeText(c.end);
+            if (!printed || !weekday || !start) continue;
+            // A right-to-left "10:00 - 08:30" read the wrong way round.
+            if (end && toMin(end) < toMin(start)) [start, end] = [end, start];
+            const len = end ? toMin(end) - toMin(start) : null;
+            // The AI's match only counts when it is one of the student's courses, as written.
+            const match = known.find(k => k === String(c.match || '').trim()) || '';
+            const course = match || printed;
+            const type = TIMETABLE_TYPES.includes(c.type) ? c.type : 'other';
+            const key = `${weekday}|${start}|${normalizeForMatch(course)}|${type}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const nc = normalizeForMatch(course), np = normalizeForMatch(printed);
+            items.push({
+                kind: 'class', course, printedCourse: printed, matched: !!match, classType: type,
+                weekday, time: start, endTime: end,
+                durationMinutes: len && len >= 15 && len <= 720 ? len : null,
+                location: String(c.room || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+                lecturer: String(c.lecturer || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+                everyWeek: c.everyWeek !== false,
+                note: String(c.note || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+                alreadyExists: weekly.some(e => e.day === weekday && e.time === start &&
+                    (normalizeForMatch(e.title).includes(nc) || normalizeForMatch(e.title).includes(np)))
+            });
+        }
+        const order = (i) => `${WEEKDAYS_EN.indexOf(i.weekday)}|${i.time}`;
+        items.sort((a, b) => order(a).localeCompare(order(b)));
+
+        // When the semester ends: the latest end date the student already
+        // gave a weekly class that hasn't ended - offered, not imposed.
+        const todayIso = toLocalIsoDate(new Date());
+        const untils = weekly.map(e => e.until).filter(u => /^\d{4}-\d{2}-\d{2}$/.test(u || '') && u >= todayIso).sort();
+        console.log(`📅 read-timetable: ${items.length} class(es) from ${isPdf ? 'a PDF' : 'a picture'} (${r.model})`);
+        return { items, suggestedUntil: untils.length ? untils[untils.length - 1] : null, model: r.model };
+    } catch (error) {
+        console.error('❌ read-timetable failed:', error.message);
+        return { error: error.message };
+    }
 });
 
 // Reads a duration hint out of free text ("ללמוד 3 שעות למבחן", "שעתיים",
@@ -3804,6 +3913,7 @@ async function syncToGoogleCalendar(evtData) {
                 resource: {
                     summary: evtData.title,
                     description: 'Created via MindSync AI 🧠',
+                    ...(evtData.location ? { location: String(evtData.location).slice(0, 200) } : {}),
                     start: { dateTime: startDate.toISOString(), timeZone: 'Asia/Jerusalem' },
                     end: { dateTime: endDate.toISOString(), timeZone: 'Asia/Jerusalem' },
                     ...(dateMatch ? {} : { recurrence: [weeklyRule(evtData.until)] })
