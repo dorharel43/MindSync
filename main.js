@@ -2235,6 +2235,8 @@ Rules:
 - If the question asks for several things (two parts, "compare", "name three", "define and give an example"), it is "correct" only when every part is there; some of the parts = "partial".
 - Numbers and formulas: accept equivalent forms (1/2 = 0.5 = 50%), sensible rounding and algebraically equivalent expressions. A wrong or missing unit, when the unit matters, = "partial".
 - Only naming the right term without saying anything true about it is "partial" at most. "I don't know", "?" or unrelated text = "wrong".
+- Code the student WROTE: trace it on a small normal input. If it doesn't compile, never ends, crashes, or returns a wrong result for normal input, it is "wrong" - even when the idea is close. "partial" only when it works for normal input but misses an edge case (empty input, zero, negative). Tiny typos that don't change what it does are fine.
+- Predicting what code prints or returns: every printed line must be right for "correct"; some lines right = "partial".
 ${solve ? '- This is a problem to solve. The student may give only the final result - judge that result.\n' : ''}${!expected ? '- There is no reference answer: work out the correct answer yourself first, carefully, then judge.\n' : referenceByAi ? '- The reference was written by AI and may be wrong: solve the question yourself first. If your careful solution disagrees with the reference, judge by your solution.\n' : '- Use the reference as the standard, but accept anything equivalent.\n'}
 Verdicts: "correct" (the key idea or the right result is there), "partial" (on the right track, something important missing or slightly wrong), "wrong".
 
@@ -2532,7 +2534,9 @@ RULES FOR EVERYTHING:
 Also return "course": the name of the course this material belongs to, as the material itself shows it (title slide, header, footer) - without a course number. null if the material doesn't say.
 
 Return ONLY JSON:
-{"course": "...", "items": [{"question": "...", "answer": "...", "mode": "recall|practice", "solutionSource": "document|ai", "skillTag": "short skill or topic name", "evidence": "short exact quote (teaching material)"}]}${existingNote(existing)}`;
+{"course": "...", "concepts": ["every distinct idea, rule, method or worked example in the material, in order - short names"], "items": [{"concept": "which of the concepts", "question": "...", "answer": "...", "mode": "recall|practice", "solutionSource": "document|ai", "skillTag": "short skill or topic name", "evidence": "short exact quote (teaching material)"}]}
+
+Fill "concepts" FIRST - it is your checklist - then write "items" until EVERY concept has at least one item of its own. Fewer items than concepts means you stopped early.${existingNote(existing)}`;
 }
 
 // The questions the student already has from this file (30/9): generating
@@ -2636,6 +2640,9 @@ function finaliseStudyItems(responseText, category, sourceFile, existing = []) {
         });
     }
 
+    // How much of its own checklist the model covered (1/10) - in the log.
+    const concepts = parsed && Array.isArray(parsed.concepts) ? parsed.concepts.length : null;
+    if (concepts != null) console.log(`🧩 ${concepts} concept(s) listed, ${list.length} item(s) written`);
     const byKind = cleaned.reduce((acc, i) => {
         const k = i.mode === 'practice' ? (i.solutionSource === 'ai' ? 'practice (AI solved)' : 'practice (from document)') : 'recall';
         acc[k] = (acc[k] || 0) + 1;
