@@ -2386,6 +2386,52 @@ For each item:
 Return ONLY JSON: {"variants": [{"id": "<the item id>", "keep": false, "question": "...", "answer": "..."}]} - one entry per item, same ids.`;
 }
 
+// One request for up to 6 questions -> { written: [{orig, question, answer}],
+// keep: [orig], failed: [orig] }. Throws on an AI error.
+async function writeVariants(chunk) {
+    const raw = await aiProvider.generateText(buildVariantsPrompt(chunk), {
+        forceJson: true, maxTokens: 7000, thinkingLevel: 'medium', timeoutMs: 120000, noFallback: true, allowance: 'light'
+    });
+    const data = JSON.parse(extractJsonFromText(String(raw)));
+    const norm = (x) => String(x || '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 400);
+    const byId = new Map(chunk.map(c => [String(c.id), c]));
+    const out = { written: [], keep: [], failed: [] };
+    for (const v of (data && Array.isArray(data.variants) ? data.variants : [])) {
+        const orig = v && byId.get(String(v.id));
+        if (!orig) continue;
+        byId.delete(String(v.id));
+        if (v.keep === true) { out.keep.push(orig); continue; }
+        const q = cleanMathNotation(String(v.question || '').trim()).slice(0, 2000);
+        const a = cleanMathNotation(String(v.answer || '').trim()).slice(0, 4000);
+        const seen = [orig.question, cleanMathNotation(orig.question), ...(orig.pastVersions || [])].map(norm);
+        if (q.length < 10 || a.length < 5 || !isSelfContained(q) || FORMULA_RECALL.test(q) || seen.includes(norm(q))) { out.failed.push(orig); continue; }
+        out.written.push({ orig, question: q, answer: a });
+    }
+    // Left out of the AI's answer altogether.
+    for (const orig of byId.values()) out.failed.push(orig);
+    return out;
+}
+
+// The owner's AI quality check (1/10): versions of a few just-written
+// questions, shown on /admin - nothing is saved.
+ipcMain.handle('preview-variants', async (event, items = []) => {
+    try {
+        const chunk = (Array.isArray(items) ? items : []).slice(0, 6).map((i, n) => ({
+            id: `p${n}`, question: String(i.question || '').slice(0, 2000), answer: String(i.answer || '').slice(0, 4000),
+            mode: i.mode === 'practice' ? 'practice' : 'recall', solutionSource: i.solutionSource === 'ai' ? 'ai' : 'document', pastVersions: []
+        })).filter(i => i.question && i.answer);
+        if (!chunk.length) return [];
+        const out = await writeVariants(chunk);
+        return [
+            ...out.written.map(w => ({ question: w.orig.question, version: w.question, answer: w.answer, mode: w.orig.mode })),
+            ...out.keep.map(o => ({ question: o.question, kept: true, mode: o.mode })),
+            ...out.failed.map(o => ({ question: o.question, failed: true, mode: o.mode }))
+        ];
+    } catch (err) {
+        return { error: err.message };
+    }
+});
+
 ipcMain.handle('prepare-variants', async (event, payload = {}) => {
     try {
         // A small local model writes poor problems and checks them worse.
@@ -2396,12 +2442,9 @@ ipcMain.handle('prepare-variants', async (event, payload = {}) => {
         let prepared = 0, kept = 0, failed = 0;
         for (let i = 0; i < candidates.length; i += 6) {
             const chunk = candidates.slice(i, i + 6);
-            let data;
+            let out;
             try {
-                const raw = await aiProvider.generateText(buildVariantsPrompt(chunk), {
-                    forceJson: true, maxTokens: 7000, thinkingLevel: 'medium', timeoutMs: 120000, noFallback: true, allowance: 'light'
-                });
-                data = JSON.parse(extractJsonFromText(String(raw)));
+                out = await writeVariants(chunk);
             } catch (err) {
                 console.warn('⚠️ prepare-variants: a batch failed:', err.message);
                 // Out of AI for today (any of the allowance messages): stop.
@@ -2413,23 +2456,13 @@ ipcMain.handle('prepare-variants', async (event, payload = {}) => {
             // again: "keep" = shown as it is from now on; anything unusable =
             // not asked for a few days.
             const mark = (id, body) => api.setStudyVariant(id, body).catch(() => null);
-            const norm = (x) => String(x || '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 400);
-            const byId = new Map(chunk.map(c => [c.id, c]));
-            for (const v of (data && Array.isArray(data.variants) ? data.variants : [])) {
-                const orig = v && byId.get(String(v.id));
-                if (!orig) continue;
-                byId.delete(String(v.id));
-                if (v.keep === true) { kept += 1; await mark(orig.id, { keep: true }); continue; }
-                const q = cleanMathNotation(String(v.question || '').trim()).slice(0, 2000);
-                const a = cleanMathNotation(String(v.answer || '').trim()).slice(0, 4000);
-                const seen = [orig.question, cleanMathNotation(orig.question), ...(orig.pastVersions || [])].map(norm);
-                if (q.length < 10 || a.length < 5 || !isSelfContained(q) || FORMULA_RECALL.test(q) || seen.includes(norm(q))) { failed += 1; await mark(orig.id, { failed: true }); continue; }
-                try { await api.setStudyVariant(orig.id, { question: q, answer: a, solutionSource: 'ai' }); prepared += 1; } catch (err) {
+            for (const o of out.keep) { kept += 1; await mark(o.id, { keep: true }); }
+            for (const o of out.failed) { failed += 1; await mark(o.id, { failed: true }); }
+            for (const w of out.written) {
+                try { await api.setStudyVariant(w.orig.id, { question: w.question, answer: w.answer, solutionSource: 'ai' }); prepared += 1; } catch (err) {
                     if (!/already waiting/i.test(err.message)) failed += 1;   // another run got there first: fine
                 }
             }
-            // Left out of the AI's answer altogether.
-            for (const orig of byId.values()) { failed += 1; await mark(orig.id, { failed: true }); }
         }
         console.log(`🔁 prepare-variants (${when}): ${prepared} new version(s), ${kept} kept as is, ${failed} not usable`);
         return { prepared, kept, failed };
