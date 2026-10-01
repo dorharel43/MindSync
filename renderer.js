@@ -8298,7 +8298,12 @@ async function fullPhotoFeedback(exam, run, jobs) {
             show(job, `${t('Where it went wrong:')} ${r.feedback}`);
             const row = (run.answers || []).find(x => x.q === job.qi && x.p === job.pi);
             if (row) row.photoFeedback = r.feedback;
-            ipcRenderer.invoke('full-exam-save-photo-feedback', { examId: exam.id, runId, q: job.qi, p: job.pi, feedback: r.feedback }).catch(() => {});
+            // Saved with the result (once more if the first try fails); if it still
+            // can't be, say so - it is shown now but won't be there next time.
+            const save = () => ipcRenderer.invoke('full-exam-save-photo-feedback', { examId: exam.id, runId, q: job.qi, p: job.pi, feedback: r.feedback }).catch(err => ({ error: err.message }));
+            let saved = await save();
+            if (!saved || saved.error) saved = await save();
+            if (!saved || saved.error) show(job, `${t('Where it went wrong:')} ${r.feedback}\n(${t('Not saved - it is shown only now.')})`);
         } else {
             show(job, `${t('Couldn\'t look at your working:')} ${t((r && r.error) || 'Please try again.')}`, 'error');
         }
@@ -8526,14 +8531,6 @@ function renderFullResult(exam, run) {
                     part.appendChild(src);
                 }
             }
-            if (r.photoFeedback) {
-                const pf = document.createElement('div');
-                pf.className = 'full-photo-fb';
-                pf.setAttribute('translate', 'no');
-                pf.dir = 'auto';
-                pf.textContent = `${t('Where it went wrong:')} ${r.photoFeedback}`;
-                part.appendChild(pf);
-            }
             if (r.feedback) {
                 const fb = document.createElement('div');
                 fb.className = 'full-rpart__feedback';
@@ -8542,6 +8539,15 @@ function renderFullResult(exam, run) {
                 fb.textContent = r.feedback;
                 part.appendChild(fb);
             }
+            if (r.photoFeedback) {
+                const pf = document.createElement('div');
+                pf.className = 'full-photo-fb';
+                pf.setAttribute('translate', 'no');
+                pf.dir = 'auto';
+                pf.textContent = `${t('Where it went wrong:')} ${r.photoFeedback}`;
+                part.appendChild(pf);
+            }
+
             const det = document.createElement('details');
             const sum = document.createElement('summary');
             sum.textContent = t('The solution');
