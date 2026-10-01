@@ -7769,7 +7769,7 @@ function tickFullExam() {
 const fullKey = (qi, pi) => `${qi}:${pi}`;
 const fullAnswered = (a) => !!a && (a.dontKnow === true || !!String(a.choice || '').trim() || !!String(a.text || '').trim());
 // Parts marked by the choice alone - "I don't know" doesn't apply to them.
-const fullAutoMarked = (p) => p.type === 'mc' || (p.type === 'tf' && !p.reasonRequired);
+const fullAutoMarked = (p) => (p.type === 'mc' || p.type === 'tf') && !p.reasonRequired;
 function fullBonusBadge() {
     const b = document.createElement('span');
     b.className = 'full-bonus';
@@ -7805,6 +7805,35 @@ function setFullAnswer(qi, pi, patch) {
     fullState.answers[k] = { ...(fullState.answers[k] || { choice: '', text: '' }), ...patch };
     saveFullDraft();
     renderFullNav();
+}
+
+// A written answer (a solution, code, a proof - or the reason for a choice).
+function fullAnswerBox(qi, pi, p, a) {
+    const ta = document.createElement('textarea');
+    ta.className = `input-field full-answer${p.type === 'code' ? ' full-answer--code' : ''}`;
+    ta.dir = p.type === 'code' ? 'ltr' : 'auto';
+    ta.spellcheck = p.type !== 'code';
+    ta.placeholder = p.type === 'tf' ? t('Prove it, or give a counterexample')
+        : p.type === 'mc' ? t('Why? Explain your choice')
+        : p.type === 'code' ? t('Your code') : t('Your solution - the steps and the result');
+    ta.value = a.text || '';
+    ta.addEventListener('input', () => {
+        const k = fullKey(qi, pi);
+        fullState.answers[k] = { ...(fullState.answers[k] || { choice: '' }), text: ta.value };
+        clearTimeout(ta._t);
+        ta._t = setTimeout(() => { saveFullDraft(); renderFullNav(); }, 400);
+    });
+    if (p.type === 'code') {
+        ta.addEventListener('keydown', (e) => {
+            if (e.key !== 'Tab') return;
+            e.preventDefault();
+            const s = ta.selectionStart;
+            ta.value = `${ta.value.slice(0, s)}    ${ta.value.slice(ta.selectionEnd)}`;
+            ta.selectionStart = ta.selectionEnd = s + 4;
+            ta.dispatchEvent(new Event('input'));
+        });
+    }
+    return ta;
 }
 
 function renderFullQuestion() {
@@ -7887,6 +7916,8 @@ function renderFullQuestion() {
                 opts.appendChild(lab);
             });
             box.appendChild(opts);
+            // "Circle and explain": the reason is part of the answer.
+            if (p.reasonRequired) box.appendChild(fullAnswerBox(qi, pi, p, a));
         } else {
             if (p.type === 'tf') {
                 const tf = document.createElement('div');
@@ -7905,32 +7936,7 @@ function renderFullQuestion() {
                 }
                 box.appendChild(tf);
             }
-            if (p.type !== 'tf' || p.reasonRequired) {
-                const ta = document.createElement('textarea');
-                ta.className = `input-field full-answer${p.type === 'code' ? ' full-answer--code' : ''}`;
-                ta.dir = p.type === 'code' ? 'ltr' : 'auto';
-                ta.spellcheck = p.type !== 'code';
-                ta.placeholder = p.type === 'tf' ? t('Prove it, or give a counterexample')
-                    : p.type === 'code' ? t('Your code') : t('Your solution - the steps and the result');
-                ta.value = a.text || '';
-                ta.addEventListener('input', () => {
-                    const k = fullKey(qi, pi);
-                    fullState.answers[k] = { ...(fullState.answers[k] || { choice: '' }), text: ta.value };
-                    clearTimeout(ta._t);
-                    ta._t = setTimeout(() => { saveFullDraft(); renderFullNav(); }, 400);
-                });
-                if (p.type === 'code') {
-                    ta.addEventListener('keydown', (e) => {
-                        if (e.key !== 'Tab') return;
-                        e.preventDefault();
-                        const s = ta.selectionStart;
-                        ta.value = `${ta.value.slice(0, s)}    ${ta.value.slice(ta.selectionEnd)}`;
-                        ta.selectionStart = ta.selectionEnd = s + 4;
-                        ta.dispatchEvent(new Event('input'));
-                    });
-                }
-                box.appendChild(ta);
-            }
+            if (p.type !== 'tf' || p.reasonRequired) box.appendChild(fullAnswerBox(qi, pi, p, a));
         }
         // "I don't know" - only where the past exams give points for it.
         if (exam.dontKnowShare > 0 && !fullAutoMarked(p) && !q.bonus) {
@@ -8163,7 +8169,7 @@ function renderFullResult(exam, run) {
                 mine.dir = 'auto';
                 let shown = '';
                 if (r.dontKnow) shown = t('I don\'t know');
-                else if (p.type === 'mc') shown = r.choice !== '' && p.options[Number(r.choice)] != null ? `${Number(r.choice) + 1}. ${p.options[Number(r.choice)]}` : '';
+                else if (p.type === 'mc') shown = [r.choice !== '' && p.options[Number(r.choice)] != null ? `${Number(r.choice) + 1}. ${p.options[Number(r.choice)]}` : '', p.reasonRequired ? r.text : ''].filter(Boolean).join('\n');
                 else if (p.type === 'tf') shown = [r.choice === 'true' ? t('True') : r.choice === 'false' ? t('False') : '', r.text].filter(Boolean).join(' - ');
                 else shown = r.text;
                 mine.textContent = shown || t('No answer');
