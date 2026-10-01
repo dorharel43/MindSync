@@ -569,9 +569,11 @@ async function generateFromPdf(pdfBuffer, prompt, options = {}) {
         throw new Error('Reading PDFs directly requires a Gemini API key. Add one in Settings.');
     }
 
+    // One PDF, or several in one request (1/10: a course's past exams read
+    // together, to see what repeats between them).
     const parts = [
         { text: prompt },
-        { inlineData: { mimeType: 'application/pdf', data: pdfBuffer.toString('base64') } }
+        ...(Array.isArray(pdfBuffer) ? pdfBuffer : [pdfBuffer]).map(b => ({ inlineData: { mimeType: 'application/pdf', data: b.toString('base64') } }))
     ];
 
     const r = await callGeminiResilient({

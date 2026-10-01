@@ -215,6 +215,13 @@ module.exports = {
   // New versions of questions (1/10)
   getVariantCandidates: (when) => request('GET', `/study/variant-candidates?when=${when === 'tomorrow' ? 'tomorrow' : 'today'}`),
   setStudyVariant: (id, variant) => request('PUT', `/study/${enc(id)}/variant`, variant),
+  // Full exams (1/10)
+  saveFullExam: (exam) => request('POST', '/full-exams', exam),
+  listFullExams: (course) => request('GET', `/full-exams${course ? `?course=${encodeURIComponent(course)}` : ''}`),
+  getFullExam: (id) => request('GET', `/full-exams/${enc(id)}`),
+  deleteFullExam: (id) => request('DELETE', `/full-exams/${enc(id)}`),
+  saveFullExamRun: (id, run) => request('POST', `/full-exams/${enc(id)}/runs`, run),
+  getFullExamRuns: (id) => request('GET', `/full-exams/${enc(id)}/runs`),
   updateStudyItem: (id, updates) => request('PUT', `/study/${enc(id)}`, updates).then(withIdAlias),
   deleteStudyItem: (id) => request('DELETE', `/study/${enc(id)}`),
 

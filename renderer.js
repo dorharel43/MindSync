@@ -5001,6 +5001,11 @@ function renderStudyCourses(subjects, items) {
             mock.onclick = () => openExamSetup(s.category, name.textContent, s.items);
             actions.append(mock);
         }
+        const full = document.createElement('button');
+        full.className = 'btn-secondary btn-sm';
+        full.textContent = t('Full exam');
+        full.onclick = () => openFullExam(s.category);
+        actions.append(full);
         actions.append(practice);
         if (s.lastMock) {
             const m = document.createElement('span');
@@ -5768,6 +5773,9 @@ const examState = { course: '', label: '', count: 15, timed: true, items: [], an
 // (review fix 30/9): ask, then stop it for real - the clock and any checking
 // in flight - instead of it carrying on out of sight and saving a run later.
 async function stopExam(ask = true) {
+    // A full exam on screen (1/10) is asked about first.
+    const fullBox = document.getElementById('study-full');
+    if (fullBox && !fullBox.hidden && !(await stopFullExam(ask))) return false;
     if (!examState.running && !examState.checking) return true;
     if (ask) {
         const ok = await confirmDialog(t('Leave the mock exam?'), t('The answers you wrote in it are not saved.'), { confirmText: t('Leave the exam'), danger: true });
@@ -6954,3 +6962,765 @@ if (discardSessionBtn) discardSessionBtn.onclick = async () => {
     await loadStudyHome();
     toast.info('Session cleared. Your answers were already saved.');
 };
+
+// ==========================================
+// Full exam (1/10)
+// ==========================================
+// A whole exam paper for one course: written by the AI in the structure of
+// the course's past exams (recommended, not required), sat with one clock,
+// graded part by part with partial credit. main.js builds and grades it as
+// background jobs; this screen starts them, polls, and shows the result.
+const fullState = {
+    course: '', exam: null, answers: {}, flags: new Set(), qIndex: 0,
+    startedAt: 0, limitSec: 0, timer: null, running: false, grading: false,
+    token: 0, clientRunId: '', autoSubmitFailed: false
+};
+
+const FULL_STAGE_TEXT = {
+    reading: 'Reading your course files…',
+    blueprint: 'Reading the past exams - how they are built and what repeats…',
+    writing: 'Writing the questions and their full solutions…',
+    checking: 'Solving every question a second time to check the solutions…',
+    saving: 'Saving the exam…',
+    grading: 'Grading your answers…'
+};
+
+function showFullPart(part) {
+    ['full-setup', 'full-building', 'full-intro', 'full-run', 'full-grading', 'full-result']
+        .forEach(id => { document.getElementById(id).hidden = id !== part; });
+    window.scrollTo(0, 0);
+}
+
+function fullDraftKey(examId) { return `mindsync.fullExam.${currentUserId || 'anon'}.${examId}`; }
+function saveFullDraft() {
+    if (!fullState.exam || !fullState.running) return;
+    try {
+        localStorage.setItem(fullDraftKey(fullState.exam.id), JSON.stringify({
+            answers: fullState.answers, flags: [...fullState.flags], startedAt: fullState.startedAt,
+            limitSec: fullState.limitSec, clientRunId: fullState.clientRunId
+        }));
+    } catch (e) { /* storage off: answers stay in memory */ }
+}
+function readFullDraft(examId) {
+    try { return JSON.parse(localStorage.getItem(fullDraftKey(examId)) || 'null'); } catch (e) { return null; }
+}
+// A sitting sent for grading: its draft stays (in case grading fails) but
+// is marked, so opening the exam again starts a new sitting.
+function markFullDraft(examId, clientRunId, submitted) {
+    const d = readFullDraft(examId);
+    if (!d || d.clientRunId !== clientRunId) return;
+    try { localStorage.setItem(fullDraftKey(examId), JSON.stringify({ ...d, submitted })); } catch (e) { /* storage off */ }
+}
+// Only the sitting that was graded - never a newer one of the same exam.
+function clearFullDraft(examId, clientRunId) {
+    const d = readFullDraft(examId);
+    if (d && clientRunId && d.clientRunId !== clientRunId) return;
+    try { localStorage.removeItem(fullDraftKey(examId)); } catch (e) { /* storage off */ }
+}
+// A draft that can be continued (not one already sent for grading).
+function openFullDraft(examId) {
+    const d = readFullDraft(examId);
+    return d && !d.submitted ? d : null;
+}
+
+// Another screen wants Study while the exam runs: ask first. The answers
+// stay on this device and the clock keeps its start time, so it can be
+// picked up again from the course's list - like walking out and back in.
+async function stopFullExam(ask = true) {
+    const box = document.getElementById('study-full');
+    if (fullState.running && ask) {
+        const ok = await confirmDialog(t('Leave the exam?'), t('Your answers stay on this device - you can go back to the exam from the course\'s list. The clock keeps running.'), { confirmText: t('Leave the exam') });
+        if (!ok) return false;
+    }
+    saveFullDraft();
+    clearInterval(fullState.timer);
+    fullState.running = false;
+    fullState.token += 1;   // a build or grading still running belongs to the old screen
+    if (box) box.hidden = true;
+    return true;
+}
+
+async function openFullExam(course) {
+    if (!(await stopExam())) return false;
+    ['study-home', 'study-session', 'study-summary', 'study-review', 'study-manage', 'study-exam'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.hidden = true;
+    });
+    clearManageSelection();
+    document.getElementById('study-full').hidden = false;
+    const select = document.getElementById('full-course');
+    const courses = await knownCourses();
+    if (course && !courses.includes(course)) courses.unshift(course);
+    select.textContent = '';
+    for (const c of courses) {
+        const o = document.createElement('option');
+        o.value = c; o.textContent = c;
+        select.appendChild(o);
+    }
+    fullState.course = course || courses[0] || '';
+    select.value = fullState.course;
+    showFullPart('full-setup');
+    await loadFullSetup();
+    return true;
+}
+
+async function loadFullSetup() {
+    const course = fullState.course;
+    const list = document.getElementById('full-past-list');
+    list.textContent = '';
+    document.getElementById('full-build-btn').disabled = !course;
+    if (!course) {
+        const p = document.createElement('div');
+        p.className = 'full-past__empty';
+        p.textContent = t('No courses yet. Upload your course files under Materials first.');
+        list.appendChild(p);
+        return;
+    }
+    const files = await ipcRenderer.invoke('get-files').catch(() => []);
+    const mine = (Array.isArray(files) ? files : []).filter(f => (f.folder || '') === course);
+    if (!mine.length) {
+        const p = document.createElement('div');
+        p.className = 'full-past__empty';
+        p.textContent = t('No files in this course yet.');
+        list.appendChild(p);
+    }
+    for (const f of mine) {
+        const row = document.createElement('label');
+        row.className = 'full-past__item';
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.value = f.id || f._id;
+        box.checked = PAST_EXAM_FILE.test(f.name || '');
+        const name = document.createElement('span');
+        name.className = 'file-name';
+        name.dir = 'auto';
+        name.textContent = f.name;
+        row.append(box, name);
+        list.appendChild(row);
+    }
+    // Exams already written for this course.
+    const existing = await ipcRenderer.invoke('full-exam-list', course).catch(() => []);
+    const wrap = document.getElementById('full-existing');
+    const rows = document.getElementById('full-existing-list');
+    rows.textContent = '';
+    wrap.hidden = !(Array.isArray(existing) && existing.length);
+    for (const e of (Array.isArray(existing) ? existing : [])) {
+        const row = document.createElement('div');
+        row.className = 'full-existing__row';
+        const name = document.createElement('span');
+        name.className = 'full-existing__name file-name';
+        name.dir = 'auto';
+        name.textContent = e.title || course;
+        const meta = document.createElement('span');
+        meta.className = 'full-existing__meta';
+        const date = new Date(e.createdAt);
+        meta.textContent = `${date.getDate()}/${date.getMonth() + 1}${e.lastRun ? ` · ${t('Last grade:')} ${e.lastRun.percent}` : ''}`;
+        const take = document.createElement('button');
+        take.className = 'btn-secondary btn-sm';
+        take.textContent = openFullDraft(e.id) ? t('Continue') : t('Take it');
+        take.onclick = () => openFullIntro(e.id);
+        row.append(name, meta, take);
+        if (e.lastRun) {
+            const res = document.createElement('button');
+            res.className = 'btn-secondary btn-sm';
+            res.textContent = t('Last result');
+            res.onclick = () => showLastFullResult(e.id);
+            row.append(res);
+        }
+        const del = document.createElement('button');
+        del.className = 'btn-icon';
+        del.setAttribute('aria-label', t('Delete this exam'));
+        del.innerHTML = icon('trash', { size: 15 });
+        del.onclick = async () => {
+            const ok = await confirmDialog(t('Delete this exam?'), t('The exam and your results in it are deleted.'), { confirmText: t('Delete'), danger: true });
+            if (!ok) return;
+            const r = await ipcRenderer.invoke('full-exam-delete', e.id).catch(err => ({ error: err.message }));
+            if (r && r.error) { toast.error(r.error); return; }
+            clearFullDraft(e.id);
+            loadFullSetup();
+        };
+        row.append(del);
+        rows.appendChild(row);
+    }
+}
+
+document.getElementById('full-course').addEventListener('change', (e) => { fullState.course = e.target.value; loadFullSetup(); });
+document.getElementById('full-cancel-btn').onclick = leaveFullExam;
+document.getElementById('full-done-btn').onclick = leaveFullExam;
+document.getElementById('full-exam-link').onclick = () => openFullExam('');
+document.getElementById('full-upload-btn').onclick = () => {
+    const course = fullState.course;
+    stopFullExam(false);
+    document.getElementById('nav-materials').click();
+    if (course) toast.info(t('Upload the past exams into the folder "{c}" - then come back to Full exam.').replace('{c}', course));
+};
+
+function leaveFullExam() {
+    stopFullExam(false);
+    document.getElementById('study-home').hidden = false;
+    loadStudyHome();
+}
+
+// Polls a build or grading job until it ends (or the screen moved on). A
+// poll that fails (the network) is tried again - the job keeps running.
+async function waitForFullJob(jobId, onStage) {
+    const token = fullState.token;
+    let misses = 0;
+    for (;;) {
+        await new Promise(r => setTimeout(r, 2500));
+        const s = await ipcRenderer.invoke('full-exam-job', jobId).catch(err => ({ error: err.message }));
+        if (!s || !s.status) {
+            if (++misses >= 8) return { error: (s && s.error) || t('Lost touch with the server. Try again.'), token };
+            continue;
+        }
+        misses = 0;
+        if (s.status === 'gone') return { error: s.error, token };
+        if (s.status === 'done') return { result: s.result, token };
+        if (s.status === 'error') return { error: s.error, token };
+        if (onStage && fullState.token === token) onStage(s.stage || '');
+    }
+}
+
+document.getElementById('full-build-btn').onclick = async () => {
+    const course = fullState.course;
+    if (!course) return;
+    const pastIds = [...document.querySelectorAll('#full-past-list input[type="checkbox"]:checked')].map(b => b.value);
+    const btn = document.getElementById('full-build-btn');
+    btn.disabled = true;
+    const start = await ipcRenderer.invoke('full-exam-build', { course, pastIds }).catch(err => ({ error: err.message }));
+    btn.disabled = false;
+    if (!start || start.error || !start.jobId) { toast.error((start && start.error) || t('Couldn\'t start writing the exam. Try again.')); return; }
+    const token = ++fullState.token;
+    const text = document.getElementById('full-building-text');
+    text.textContent = t(pastIds.length ? FULL_STAGE_TEXT.blueprint : FULL_STAGE_TEXT.reading);
+    showFullPart('full-building');
+    const out = await waitForFullJob(start.jobId, (stage) => {
+        const key = String(stage).split(' ')[0];
+        if (FULL_STAGE_TEXT[key]) text.textContent = t(FULL_STAGE_TEXT[key]);
+    });
+    const onScreen = fullState.token === token && !document.getElementById('study-full').hidden;
+    if (out.error) {
+        if (onScreen) { showFullPart('full-setup'); toast.error(out.error, t('The exam wasn\'t written')); }
+        return;
+    }
+    if (onScreen) openFullIntro(out.result.examId);
+    else showActionToast(t('Your full exam for {c} is ready.').replace('{c}', course), t('Open it'), () => {
+        openFullExam(course).then(ok => { if (ok) openFullIntro(out.result.examId); });
+    }, { duration: 60000 });
+};
+
+function fmtMinutes(min) {
+    const h = Math.floor(min / 60), m = min % 60;
+    if (!h) return t('{n} minutes').replace('{n}', m);
+    if (!m) return h === 1 ? t('1 hour') : t('{n} hours').replace('{n}', h);
+    return t('{h}:{m} hours').replace('{h}', h).replace('{m}', String(m).padStart(2, '0'));
+}
+
+async function openFullIntro(examId) {
+    if (fullState.running || fullState.grading) return;   // one sitting at a time
+    const exam = await ipcRenderer.invoke('full-exam-get', examId).catch(err => ({ error: err.message }));
+    if (!exam || exam.error) { toast.error((exam && exam.error) || t('Couldn\'t open the exam.')); return; }
+    exam.id = exam.id || exam._id;
+    fullState.exam = exam;
+    fullState.course = exam.course;
+    document.getElementById('study-full').hidden = false;
+    document.getElementById('full-intro-title').textContent = exam.title || t('Full exam');
+    document.getElementById('full-intro-title').setAttribute('translate', 'no');
+    const courseEl = document.getElementById('full-intro-course');
+    courseEl.textContent = exam.course;
+    courseEl.setAttribute('translate', 'no');
+    const facts = document.getElementById('full-intro-facts');
+    facts.textContent = '';
+    const partsCount = exam.questions.reduce((n, q) => n + q.parts.length, 0);
+    const fact = (txt) => { const li = document.createElement('li'); li.textContent = txt; facts.appendChild(li); };
+    fact(t('{q} questions, {p} parts · {pts} points').replace('{q}', exam.questions.length).replace('{p}', partsCount).replace('{pts}', Math.round(exam.totalPoints)));
+    fact(exam.basis === 'past_exams'
+        ? t('Built on the structure of {n} past exams of the course.').replace('{n}', (exam.pastExamFiles || []).length)
+        : t('Built from the course material - no past exams were given, so the structure is a general one.'));
+    if (exam.materials) fact(`${t('Allowed material:')} ${exam.materials}`);
+    const checked = exam.questions.reduce((n, q) => n + q.parts.filter(p => p.check).length, 0);
+    if (checked) fact(t('{n} of {m} solutions were checked by a second, independent solution.').replace('{n}', checked).replace('{m}', partsCount));
+    const instr = document.getElementById('full-intro-instructions');
+    instr.textContent = exam.instructions || '';
+    instr.setAttribute('translate', 'no');
+    instr.hidden = !exam.instructions;
+    const rec = document.getElementById('full-recurring');
+    const recList = document.getElementById('full-recurring-list');
+    recList.textContent = '';
+    rec.hidden = !(exam.recurring && exam.recurring.length);
+    for (const r of exam.recurring || []) {
+        const li = document.createElement('li');
+        const topic = document.createElement('span');
+        topic.setAttribute('translate', 'no');
+        topic.dir = 'auto';
+        topic.textContent = r.topic;
+        const count = document.createElement('span');
+        count.className = 'full-recurring__count';
+        count.textContent = ` · ${t('in {n} of {m} exams').replace('{n}', r.count).replace('{m}', r.of)}`;
+        li.append(topic, count);
+        recList.appendChild(li);
+    }
+    // The clock: the real exam's time first.
+    const group = document.getElementById('full-time');
+    group.textContent = '';
+    const lengths = [...new Set([exam.durationMin, 60, 90, 120, 150, 180])].filter(m => m >= 5).sort((a, b) => a - b);
+    const chips = lengths.map(m => ({ pick: String(m), minutes: m, label: m === exam.durationMin ? `${fmtMinutes(m)} (${t('as in the exam')})` : fmtMinutes(m) }));
+    chips.push({ pick: 'own', label: t('Set my own') }, { pick: 'none', label: t('No limit') });
+    for (const c of chips) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = `filter-chip${c.minutes === exam.durationMin ? ' active' : ''}`;
+        b.dataset.pick = c.pick;
+        if (c.minutes) b.dataset.minutes = String(c.minutes);
+        b.textContent = c.label;
+        b.onclick = () => {
+            group.querySelectorAll('.filter-chip').forEach(x => x.classList.toggle('active', x === b));
+            document.getElementById('full-minutes-wrap').hidden = c.pick !== 'own';
+        };
+        group.appendChild(b);
+    }
+    document.getElementById('full-minutes-wrap').hidden = true;
+    document.getElementById('full-minutes-input').value = String(exam.durationMin);
+    const draft = openFullDraft(exam.id);
+    document.getElementById('full-start-btn').textContent = draft ? t('Continue the exam') : t('Start the exam');
+    showFullPart('full-intro');
+}
+
+document.getElementById('full-intro-back-btn').onclick = () => { showFullPart('full-setup'); loadFullSetup(); };
+
+document.getElementById('full-start-btn').onclick = () => {
+    const exam = fullState.exam;
+    if (!exam || fullState.running || fullState.grading) return;
+    const draft = openFullDraft(exam.id);
+    let limitSec;
+    if (draft) {
+        limitSec = draft.limitSec || 0;
+    } else {
+        const chosen = document.querySelector('#full-time .filter-chip.active');
+        if (!chosen || chosen.dataset.pick === 'none') limitSec = 0;
+        else if (chosen.dataset.pick === 'own') {
+            const m = Math.round(Number(document.getElementById('full-minutes-input').value));
+            if (!Number.isFinite(m) || m < 5 || m > 600) { toast.info(t('Set the time as a number of minutes, from 5 to 600.')); return; }
+            limitSec = m * 60;
+        } else limitSec = Number(chosen.dataset.minutes) * 60;
+    }
+    fullState.answers = draft && draft.answers ? draft.answers : {};
+    fullState.flags = new Set(draft && draft.flags ? draft.flags : []);
+    fullState.startedAt = draft && draft.startedAt ? draft.startedAt : Date.now();
+    fullState.limitSec = limitSec;
+    fullState.clientRunId = draft && draft.clientRunId ? draft.clientRunId : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    fullState.qIndex = 0;
+    fullState.running = true;
+    fullState.autoSubmitFailed = false;
+    fullState.token += 1;
+    const title = document.getElementById('full-run-title');
+    title.textContent = exam.title || exam.course;
+    title.setAttribute('translate', 'no');
+    saveFullDraft();
+    clearInterval(fullState.timer);
+    fullState.timer = setInterval(tickFullExam, 1000);
+    tickFullExam();
+    showFullPart('full-run');
+    renderFullNav();
+    renderFullQuestion();
+};
+
+function tickFullExam() {
+    if (!fullState.running) return;
+    const el = document.getElementById('full-timer');
+    const used = Math.floor((Date.now() - fullState.startedAt) / 1000);
+    const fmt = (sec) => { const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60; return `${h ? `${h}:` : ''}${String(m).padStart(h ? 2 : 1, '0')}:${String(s).padStart(2, '0')}`; };
+    if (!fullState.limitSec) { el.textContent = fmt(used); el.classList.remove('is-low'); return; }
+    const left = Math.max(0, fullState.limitSec - used);
+    el.textContent = `${t('Time left')} ${fmt(left)}`;
+    el.classList.toggle('is-low', left <= 300);
+    // Time's up: hand it in - once; if grading then failed, the student
+    // presses Submit again (it doesn't loop on its own).
+    if (left === 0 && !fullState.autoSubmitFailed) submitFullExam(true);
+}
+
+const fullKey = (qi, pi) => `${qi}:${pi}`;
+const fullAnswered = (a) => !!a && (!!String(a.choice || '').trim() || !!String(a.text || '').trim());
+
+function renderFullNav() {
+    const nav = document.getElementById('full-nav');
+    nav.textContent = '';
+    fullState.exam.questions.forEach((q, qi) => {
+        const answered = q.parts.filter((p, pi) => fullAnswered(fullState.answers[fullKey(qi, pi)])).length;
+        const need = q.choosePartsCount > 0 ? q.choosePartsCount : q.parts.length;
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'full-nav__q';
+        b.classList.toggle('is-current', qi === fullState.qIndex);
+        b.classList.toggle('is-done', answered >= need);
+        b.classList.toggle('is-flagged', fullState.flags.has(qi));
+        const name = document.createElement('span');
+        name.textContent = `${t('Question')} ${qi + 1}`;
+        const state = document.createElement('span');
+        state.className = 'full-nav__state';
+        state.textContent = fullState.flags.has(qi) ? t('Come back') : `${Math.min(answered, need)}/${need}`;
+        b.append(name, state);
+        b.onclick = () => { fullState.qIndex = qi; renderFullNav(); renderFullQuestion(); };
+        nav.appendChild(b);
+    });
+}
+
+function setFullAnswer(qi, pi, patch) {
+    const k = fullKey(qi, pi);
+    fullState.answers[k] = { ...(fullState.answers[k] || { choice: '', text: '' }), ...patch };
+    saveFullDraft();
+    renderFullNav();
+}
+
+function renderFullQuestion() {
+    const exam = fullState.exam;
+    const qi = fullState.qIndex;
+    const q = exam.questions[qi];
+    const paper = document.getElementById('full-paper');
+    paper.textContent = '';
+    const head = document.createElement('div');
+    head.className = 'full-q__head';
+    const h = document.createElement('h3');
+    h.className = 'full-q__title';
+    h.textContent = `${t('Question')} ${qi + 1}`;
+    if (q.title) {
+        const sub = document.createElement('span');
+        sub.setAttribute('translate', 'no');
+        sub.dir = 'auto';
+        sub.textContent = ` · ${q.title}`;
+        h.appendChild(sub);
+    }
+    const pts = document.createElement('span');
+    pts.className = 'full-q__points';
+    pts.textContent = t('{n} points').replace('{n}', Math.round(q.points * 100) / 100);
+    head.append(h, pts);
+    paper.appendChild(head);
+    if (q.choosePartsCount > 0) {
+        const c = document.createElement('p');
+        c.className = 'full-q__choose';
+        c.textContent = t('Answer {n} of the {m} parts. If you answer more, the first {n} count.').replace(/\{n\}/g, q.choosePartsCount).replace('{m}', q.parts.length);
+        paper.appendChild(c);
+    }
+    if (q.stem) {
+        const stem = document.createElement('div');
+        stem.className = 'full-q__stem';
+        stem.setAttribute('translate', 'no');
+        stem.dir = 'auto';
+        stem.textContent = q.stem;
+        paper.appendChild(stem);
+    }
+    q.parts.forEach((p, pi) => {
+        const a = fullState.answers[fullKey(qi, pi)] || { choice: '', text: '' };
+        const box = document.createElement('div');
+        box.className = 'full-part';
+        const ph = document.createElement('div');
+        ph.className = 'full-part__head';
+        if (p.label) {
+            const lab = document.createElement('span');
+            lab.className = 'full-part__label';
+            lab.setAttribute('translate', 'no');
+            lab.textContent = `${p.label}.`;
+            ph.appendChild(lab);
+        }
+        const ptxt = document.createElement('span');
+        ptxt.className = 'full-part__pts';
+        ptxt.textContent = t('{n} points').replace('{n}', Math.round(p.points * 100) / 100);
+        ph.appendChild(ptxt);
+        const txt = document.createElement('div');
+        txt.className = 'full-part__text';
+        txt.setAttribute('translate', 'no');
+        txt.dir = 'auto';
+        txt.textContent = p.text;
+        box.append(ph, txt);
+        const name = `full-${qi}-${pi}`;
+        if (p.type === 'mc') {
+            const opts = document.createElement('div');
+            opts.className = 'full-part__options';
+            p.options.forEach((o, oi) => {
+                const lab = document.createElement('label');
+                lab.className = 'full-option';
+                const r = document.createElement('input');
+                r.type = 'radio'; r.name = name; r.value = String(oi);
+                r.checked = String(a.choice) === String(oi);
+                r.onchange = () => setFullAnswer(qi, pi, { choice: String(oi) });
+                const s = document.createElement('span');
+                s.setAttribute('translate', 'no');
+                s.dir = 'auto';
+                s.textContent = `${oi + 1}. ${o}`;
+                lab.append(r, s);
+                opts.appendChild(lab);
+            });
+            box.appendChild(opts);
+        } else {
+            if (p.type === 'tf') {
+                const tf = document.createElement('div');
+                tf.className = 'full-tf';
+                for (const [val, label] of [['true', t('True')], ['false', t('False')]]) {
+                    const lab = document.createElement('label');
+                    lab.className = 'full-option';
+                    const r = document.createElement('input');
+                    r.type = 'radio'; r.name = name; r.value = val;
+                    r.checked = a.choice === val;
+                    r.onchange = () => setFullAnswer(qi, pi, { choice: val });
+                    const s = document.createElement('span');
+                    s.textContent = label;
+                    lab.append(r, s);
+                    tf.appendChild(lab);
+                }
+                box.appendChild(tf);
+            }
+            if (p.type !== 'tf' || p.reasonRequired) {
+                const ta = document.createElement('textarea');
+                ta.className = `input-field full-answer${p.type === 'code' ? ' full-answer--code' : ''}`;
+                ta.dir = p.type === 'code' ? 'ltr' : 'auto';
+                ta.spellcheck = p.type !== 'code';
+                ta.placeholder = p.type === 'tf' ? t('Prove it, or give a counterexample')
+                    : p.type === 'code' ? t('Your code') : t('Your solution - the steps and the result');
+                ta.value = a.text || '';
+                ta.addEventListener('input', () => {
+                    const k = fullKey(qi, pi);
+                    fullState.answers[k] = { ...(fullState.answers[k] || { choice: '' }), text: ta.value };
+                    clearTimeout(ta._t);
+                    ta._t = setTimeout(() => { saveFullDraft(); renderFullNav(); }, 400);
+                });
+                if (p.type === 'code') {
+                    ta.addEventListener('keydown', (e) => {
+                        if (e.key !== 'Tab') return;
+                        e.preventDefault();
+                        const s = ta.selectionStart;
+                        ta.value = `${ta.value.slice(0, s)}    ${ta.value.slice(ta.selectionEnd)}`;
+                        ta.selectionStart = ta.selectionEnd = s + 4;
+                        ta.dispatchEvent(new Event('input'));
+                    });
+                }
+                box.appendChild(ta);
+            }
+        }
+        paper.appendChild(box);
+    });
+    const nav = document.createElement('div');
+    nav.className = 'full-q__nav';
+    const prev = document.createElement('button');
+    prev.className = 'btn-secondary';
+    prev.textContent = t('Previous question');
+    prev.disabled = qi === 0;
+    prev.onclick = () => { fullState.qIndex -= 1; renderFullNav(); renderFullQuestion(); };
+    const flag = document.createElement('button');
+    flag.className = 'btn-secondary';
+    flag.textContent = fullState.flags.has(qi) ? t('Unmark') : t('Mark to come back');
+    flag.onclick = () => { if (fullState.flags.has(qi)) fullState.flags.delete(qi); else fullState.flags.add(qi); saveFullDraft(); renderFullNav(); renderFullQuestion(); };
+    const next = document.createElement('button');
+    next.className = 'btn-primary';
+    const last = qi === exam.questions.length - 1;
+    next.textContent = last ? t('Submit the exam') : t('Next question');
+    next.onclick = () => {
+        if (last) { submitFullExam(false); return; }
+        fullState.qIndex += 1; renderFullNav(); renderFullQuestion();
+    };
+    nav.append(prev, flag, next);
+    paper.appendChild(nav);
+}
+
+document.getElementById('full-submit-btn').onclick = () => submitFullExam(false);
+
+async function submitFullExam(timeUp) {
+    const exam = fullState.exam;
+    if (!exam || !fullState.running || fullState.grading) return;
+    if (!timeUp) {
+        const empty = exam.questions.reduce((n, q, qi) => {
+            const need = q.choosePartsCount > 0 ? q.choosePartsCount : q.parts.length;
+            const done = q.parts.filter((p, pi) => fullAnswered(fullState.answers[fullKey(qi, pi)])).length;
+            return n + Math.max(0, need - done);
+        }, 0);
+        const ok = await confirmDialog(t('Submit the exam?'),
+            empty ? t('{n} parts have no answer yet - they get 0.').replace('{n}', empty) : t('Your answers are graded now, part by part.'),
+            { confirmText: t('Submit') });
+        // The clock may have handed it in while the dialog was open.
+        if (!ok || fullState.exam !== exam || !fullState.running || fullState.grading) return;
+    } else {
+        toast.info(t('Time is up - grading what you wrote.'));
+    }
+    saveFullDraft();   // the latest answers on disk before it is marked as sent
+    clearInterval(fullState.timer);
+    fullState.running = false;
+    fullState.grading = true;
+    const token = ++fullState.token;
+    const answers = Object.entries(fullState.answers).map(([k, a]) => {
+        const [q, p] = k.split(':').map(Number);
+        return { q, p, choice: a.choice || '', text: a.text || '' };
+    });
+    const usedSec = Math.round((Date.now() - fullState.startedAt) / 1000);
+    const clientRunId = fullState.clientRunId;
+    markFullDraft(exam.id, clientRunId, true);
+    document.getElementById('full-grading-text').textContent = t('Grading your answers…');
+    showFullPart('full-grading');
+    const start = await ipcRenderer.invoke('full-exam-grade', {
+        examId: exam.id, answers, startedAt: new Date(fullState.startedAt).toISOString(), usedSec,
+        limitSec: fullState.limitSec, clientRunId
+    }).catch(err => ({ error: err.message }));
+    if (!start || start.error || !start.jobId) {
+        markFullDraft(exam.id, clientRunId, false);
+        fullState.grading = false;
+        fullState.running = true;   // back to the paper; the answers are still here
+        if (timeUp) fullState.autoSubmitFailed = true;
+        fullState.timer = setInterval(tickFullExam, 1000);
+        showFullPart('full-run');
+        toast.error((start && start.error) || t('Couldn\'t start grading. Try again.'));
+        return;
+    }
+    const out = await waitForFullJob(start.jobId, (stage) => {
+        const m = /grading (\d+)\/(\d+)/.exec(stage);
+        if (m) document.getElementById('full-grading-text').textContent = t('Grading your answers… {d} of {n} questions').replace('{d}', m[1]).replace('{n}', m[2]);
+    });
+    fullState.grading = false;
+    if (out.error) {
+        markFullDraft(exam.id, clientRunId, false);   // it can be continued and submitted again
+        if (fullState.token === token) {
+            fullState.running = true;
+            if (timeUp) fullState.autoSubmitFailed = true;
+            fullState.timer = setInterval(tickFullExam, 1000);
+            showFullPart('full-run');
+            toast.error(out.error, t('The exam wasn\'t graded'));
+        }
+        return;
+    }
+    clearFullDraft(exam.id, clientRunId);
+    if (fullState.token === token && !document.getElementById('study-full').hidden) renderFullResult(exam, out.result.run);
+}
+
+async function showLastFullResult(examId) {
+    const [exam, runs] = await Promise.all([
+        ipcRenderer.invoke('full-exam-get', examId).catch(() => null),
+        ipcRenderer.invoke('full-exam-runs', examId).catch(() => null)
+    ]);
+    if (!exam || exam.error || !Array.isArray(runs) || !runs.length) { toast.error(t('Couldn\'t open the result.')); return; }
+    exam.id = exam.id || exam._id;
+    fullState.exam = exam;
+    renderFullResult(exam, runs[0]);
+}
+
+function renderFullResult(exam, run) {
+    document.getElementById('full-score').textContent = String(run.percent);
+    const usedMin = Math.round((run.usedSec || 0) / 60);
+    const unchecked = (run.answers || []).filter(a => a.status === 'unchecked').length;
+    document.getElementById('full-score-text').textContent =
+        `${t('{s} of {m} points').replace('{s}', Math.round(run.score * 10) / 10).replace('{m}', Math.round(run.max * 10) / 10)} · ${t('{n} minutes').replace('{n}', usedMin)}` +
+        (unchecked ? ` · ${t('{n} parts couldn\'t be checked and are left out.').replace('{n}', unchecked)}` : '');
+    const weak = document.getElementById('full-weak');
+    weak.textContent = '';
+    if (!(run.weakTopics || []).length) {
+        const li = document.createElement('li');
+        li.textContent = t('No topic under 60% - well done.');
+        weak.appendChild(li);
+    }
+    for (const w of run.weakTopics || []) {
+        const li = document.createElement('li');
+        li.setAttribute('translate', 'no');
+        li.dir = 'auto';
+        li.textContent = w;
+        weak.appendChild(li);
+    }
+    const box = document.getElementById('full-result-questions');
+    box.textContent = '';
+    const byKey = new Map((run.answers || []).map(a => [fullKey(a.q, a.p), a]));
+    exam.questions.forEach((q, qi) => {
+        const rows = q.parts.map((p, pi) => byKey.get(fullKey(qi, pi)));
+        const got = rows.reduce((n, r) => n + (r && (r.status === 'graded' || r.status === 'blank') ? r.points : 0), 0);
+        const card = document.createElement('div');
+        card.className = 'card full-rq';
+        const head = document.createElement('div');
+        head.className = 'full-rq__head';
+        const h = document.createElement('h3');
+        h.className = 'full-q__title';
+        h.textContent = `${t('Question')} ${qi + 1}`;
+        if (q.title) { const sub = document.createElement('span'); sub.setAttribute('translate', 'no'); sub.dir = 'auto'; sub.textContent = ` · ${q.title}`; h.appendChild(sub); }
+        const sc = document.createElement('span');
+        sc.className = 'full-rq__score';
+        sc.textContent = `${Math.round(got * 10) / 10} / ${Math.round(q.points * 10) / 10}`;
+        head.append(h, sc);
+        card.appendChild(head);
+        if (q.stem) {
+            const stem = document.createElement('div');
+            stem.className = 'full-q__stem';
+            stem.setAttribute('translate', 'no');
+            stem.dir = 'auto';
+            stem.textContent = q.stem;
+            card.appendChild(stem);
+        }
+        q.parts.forEach((p, pi) => {
+            const r = rows[pi] || { choice: '', text: '', points: 0, max: p.points, status: 'blank', feedback: '' };
+            const part = document.createElement('div');
+            part.className = 'full-rpart';
+            const ph = document.createElement('div');
+            ph.className = 'full-rpart__head';
+            const lab = document.createElement('span');
+            lab.className = 'full-part__label';
+            lab.setAttribute('translate', 'no');
+            lab.textContent = p.label ? `${p.label}.` : '';
+            const txt = document.createElement('span');
+            txt.className = 'full-part__text';
+            txt.setAttribute('translate', 'no');
+            txt.dir = 'auto';
+            txt.textContent = p.text.length > 220 ? `${p.text.slice(0, 220)}…` : p.text;
+            const pts = document.createElement('span');
+            pts.className = 'full-rpart__pts';
+            if (r.status === 'not_chosen') pts.textContent = t('Not chosen');
+            else if (r.status === 'unchecked') pts.textContent = t('Not checked');
+            else {
+                pts.textContent = `${Math.round(r.points * 100) / 100} / ${Math.round(r.max * 100) / 100}`;
+                pts.classList.toggle('is-full', r.max > 0 && r.points >= r.max);
+                pts.classList.toggle('is-zero', r.points === 0);
+            }
+            ph.append(lab, txt, pts);
+            part.appendChild(ph);
+            if (r.status !== 'not_chosen') {
+                const mine = document.createElement('div');
+                mine.className = 'full-rpart__mine';
+                mine.setAttribute('translate', 'no');
+                mine.dir = 'auto';
+                let shown = '';
+                if (p.type === 'mc') shown = r.choice !== '' && p.options[Number(r.choice)] != null ? `${Number(r.choice) + 1}. ${p.options[Number(r.choice)]}` : '';
+                else if (p.type === 'tf') shown = [r.choice === 'true' ? t('True') : r.choice === 'false' ? t('False') : '', r.text].filter(Boolean).join(' - ');
+                else shown = r.text;
+                mine.textContent = shown || t('No answer');
+                part.appendChild(mine);
+            }
+            if (r.feedback) {
+                const fb = document.createElement('div');
+                fb.className = 'full-rpart__feedback';
+                fb.setAttribute('translate', 'no');
+                fb.dir = 'auto';
+                fb.textContent = r.feedback;
+                part.appendChild(fb);
+            }
+            const det = document.createElement('details');
+            const sum = document.createElement('summary');
+            sum.textContent = t('The solution');
+            const sol = document.createElement('div');
+            sol.className = 'full-rpart__solution';
+            sol.setAttribute('translate', 'no');
+            sol.dir = 'auto';
+            const right = p.type === 'mc' ? `${Number(p.correct) + 1}. ${p.options[Number(p.correct)] || ''}\n\n` : p.type === 'tf' ? `${p.correct === 'true' ? t('True') : t('False')}\n\n` : '';
+            sol.textContent = right + p.answer;
+            det.append(sum, sol);
+            if (p.check) {
+                const c = document.createElement('div');
+                c.className = 'full-check';
+                c.textContent = p.check === 'checked' ? t('This solution was checked by a second, independent solution.') : t('A second solution found a mistake in the first one - this is the corrected solution.');
+                det.appendChild(c);
+            } else {
+                const c = document.createElement('div');
+                c.className = 'full-check';
+                c.textContent = t('Written by the AI - check it against your course material.');
+                det.appendChild(c);
+            }
+            part.appendChild(det);
+            card.appendChild(part);
+        });
+        box.appendChild(card);
+    });
+    document.getElementById('study-full').hidden = false;
+    showFullPart('full-result');
+}
+
+document.getElementById('full-again-btn').onclick = () => { if (fullState.exam) openFullIntro(fullState.exam.id); };
+document.getElementById('full-new-btn').onclick = () => openFullExam(fullState.course || (fullState.exam && fullState.exam.course) || '');
