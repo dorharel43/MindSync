@@ -555,6 +555,7 @@
                         <span class="ms-badge ms-badge--accent" id="study-category-badge" hidden></span>
                         <span class="ms-badge" id="study-mode-badge">Recall</span>
                         <span class="ms-badge ms-badge--twin" id="study-twin-badge" hidden title="Written after a mistake: the same idea from another angle">Same idea, new question</span>
+                        <span class="ms-badge ms-badge--twin" id="study-version-badge" hidden title="You answered this question before - this is a new version, so the answer can't be remembered">New version</span>
                     </div>
 
                     <div class="study-question" id="study-question" translate="no" dir="auto"></div>
@@ -682,9 +683,12 @@
                     <div class="exam-setup__row">
                         <span class="form-label">Time</span>
                         <div class="filter-group" id="exam-time">
-                            <button class="filter-chip active" data-timed="1">2 minutes a question</button>
-                            <button class="filter-chip" data-timed="0">No limit</button>
+                            <!-- Filled by renderExamTimeChips(): three lengths for the chosen size, "Set my own", "No limit" -->
                         </div>
+                        <label class="exam-minutes" id="exam-minutes-wrap" hidden>
+                            <input id="exam-minutes-input" class="input-field" type="number" min="5" max="300" step="5" inputmode="numeric" aria-label="Minutes for the whole exam">
+                            <span>minutes for the whole exam</span>
+                        </label>
                     </div>
                     <p class="settings-hint exam-setup__past" id="exam-past-note" hidden>Questions from past exams you uploaded come first.</p>
                     <div class="exam-setup__actions">

@@ -4820,6 +4820,9 @@ async function loadStudyHome() {
     ]);
     if (Array.isArray(items)) studyItemsCache = items;
     if (!stats) return;
+    // Today's due questions get their new versions written now, while the
+    // student looks at this screen (1/10).
+    if (stats.dueCount > 0) prepareVersions('today');
 
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
     set('study-due-count', stats.dueCount);
@@ -5335,7 +5338,7 @@ async function startStudySession(resume = null, scope = null) {
         }
     }
 
-    studyState.queue = items;
+    studyState.queue = items.map(withNextVersion);
     studyState.scope = scope;
     const scopeLabel = document.getElementById('study-scope-label');
     if (scopeLabel) scopeLabel.textContent = scope ? `· ${scope.label}` : '· Smart practice';
@@ -5354,6 +5357,32 @@ async function startStudySession(resume = null, scope = null) {
     document.getElementById('study-session').hidden = false;
 
     renderStudyCard();
+}
+
+// A question answered before comes back as a NEW version when one is ready
+// (1/10): same idea or method, other numbers or situation - written ahead by
+// prepareVersions(). The card shows it; the review says so, so the server
+// files it as a past version and counts the answer as "fresh".
+function withNextVersion(item) {
+    const v = item && item.nextVariant;
+    if (!v || !v.question || !v.answer) return item;
+    return { ...item, question: v.question, answer: v.answer, solutionSource: v.solutionSource || 'ai', mySolution: '', variantShown: true };
+}
+
+// Writes the versions ahead: today's queue when Study opens, tomorrow's at the
+// end of a session. Quiet, at most every 20 minutes per kind, never twice at once.
+let prepareVersionsBusy = false;
+async function prepareVersions(when) {
+    if (prepareVersionsBusy) return;
+    const key = `mindsync.versions.${when}.${currentUserId || 'anon'}`;
+    try { if (Date.now() - Number(localStorage.getItem(key) || 0) < 20 * 60 * 1000) return; } catch (e) { /* storage off */ }
+    prepareVersionsBusy = true;
+    try {
+        try { localStorage.setItem(key, String(Date.now())); } catch (e) { /* storage off */ }
+        await withTimeout(ipcRenderer.invoke('prepare-variants', { when }).catch(() => null), 600000);
+    } finally {
+        prepareVersionsBusy = false;
+    }
 }
 
 function renderStudyCard() {
@@ -5387,7 +5416,9 @@ function renderStudyCard() {
     if (badgeText) { catBadge.textContent = badgeText; catBadge.hidden = false; }
     else catBadge.hidden = true;
     const twinBadge = document.getElementById('study-twin-badge');
-    if (twinBadge) twinBadge.hidden = !item.twinOf;
+    if (twinBadge) twinBadge.hidden = !item.twinOf || !!item.variantShown;
+    const versionBadge = document.getElementById('study-version-badge');
+    if (versionBadge) versionBadge.hidden = !item.variantShown;
 
     document.getElementById('study-question').textContent = item.question;
     // Last time: sure, and wrong. Say so - that's the whole point of the list.
@@ -5480,7 +5511,7 @@ async function fetchShortAnswer(item) {
     // Asked once per question (30/9) - it comes back after "I don't know"
     // often, and each ask used a bit of the day's AI allowance.
     studyState.shortAnswers = studyState.shortAnswers || new Map();
-    const cached = studyState.shortAnswers.get(item.id);
+    const cached = studyState.shortAnswers.get(`${item.id}|${item.question}`);   // per text: a version has its own answer
     if (cached) {
         text.textContent = cached;
         document.getElementById('study-answer').classList.add('study-answer--source');
@@ -5492,7 +5523,7 @@ async function fetchShortAnswer(item) {
         question: item.question, expected: item.answer || item.mySolution || '', mode: item.mode, explainOnly: true
     }).catch(() => null), CHECK_TIMEOUT_MS);
     if (res && res.error && isAiLimit(res.error)) studyState.checkOff = res.error;
-    if (res && res.answer) studyState.shortAnswers.set(item.id, res.answer);
+    if (res && res.answer) studyState.shortAnswers.set(`${item.id}|${item.question}`, res.answer);
     if (studyState.index !== index || studyState.queue[index] !== item) return;   // moved on meanwhile
     box.classList.remove('is-loading');
     if (res && res.answer) {
@@ -5562,7 +5593,7 @@ function revealAnswer(check = null) {
     const solutionInput = document.getElementById('study-solution-input');
     const solutionLabel = document.getElementById('study-solution-label');
 
-    if (item.mode === 'practice' && solutionBlock) {
+    if (item.mode === 'practice' && solutionBlock && !item.variantShown) {
         solutionBlock.hidden = false;
         solutionInput.value = item.mySolution || '';
         solutionLabel.textContent = item.mySolution
@@ -5657,6 +5688,7 @@ async function submitReview(outcome) {
             outcome,
             secondsSpent,
             clientId: studyState.answerId,
+            ...(item.variantShown ? { variantShown: true } : {}),
             ...(studyState.aiChecked ? { aiSuggested: studyState.aiChecked } : {})
         });
     } catch (err) {
@@ -5711,7 +5743,7 @@ async function submitReview(outcome) {
     if (res.nextInterval === 0) {
         // The item as saved just now (30/9) - with this answer in its
         // history, so the card says "last time you were sure - and wrong".
-        studyState.queue.push(res.item ? { ...item, ...res.item, id: item.id } : item);
+        studyState.queue.push(res.item ? { ...item, ...res.item, id: item.id, variantShown: false } : { ...item, variantShown: false });
     }
 
     studyState.index += 1;
@@ -5750,7 +5782,6 @@ async function stopExam(ask = true) {
     return true;
 }
 const PAST_EXAM_FILE = /מבחן|בחינה|מועד|בוחן|\bexams?\b|midterm|quiz|final exam/i;
-const EXAM_SECONDS_PER_QUESTION = 120;
 
 function showExamPart(part) {
     ['exam-setup', 'exam-run', 'exam-checking', 'exam-result'].forEach(id => { document.getElementById(id).hidden = id !== part; });
@@ -5773,17 +5804,74 @@ async function openExamSetup(course, label, total) {
         if (!b.hidden && c <= 15) chosen = b;
     });
     document.querySelectorAll('#exam-count .filter-chip').forEach(b => b.classList.toggle('active', b === chosen));
+    renderExamTimeChips();
     const past = (studyItemsCache || []).some(i => studyCourseOf(i) === course && !i.twinOf && PAST_EXAM_FILE.test(i.sourceFile || ''));
     document.getElementById('exam-past-note').hidden = !past;
     showExamPart('exam-setup');
     window.scrollTo(0, 0);
 }
 
-document.querySelectorAll('#exam-count .filter-chip, #exam-time .filter-chip').forEach(b => {
+document.querySelectorAll('#exam-count .filter-chip').forEach(b => {
     b.addEventListener('click', () => {
         b.parentElement.querySelectorAll('.filter-chip').forEach(x => x.classList.toggle('active', x === b));
+        renderExamTimeChips();
     });
 });
+
+// One clock for the whole exam (1/10). Three lengths that fit the chosen
+// number of questions (about 1, 2 and 3 minutes a question, rounded to 5),
+// "Set my own" (5-300 minutes) and "No limit". The choice (which of them)
+// stays when the number of questions changes.
+function examTimeOptions(count) {
+    const round5 = (m) => Math.max(5, Math.ceil(m / 5) * 5);
+    return [round5(count), round5(count * 2), round5(count * 3)];
+}
+function renderExamTimeChips() {
+    const group = document.getElementById('exam-time');
+    if (!group) return;
+    const activeChip = document.querySelector('#exam-count .filter-chip.active');
+    const count = activeChip ? Number(activeChip.dataset.count) : 15;
+    const before = group.querySelector('.filter-chip.active');
+    const pick = before ? before.dataset.pick : 'p1';
+    const chips = examTimeOptions(count).map((m, i) => ({ pick: `p${i}`, minutes: m, label: t('{n} minutes').replace('{n}', m) }));
+    chips.push({ pick: 'own', label: t('Set my own') }, { pick: 'none', label: t('No limit') });
+    group.textContent = '';
+    for (const c of chips) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = `filter-chip${c.pick === pick ? ' active' : ''}`;
+        b.dataset.pick = c.pick;
+        if (c.minutes) b.dataset.minutes = String(c.minutes);
+        b.textContent = c.label;
+        b.addEventListener('click', () => {
+            group.querySelectorAll('.filter-chip').forEach(x => x.classList.toggle('active', x === b));
+            syncExamMinutesBox();
+        });
+        group.appendChild(b);
+    }
+    syncExamMinutesBox();
+}
+function syncExamMinutesBox() {
+    const chosen = document.querySelector('#exam-time .filter-chip.active');
+    const own = !!chosen && chosen.dataset.pick === 'own';
+    const wrap = document.getElementById('exam-minutes-wrap');
+    const input = document.getElementById('exam-minutes-input');
+    if (wrap) wrap.hidden = !own;
+    if (own && input && !input.value) {
+        const activeChip = document.querySelector('#exam-count .filter-chip.active');
+        input.value = String(examTimeOptions(activeChip ? Number(activeChip.dataset.count) : 15)[1]);
+    }
+}
+// The whole exam's time in seconds, 0 = no limit; null = a bad "own" value.
+function chosenExamSeconds() {
+    const chosen = document.querySelector('#exam-time .filter-chip.active');
+    if (!chosen || chosen.dataset.pick === 'none') return 0;
+    if (chosen.dataset.pick === 'own') {
+        const m = Math.round(Number((document.getElementById('exam-minutes-input') || {}).value));
+        return Number.isFinite(m) && m >= 5 && m <= 300 ? m * 60 : null;
+    }
+    return Number(chosen.dataset.minutes) * 60;
+}
 
 function leaveExam() {
     stopExam(false);
@@ -5798,7 +5886,9 @@ document.getElementById('exam-start-btn').onclick = async () => {
     const btn = document.getElementById('exam-start-btn');
     const active = document.querySelector('#exam-count .filter-chip.active');
     examState.count = active ? Number(active.dataset.count) : 15;
-    examState.timed = (document.querySelector('#exam-time .filter-chip.active') || {}).dataset.timed !== '0';
+    const seconds = chosenExamSeconds();
+    if (seconds === null) { toast.info(t('Set the time as a number of minutes, from 5 to 300.')); return; }
+    examState.timed = seconds > 0;
     btn.disabled = true;
     const qs = await ipcRenderer.invoke('study-exam-questions', examState.course, examState.count).catch(e => ({ error: e.message }));
     btn.disabled = false;
@@ -5807,7 +5897,12 @@ document.getElementById('exam-start-btn').onclick = async () => {
     examState.items = qs;
     examState.answers = qs.map(() => ({ typed: '', confidence: 'none', done: false }));
     examState.index = 0;
-    examState.limitSec = examState.timed ? qs.length * EXAM_SECONDS_PER_QUESTION : 0;
+    // Fewer questions in the course than chosen: a preset length shrinks with
+    // them (5 minutes at least); "Set my own" stays as the student set it.
+    const picked = document.querySelector('#exam-time .filter-chip.active');
+    examState.limitSec = seconds && picked && picked.dataset.pick !== 'own' && qs.length < examState.count
+        ? Math.max(300, Math.round((seconds * qs.length) / examState.count / 60) * 60)
+        : seconds;
     examState.startedAt = Date.now();
     examState.running = true;
     clearInterval(examState.timer);
@@ -6050,7 +6145,7 @@ async function makeTwin(item) {
     }
     const saved = await ipcRenderer.invoke('save-study-items', [{
         question: res.question, answer: res.answer, mode: item.mode, solutionSource: 'ai',
-        skillTag: item.skillTag || '', category: item.category || '', sourceFile: item.sourceFile || '', twinOf: item.id
+        skillTag: item.skillTag || '', category: item.category || '', sourceFile: item.sourceFile || '', twinOf: item.id, kind: item.kind || ''
     }]).catch(() => null);
     const twin = saved && Array.isArray(saved.items) && saved.items[0];
     if (!twin) return;
@@ -6083,6 +6178,8 @@ function showTwinSummary(n) {
 
 function endStudySession() {
     clearSessionProgress();
+    // Tomorrow's questions get their new versions now, while the app is open.
+    prepareVersions('tomorrow');
     document.getElementById('study-session').hidden = true;
     document.getElementById('study-summary').hidden = false;
 

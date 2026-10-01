@@ -1847,6 +1847,8 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 .exam-setup__course { font-size: var(--text-base); color: var(--text-secondary); margin: 2px 0 12px; }
 .exam-setup__row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 14px; }
 .exam-setup__row .form-label { min-width: 90px; margin: 0; }
+.exam-minutes { display: inline-flex; align-items: center; gap: 8px; color: var(--text-secondary, inherit); font-size: 13px; }
+.exam-minutes .input-field { width: 84px; }
 .exam-setup__past { margin-top: 14px; }
 .exam-setup__actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 .exam-setup .filter-chip[hidden] { display: none; }
