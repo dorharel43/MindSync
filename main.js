@@ -2484,6 +2484,10 @@ Two kinds - an exam asks both, and only-definitions trains memorising:
                                          "מתי משתמשים במבחן t ולא במבחן Z?"
   * why a condition is needed / what goes wrong without it
   * how two close concepts differ, or what a result means
+  These are KNOW, not understand, even when they start with "how" or "what":
+  "what is X", "what does theorem Y state", "how is X computed", "what is the
+  condition for X", "what does X represent". Label honestly - the count below
+  is checked.
 WORK CONCEPT BY CONCEPT: for each concept write the UNDERSTAND item first. Add
 a KNOW item only when the exact definition or formula is itself what an exam
 asks. AT LEAST HALF of the teaching-material items must be "understand" -
@@ -2749,9 +2753,48 @@ Return ONLY JSON:
 {"items": [{"concept": "...", "kind": "understand", "question": "...", "answer": "...", "mode": "recall", "solutionSource": "document", "skillTag": "short topic name", "evidence": "short exact quote"}]}`;
 }
 
+// A second, short AI call labels each question K / U / P (1/10). The writer's
+// own "kind" labels can't be trusted to trigger the top-up: on the live check
+// it called "how is X computed" an understanding question, so the top-up never
+// ran while an outside reader counted 27-33% understanding.
+function buildKindJudgePrompt(questions) {
+    const qs = questions.map((q, i) => `${i + 1}. ${String(q).replace(/\s+/g, ' ').slice(0, 300)}`).join('\n');
+    return `Label each study question below with ONE letter:
+K = recall: state a definition, theorem, formula, property or the steps of a method ("what is X", "what does Y state", "how is X computed", "what is the condition for X").
+U = understanding: reason with the material - why something holds or is needed, what changes if something changes, judge a claim (true/false with why), choose between close methods for a case, compare two concepts, interpret a result.
+P = a problem to solve with specific numbers or code (including "what does this code print / return, and why").
+
+Questions:
+${qs}
+
+Return ONLY JSON: {"labels": ["K", "U", ...]} - one letter per question, in order.`;
+}
+
+async function judgeKinds(items) {
+    try {
+        const raw = await aiProvider.generateText(buildKindJudgePrompt(items.map(i => i.question)), {
+            forceJson: true, maxTokens: 2048, thinkingLevel: 'low', timeoutMs: 60000, noFallback: true, localModel: LOCAL_MODEL
+        });
+        const labels = JSON.parse(extractJsonFromText(raw)).labels;
+        if (!Array.isArray(labels) || labels.length !== items.length) return null;
+        return labels.map(l => String(l || '').trim().toUpperCase().charAt(0));
+    } catch (e) {
+        console.warn('⚠️ question labelling skipped:', e.message);
+        return null;
+    }
+}
+
 // Runs the top-up when it's needed; never fails the main result - on any
 // error the first set is returned as it was.
 async function withUnderstandingTopUp(items, category, sourceFile, existing, ask) {
+    if (!Array.isArray(items) || items.filter(i => i.kind !== 'practice').length < 4) return items;
+    // An outside label replaces the writer's own: K = recall; U or P (predict
+    // what code does, apply a method) = more than recall.
+    const labels = await judgeKinds(items);
+    if (labels) {
+        items = items.map((i, n) => i.kind === 'practice' ? i : { ...i, writerKind: i.kind, kind: labels[n] === 'K' ? 'know' : 'understand' });
+        console.log(`🏷️ labelled: ${labels.join('')}`);
+    }
     const need = understandingShortfall(items);
     if (!need) return items;
     try {
@@ -2759,7 +2802,7 @@ async function withUnderstandingTopUp(items, category, sourceFile, existing, ask
         const raw = await ask(buildTopUpPrompt(category, items, need));
         const extra = finaliseStudyItems(raw, category, sourceFile, [...(existing || []), ...items.map(i => i.question)]);
         if (!Array.isArray(extra)) return items;
-        const added = extra.filter(i => i.kind === 'understand').slice(0, need + 2);
+        const added = extra.filter(i => i.kind === 'understand').slice(0, need + 2).map(i => ({ ...i, fromTopUp: true }));
         console.log(`🧠 top-up added ${added.length} item(s)`);
         return [...items, ...added].slice(0, 45);
     } catch (e) {
