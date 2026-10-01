@@ -2793,16 +2793,16 @@ function buildExamGradePrompt(question, parts) {
 ${question.stem ? `\n<stem>\n${tag(question.stem)}\n</stem>\n` : ''}
 ${parts.map(({ part, index, answer }) => `<part index="${index}" label="${tag(part.label)}" type="${part.type}" points="${part.points}"${part.type === 'mc' && part.reasonRequired ? ' reason="required"' : ''}>
 <text>
-${tag(part.text)}${part.type === 'mc' ? `\n${part.options.map((o, i) => `(${i}) ${tag(o)}`).join('\n')}` : ''}
+${tag(part.text)}${part.type === 'mc' ? `\n${part.options.map((o, i) => `(${i + 1}) ${tag(o)}`).join('\n')}` : ''}
 </text>
 <answer_key>
-${part.type === 'tf' ? `verdict: ${tag(part.correct)}\n` : part.type === 'mc' ? `right option: (${tag(part.correct)})\n` : ''}${tag(part.answer)}
+${part.type === 'tf' ? `verdict: ${tag(part.correct)}\n` : part.type === 'mc' ? `right option: (${Number(part.correct) + 1})\n` : ''}${tag(part.answer)}
 </answer_key>
 <marking_scheme>
 ${part.rubric.map(r => `- ${tag(r.criterion)} (${r.points})`).join('\n')}
 </marking_scheme>
 <student_answer>
-${part.type === 'tf' ? `verdict: ${tag(answer.choice || 'none')}\n` : part.type === 'mc' ? `chose: (${tag(answer.choice)})\nreason: ` : ''}${tag(answer.text)}
+${part.type === 'tf' ? `verdict: ${tag(answer.choice || 'none')}\n` : part.type === 'mc' ? `chose: (${Number(answer.choice) + 1})\nreason: ` : ''}${tag(answer.text)}
 </student_answer>
 </part>`).join('\n\n')}
 
