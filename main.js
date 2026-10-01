@@ -2516,9 +2516,17 @@ RULES FOR EVERYTHING:
   GOOD: "λI",          "A · v",       "σ^2"
   Use x_1 and x^2 for sub/superscripts.
 - Cover the WHOLE document, start to finish - the last pages as much as the first.
-- One item per distinct concept, method or exercise: a short handout may give
-  5, a long lecture 25-40. Never pad to reach a number, and never stop early
-  because the first pages were enough.
+- ONE idea per item. Never "define X, Y and Z" or "what is A and how does it
+  relate to B" in one question - split it: each item must be answerable in
+  1-3 sentences, and a half-known bundle can't be marked fairly.
+- First list to yourself every distinct definition, condition, relation,
+  method, formula and worked example in the material; then write at least one
+  item for EACH. As a guide, a page of dense lecture notes gives 6-12 items; a
+  long lecture 25-40. Never pad with trivia, and never stop early because the
+  first pages were enough.
+- A worked example in teaching material (numbers and a solution) becomes a
+  "practice" item too: the same problem, with the material's solution as the
+  answer ("solutionSource": "document").
 - If there is no examinable content (title page, agenda, photo), return {"items": []}.
 
 Also return "course": the name of the course this material belongs to, as the material itself shows it (title slide, header, footer) - without a course number. null if the material doesn't say.

@@ -1905,3 +1905,10 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 .home-verify__text strong { color: var(--text-primary); }
 .home-verify .btn-sm { flex-shrink: 0; }
 @media (max-width: 760px) { .home-verify { flex-direction: column; align-items: stretch; } }
+
+/* Line breaks are content (1/10): a code question or a solution's steps
+   collapsed into one line on the practice card, the exam and the lists. */
+.study-question, #exam-question, .exam-answer__q, .exam-answer__yours, .exam-answer__correct,
+.study-short-answer__text, .manage-item__q, .review-item__q, .review-item__a, .summary-surewrong__list li { white-space: pre-wrap; }
+/* Code inside a question reads left to right even on a Hebrew page */
+.study-question, #exam-question { unicode-bidi: plaintext; tab-size: 4; }
