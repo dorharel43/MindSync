@@ -2472,28 +2472,41 @@ FIRST, decide what kind of document this is:
 A document can contain more than one kind. Handle each part by its own rules.
 
 ---
-FOR (A) TEACHING MATERIAL -> mode "recall"
-Two kinds - an exam asks both, and only-definitions trains memorising:
-- KNOW IT ("kind": "know") - a definition, theorem, condition, formula or
-  method, answered as the material states it.
-- UNDERSTAND IT ("kind": "understand") - the answer explains, in 1-4
-  sentences, using only what the material says or directly implies. Forms:
+FOR (A) TEACHING MATERIAL
+Exams come with a formula sheet, so the student practises USING the material,
+not reciting it.
+NEVER write an item that asks to recall, state or write out a formula or how
+something is computed: "מהי הנוסחה של X", "כיצד מחושב X", "מהי נוסחת טור טיילור",
+"What is the formula for X". When a formula matters, put it IN the question
+and ask the student to use it or to interpret it.
+
+Three kinds of item:
+- APPLY IT (mode "practice", "kind": "practice") - for each method, formula
+  or procedure in the material, a SHORT exam-style exercise with concrete
+  numbers, a function or a code snippet that applies it. A worked example in
+  the material is used as it is (its solution is the answer,
+  "solutionSource": "document"). Otherwise write a new small exercise and
+  solve it yourself ("solutionSource": "ai"), following the CHECK rules of (C)
+  below: substitute back or solve a second way, and leave it out if unsure.
+- UNDERSTAND IT (mode "recall", "kind": "understand") - the answer explains,
+  in 1-4 sentences, using only what the material says or directly implies. Forms:
   * what happens if something changes:   "מה יקרה ל-β אם נקטין את α ונשאיר את n קבוע?"
   * a common mistake to judge, with why: "האם ערך p הוא ההסתברות ש-H0 נכונה? הסבר."
   * which of two close methods fits a short concrete case, and why:
                                          "מתי משתמשים במבחן t ולא במבחן Z?"
   * why a condition is needed / what goes wrong without it
   * how two close concepts differ, or what a result means
+- KNOW IT (mode "recall", "kind": "know") - ONLY for a concept whose meaning
+  an exam asks in words: what a term means, or the conditions of a theorem.
+  At most a quarter of the items. Never a formula.
   These are KNOW, not understand, even when they start with "how" or "what":
-  "what is X", "what does theorem Y state", "how is X computed", "what is the
-  condition for X", "what does X represent". Label honestly - the count below
-  is checked.
-WORK CONCEPT BY CONCEPT: for each concept write the UNDERSTAND item first. Add
-a KNOW item only when the exact definition or formula is itself what an exam
-asks. AT LEAST HALF of the teaching-material items must be "understand" -
-count them before you answer. When you need more items, add more UNDERSTAND
-items (another angle on the same concept), never more definitions.
-Set "solutionSource": "document".
+  "what is X", "what does theorem Y state", "what is the condition for X",
+  "what does X represent". Label honestly - the count is checked.
+WORK CONCEPT BY CONCEPT: each method or formula gets an APPLY item, each idea
+gets an UNDERSTAND item; add a KNOW item only when its meaning is itself exam
+material. Of the recall items, AT LEAST HALF must be "understand". When you
+need more items, add APPLY or UNDERSTAND items, never more definitions.
+UNDERSTAND and KNOW items: "solutionSource": "document", and
 "evidence": the few words from the material that the answer rests on (a short
 exact quote). If you can't point to one, the item is not grounded - leave it out.
 
@@ -2575,7 +2588,7 @@ Return ONLY JSON:
 {"course": "...", "concepts": ["every distinct idea, rule, method or worked example in the material, in order - short names"], "items": [{"concept": "which of the concepts", "kind": "know|understand|practice", "question": "...", "answer": "...", "mode": "recall|practice", "solutionSource": "document|ai", "skillTag": "short skill or topic name", "evidence": "short exact quote (teaching material)"}]}
 
 Fill "concepts" FIRST - it is your checklist - then write "items" until EVERY concept has at least one item of its own. Fewer items than concepts means you stopped early.${minItems ? `
-This material is long enough for AT LEAST ${minItems} items (one idea each) - write that many or more, unless it truly has fewer ideas. Reach it with UNDERSTAND items, not extra definitions.` : ''}${existingNote(existing)}`;
+This material is long enough for AT LEAST ${minItems} items (one idea each) - write that many or more, unless it truly has fewer ideas. Reach it with APPLY and UNDERSTAND items, not extra definitions.` : ''}${existingNote(existing)}`;
 }
 
 // The questions the student already has from this file (30/9): generating
@@ -2591,6 +2604,8 @@ ${list.map(q => `- ${q}`).join('\n')}`;
 }
 
 // Shared validation for whatever the model returns.
+const FORMULA_RECALL = /^\s*(מה(י|ו)?\s+(ה)?נוסח|רשמו?\s+את\s+(ה)?נוסח|כתבו?\s+את\s+(ה)?נוסח|what\s+is\s+the\s+formula|write\s+(down\s+)?the\s+formula|state\s+the\s+formula|give\s+the\s+formula)/i;
+
 function finaliseStudyItems(responseText, category, sourceFile, existing = []) {
     const existingKeys = new Set((existing || []).map(q => String(q || '').trim().toLowerCase()));
     let parsed;
@@ -2662,6 +2677,12 @@ function finaliseStudyItems(responseText, category, sourceFile, existing = []) {
             continue;
         }
         if (existingKeys && existingKeys.has(key)) continue;   // already in the deck
+        // "What is the formula for X?" - exams come with a formula sheet (1/10).
+        // The labeller drops the rest; this catches the plain ones even if it fails.
+        if (mode === 'recall' && FORMULA_RECALL.test(question)) {
+            console.warn(`   ⛔ Rejected (formula recall): "${question.slice(0, 55)}"`);
+            continue;
+        }
 
         const kind = mode === 'practice' ? 'practice' : (raw.kind === 'understand' ? 'understand' : 'know');
         const concept = conceptKey(raw.concept);
@@ -2760,7 +2781,8 @@ Return ONLY JSON:
 function buildKindJudgePrompt(questions) {
     const qs = questions.map((q, i) => `${i + 1}. ${String(q).replace(/\s+/g, ' ').slice(0, 300)}`).join('\n');
     return `Label each study question below with ONE letter:
-K = recall: state a definition, theorem, formula, property or the steps of a method ("what is X", "what does Y state", "how is X computed", "what is the condition for X").
+F = recall a formula: state or write out a formula, or how a quantity is computed, without using it ("what is the formula for X", "how is X computed", "what is the Taylor series formula").
+K = recall: state a definition, theorem, property or condition in words ("what is X", "what does Y state", "what is the condition for X").
 U = understanding: reason with the material - why something holds or is needed, what changes if something changes, judge a claim (true/false with why), choose between close methods for a case, compare two concepts, interpret a result.
 P = a problem to solve with specific numbers or code (including "what does this code print / return, and why").
 
@@ -2787,12 +2809,21 @@ async function judgeKinds(items) {
 // Runs the top-up when it's needed; never fails the main result - on any
 // error the first set is returned as it was.
 async function withUnderstandingTopUp(items, category, sourceFile, existing, ask) {
-    if (!Array.isArray(items) || items.filter(i => i.kind !== 'practice').length < 4) return items;
+    if (!Array.isArray(items) || !items.some(i => i.kind !== 'practice')) return items;
     // An outside label replaces the writer's own: K = recall; U or P (predict
     // what code does, apply a method) = more than recall.
+    const before = items;
     const labels = await judgeKinds(items);
     if (labels) {
-        items = items.map((i, n) => i.kind === 'practice' ? i : { ...i, writerKind: i.kind, kind: labels[n] === 'K' ? 'know' : 'understand' });
+        // F = "what is the formula for X": exams give a formula sheet (the
+        // user's call, 1/10), so these are dropped - the time goes to using
+        // the formula instead.
+        const dropped = items.filter((i, n) => i.kind !== 'practice' && labels[n] === 'F');
+        if (dropped.length) console.warn(`   ⛔ Dropped ${dropped.length} formula-recall question(s): ${dropped.map(i => `"${String(i.question).slice(0, 40)}"`).join(', ')}`);
+        items = items
+            .map((i, n) => i.kind === 'practice' ? i : (labels[n] === 'F' ? null : { ...i, writerKind: i.kind, kind: labels[n] === 'K' ? 'know' : 'understand' }))
+            .filter(Boolean);
+        if (!items.length) items = before;   // nothing but formulas: keep what there was
         console.log(`🏷️ labelled: ${labels.join('')}`);
     }
     const need = understandingShortfall(items);
