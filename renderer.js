@@ -7450,8 +7450,11 @@ async function pruneFullPhotos() {
 }
 // Worked out on paper: the writer says so; an older exam - maths in the text.
 const FULL_MATHY = /[∫∑Σ√∞≤≥≠∂π∇²³]|\^|\b(lim|sin|cos|tan|log|ln|dx|dy)\b|\d\s*[+\-*/=]\s*\d/;
+// A part graded by the choice alone takes a photo too, by the student's
+// choice: it never changes the points - if the choice is wrong, the AI shows
+// where the working went wrong.
 function fullTakesPhoto(p, exam = fullState.exam) {
-    if (p.type === 'code' || fullAutoMarked(p)) return false;   // a choice alone can't use a photo (yet)
+    if (p.type === 'code') return false;
     return exam && exam.handwrittenMarked ? p.handwritten === true : FULL_MATHY.test(p.text || '');
 }
 
@@ -7859,7 +7862,8 @@ function tickFullExam() {
 }
 
 const fullKey = (qi, pi) => `${qi}:${pi}`;
-const fullAnswered = (a) => !!a && (a.dontKnow === true || a.photos > 0 || !!String(a.choice || '').trim() || !!String(a.text || '').trim());
+// (a photo of the working answers a written part - not a choice: there the choice is the answer)
+const fullAnswered = (a, p) => !!a && (a.dontKnow === true || (a.photos > 0 && !(p && fullAutoMarked(p))) || !!String(a.choice || '').trim() || !!String(a.text || '').trim());
 // Parts marked by the choice alone - "I don't know" doesn't apply to them.
 const fullAutoMarked = (p) => (p.type === 'mc' || p.type === 'tf') && !p.reasonRequired;
 function fullBonusBadge() {
@@ -7873,7 +7877,7 @@ function renderFullNav() {
     const nav = document.getElementById('full-nav');
     nav.textContent = '';
     fullState.exam.questions.forEach((q, qi) => {
-        const answered = q.parts.filter((p, pi) => fullAnswered(fullState.answers[fullKey(qi, pi)])).length;
+        const answered = q.parts.filter((p, pi) => fullAnswered(fullState.answers[fullKey(qi, pi)], p)).length;
         const need = q.choosePartsCount > 0 ? q.choosePartsCount : q.parts.length;
         const b = document.createElement('button');
         b.type = 'button';
@@ -7900,7 +7904,8 @@ function setFullAnswer(qi, pi, patch) {
 }
 
 // "Photograph your solution": up to 3 pages, shown as thumbnails.
-function fullPhotoBlock(qi, pi) {
+function fullPhotoBlock(qi, pi, p) {
+    const feedbackOnly = fullAutoMarked(p);
     const key = fullKey(qi, pi);
     const wrap = document.createElement('div');
     wrap.className = 'full-photos';
@@ -7939,9 +7944,11 @@ function fullPhotoBlock(qi, pi) {
             item.append(img, del);
             list.appendChild(item);
         });
-        btn.textContent = photos.length ? t('Add a page') : t('Photograph your solution');
+        btn.textContent = photos.length ? t('Add a page') : t(feedbackOnly ? 'Photograph your working (optional)' : 'Photograph your solution');
         btn.hidden = photos.length >= FULL_PHOTOS_PER_PART;
-        hint.textContent = photos.length ? t('The AI copies your handwriting when you submit - you check the copy before grading.')
+        hint.textContent = feedbackOnly
+            ? t('The points are for the choice only. If it is wrong, the AI looks at your working and shows where it went wrong.')
+            : photos.length ? t('The AI copies your handwriting when you submit - you check the copy before grading.')
             : t('Solved it on paper? Photograph it (up to 3 pages) instead of typing.');
     };
     btn.onclick = () => input.click();
@@ -8093,7 +8100,7 @@ function renderFullQuestion() {
             box.appendChild(opts);
             // "Circle and explain": the reason is part of the answer.
             if (p.reasonRequired) box.appendChild(fullAnswerBox(qi, pi, p, a));
-            if (fullTakesPhoto(p)) box.appendChild(fullPhotoBlock(qi, pi));
+            if (fullTakesPhoto(p)) box.appendChild(fullPhotoBlock(qi, pi, p));
         } else {
             if (p.type === 'tf') {
                 const tf = document.createElement('div');
@@ -8113,7 +8120,7 @@ function renderFullQuestion() {
                 box.appendChild(tf);
             }
             if (p.type !== 'tf' || p.reasonRequired) box.appendChild(fullAnswerBox(qi, pi, p, a));
-            if (fullTakesPhoto(p)) box.appendChild(fullPhotoBlock(qi, pi));
+            if (fullTakesPhoto(p)) box.appendChild(fullPhotoBlock(qi, pi, p));
         }
         // "I don't know" - only where the past exams give points for it.
         if (exam.dontKnowShare > 0 && !fullAutoMarked(p) && !q.bonus) {
@@ -8166,7 +8173,7 @@ async function readFullPhotoAnswers(exam, token) {
         const photos = fullPhotos.get(fullKey(qi, pi)) || [];
         const a = fullState.answers[fullKey(qi, pi)] || {};
         // (already read and checked - a grading that failed is submitted again - unless pages changed)
-        if (photos.length && fullTakesPhoto(p, exam) && a.dontKnow !== true && !(a.fromPhoto && a.photosRead === photos.length)) todo.push({ q, qi, p, pi, photos });
+        if (photos.length && fullTakesPhoto(p, exam) && !fullAutoMarked(p) && a.dontKnow !== true && !(a.fromPhoto && a.photosRead === photos.length)) todo.push({ q, qi, p, pi, photos });
     }));
     if (!todo.length) return true;
     let cancelled = false;
@@ -8260,13 +8267,52 @@ async function readFullPhotoAnswers(exam, token) {
     });
 }
 
+// "Where did I go wrong?" for each wrong choice with a photo of the working:
+// shown under the part (if the result is on screen) and saved with the result.
+async function fullPhotoFeedback(exam, run, jobs) {
+    const runId = String(run.id || run._id);
+    const box = (job) => document.querySelector(`#full-result-questions .full-rpart[data-key="${job.qi}:${job.pi}"]`);
+    const show = (job, text, state) => {
+        if (fullState.resultRunId !== runId) return;
+        const part = box(job);
+        if (!part) return;
+        let el = part.querySelector('.full-photo-fb');
+        if (!el) {
+            el = document.createElement('div');
+            el.className = 'full-photo-fb';
+            el.setAttribute('translate', 'no');
+            el.dir = 'auto';
+            part.insertBefore(el, part.querySelector('details'));
+        }
+        el.textContent = text;
+        el.classList.toggle('is-loading', state === 'loading');
+        el.classList.toggle('is-error', state === 'error');
+    };
+    for (const job of jobs) {
+        show(job, t('Looking at your working…'), 'loading');
+        const r = await ipcRenderer.invoke('full-exam-photo-feedback', {
+            part: { type: job.p.type, text: job.p.text, options: job.p.options, correct: job.p.correct, answer: job.p.answer },
+            stem: job.q.stem || '', choice: job.choice, images: job.photos
+        }).catch(err => ({ error: err.message }));
+        if (r && r.feedback) {
+            show(job, `${t('Where it went wrong:')} ${r.feedback}`);
+            const row = (run.answers || []).find(x => x.q === job.qi && x.p === job.pi);
+            if (row) row.photoFeedback = r.feedback;
+            ipcRenderer.invoke('full-exam-save-photo-feedback', { examId: exam.id, runId, q: job.qi, p: job.pi, feedback: r.feedback }).catch(() => {});
+        } else {
+            show(job, `${t('Couldn\'t look at your working:')} ${t((r && r.error) || 'Please try again.')}`, 'error');
+        }
+        job.photos = null;   // done with them
+    }
+}
+
 async function submitFullExam(timeUp) {
     const exam = fullState.exam;
     if (!exam || !fullState.running || fullState.grading) return;
     if (!timeUp) {
         const empty = exam.questions.reduce((n, q, qi) => {
             const need = q.choosePartsCount > 0 ? q.choosePartsCount : q.parts.length;
-            const done = q.parts.filter((p, pi) => fullAnswered(fullState.answers[fullKey(qi, pi)])).length;
+            const done = q.parts.filter((p, pi) => fullAnswered(fullState.answers[fullKey(qi, pi)], p)).length;
             return n + Math.max(0, need - done);
         }, 0);
         const ok = await confirmDialog(t('Submit the exam?'),
@@ -8326,9 +8372,21 @@ async function submitFullExam(timeUp) {
         return;
     }
     clearFullDraft(exam.id, clientRunId);
+    // A wrong choice with a photo of its working: feedback after the result
+    // (these photos stay in memory until then; none are kept on the device).
+    const run = out.result.run;
+    const feedback = [];
+    exam.questions.forEach((q, qi) => q.parts.forEach((p, pi) => {
+        const photos = fullPhotos.get(fullKey(qi, pi));
+        const row = (run.answers || []).find(r => r.q === qi && r.p === pi);
+        if (photos && photos.length && fullAutoMarked(p) && row && row.status === 'graded' && row.points < row.max && String(row.choice || '')) {
+            feedback.push({ q, qi, p, pi, photos, choice: row.choice });
+        }
+    }));
     fullPhotosStore('delete', clientRunId);   // the photos aren't kept after grading
     if (fullState.clientRunId === clientRunId) fullPhotos.clear();
-    if (fullState.token === token && !document.getElementById('study-full').hidden) renderFullResult(exam, out.result.run);
+    if (fullState.token === token && !document.getElementById('study-full').hidden) renderFullResult(exam, run);
+    if (feedback.length) fullPhotoFeedback(exam, run, feedback);
 }
 
 async function showLastFullResult(examId) {
@@ -8426,6 +8484,7 @@ function renderFullResult(exam, run) {
             const r = rows[pi] || { choice: '', text: '', points: 0, max: p.points, status: 'blank', feedback: '' };
             const part = document.createElement('div');
             part.className = 'full-rpart';
+            part.dataset.key = `${qi}:${pi}`;
             const ph = document.createElement('div');
             ph.className = 'full-rpart__head';
             const lab = document.createElement('span');
@@ -8466,6 +8525,14 @@ function renderFullResult(exam, run) {
                     src.textContent = r.photoEdited ? t('Copied from your photo, and corrected by you.') : t('Copied from your photo.');
                     part.appendChild(src);
                 }
+            }
+            if (r.photoFeedback) {
+                const pf = document.createElement('div');
+                pf.className = 'full-photo-fb';
+                pf.setAttribute('translate', 'no');
+                pf.dir = 'auto';
+                pf.textContent = `${t('Where it went wrong:')} ${r.photoFeedback}`;
+                part.appendChild(pf);
             }
             if (r.feedback) {
                 const fb = document.createElement('div');
