@@ -2484,6 +2484,10 @@ Two kinds - an exam asks both, and only-definitions trains memorising:
                                          "מתי משתמשים במבחן t ולא במבחן Z?"
   * why a condition is needed / what goes wrong without it
   * how two close concepts differ, or what a result means
+  These are KNOW, not understand, even when they start with "how" or "what":
+  "what is X", "what does theorem Y state", "how is X computed", "what is the
+  condition for X", "what does X represent". Label honestly - the count below
+  is checked.
 WORK CONCEPT BY CONCEPT: for each concept write the UNDERSTAND item first. Add
 a KNOW item only when the exact definition or formula is itself what an exam
 asks. AT LEAST HALF of the teaching-material items must be "understand" -
@@ -2759,7 +2763,7 @@ async function withUnderstandingTopUp(items, category, sourceFile, existing, ask
         const raw = await ask(buildTopUpPrompt(category, items, need));
         const extra = finaliseStudyItems(raw, category, sourceFile, [...(existing || []), ...items.map(i => i.question)]);
         if (!Array.isArray(extra)) return items;
-        const added = extra.filter(i => i.kind === 'understand').slice(0, need + 2);
+        const added = extra.filter(i => i.kind === 'understand').slice(0, need + 2).map(i => ({ ...i, fromTopUp: true }));
         console.log(`🧠 top-up added ${added.length} item(s)`);
         return [...items, ...added].slice(0, 45);
     } catch (e) {
