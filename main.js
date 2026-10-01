@@ -2904,6 +2904,7 @@ function normaliseExam(raw, blueprint) {
         maxGrade: blueprint && Number(blueprint.maxGrade) > 0 ? Number(blueprint.maxGrade) : 0,
         maxGradeOf: blueprint && Number(blueprint.regularPoints) > 0 ? Number(blueprint.regularPoints) : 0,
         dontKnowShare: blueprint && Number(blueprint.dontKnowShare) > 0 ? Number(blueprint.dontKnowShare) : 0,
+        handwrittenMarked: true,   // the writer said which parts are worked out on paper
         questions
     });
 }

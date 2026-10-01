@@ -7414,15 +7414,45 @@ async function fullPhotosStore(mode, runId, value) {
 }
 const saveFullPhotos = () => fullPhotosStore('put', fullState.clientRunId, [...fullPhotos.entries()]);
 async function loadFullPhotos(runId) {
-    fullPhotos.clear();
     const saved = await fullPhotosStore('get', runId);
+    // Another sitting started meanwhile: these photos aren't its.
+    if (!fullState.running || fullState.clientRunId !== runId) return false;
+    fullPhotos.clear();
     if (Array.isArray(saved)) for (const [k, v] of saved) if (Array.isArray(v) && v.length) fullPhotos.set(k, v);
+    // A part the draft says has photos that this device didn't keep: not answered.
+    let lost = 0;
+    for (const [k, a] of Object.entries(fullState.answers)) {
+        const n = (fullPhotos.get(k) || []).length;
+        if ((a.photos || 0) !== n) { if ((a.photos || 0) > n) lost += 1; fullState.answers[k] = { ...a, photos: n }; }
+    }
+    if (lost) { saveFullDraft(); toast.info(t('Some photos weren\'t kept on this device - photograph them again.')); }
+    return true;
+}
+// Photos of sittings that can't be continued any more (graded, or left
+// behind): deleted when the full exam opens.
+async function pruneFullPhotos() {
+    const live = new Set();
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (!k || !k.startsWith('mindsync.fullExam.')) continue;
+            const d = JSON.parse(localStorage.getItem(k) || 'null');
+            if (d && d.clientRunId && !d.submitted) live.add(d.clientRunId);
+        }
+    } catch (e) { return; }   // no way to tell what is live: keep everything
+    try {
+        const db = await fullPhotoDb();
+        const tx = db.transaction('runs', 'readwrite');
+        const store = tx.objectStore('runs');
+        const r = store.getAllKeys();
+        r.onsuccess = () => { for (const k of r.result || []) if (!live.has(k) && k !== fullState.clientRunId) store.delete(k); };
+    } catch (e) { /* no storage here */ }
 }
 // Worked out on paper: the writer says so; an older exam - maths in the text.
 const FULL_MATHY = /[∫∑Σ√∞≤≥≠∂π∇²³]|\^|\b(lim|sin|cos|tan|log|ln|dx|dy)\b|\d\s*[+\-*/=]\s*\d/;
-function fullTakesPhoto(p) {
+function fullTakesPhoto(p, exam = fullState.exam) {
     if (p.type === 'code' || fullAutoMarked(p)) return false;   // a choice alone can't use a photo (yet)
-    return p.handwritten === true || (p.handwritten === undefined && FULL_MATHY.test(p.text || ''));
+    return exam && exam.handwrittenMarked ? p.handwritten === true : FULL_MATHY.test(p.text || '');
 }
 
 function showFullPart(part) {
@@ -7483,6 +7513,7 @@ async function stopFullExam(ask = true) {
 
 async function openFullExam(course) {
     if (!(await stopExam())) return false;
+    pruneFullPhotos();
     ['study-home', 'study-session', 'study-summary', 'study-review', 'study-manage', 'study-exam'].forEach(id => {
         const el = document.getElementById(id); if (el) el.hidden = true;
     });
@@ -7809,7 +7840,7 @@ document.getElementById('full-start-btn').onclick = () => {
     // A continued sitting: its photos come back from this device.
     if (draft) {
         const runId = fullState.clientRunId;
-        loadFullPhotos(runId).then(() => { if (fullState.running && fullState.clientRunId === runId && fullPhotos.size) renderFullQuestion(); });
+        loadFullPhotos(runId).then((mine) => { if (mine) { renderFullNav(); renderFullQuestion(); } });
     }
 };
 
@@ -7903,8 +7934,7 @@ function fullPhotoBlock(qi, pi) {
                 photos.splice(i, 1);
                 if (photos.length) fullPhotos.set(key, photos); else fullPhotos.delete(key);
                 saveFullPhotos();
-                setFullAnswer(qi, pi, { photos: photos.length });
-                draw();
+                pagesChanged(photos.length);
             };
             item.append(img, del);
             list.appendChild(item);
@@ -7933,7 +7963,18 @@ function fullPhotoBlock(qi, pi) {
         }
         btn.disabled = false;
         saveFullPhotos();
-        setFullAnswer(qi, pi, { photos: (fullPhotos.get(key) || []).length });
+        pagesChanged((fullPhotos.get(key) || []).length);
+    };
+    // New pages make an old copy wrong: back to what was typed, read again on submit.
+    const pagesChanged = (count) => {
+        const a = fullState.answers[key] || {};
+        if (a.fromPhoto) {
+            setFullAnswer(qi, pi, { photos: count, text: a.typed || '', fromPhoto: false, photoEdited: false, photosRead: 0 });
+            toast.info(t('The pages changed - they are read again when you submit.'));
+            renderFullQuestion();
+            return;
+        }
+        setFullAnswer(qi, pi, { photos: count });
         draw();
     };
     wrap.append(btn, input, list, hint);
@@ -8125,12 +8166,14 @@ async function readFullPhotoAnswers(exam, token) {
         const photos = fullPhotos.get(fullKey(qi, pi)) || [];
         const a = fullState.answers[fullKey(qi, pi)] || {};
         // (already read and checked - a grading that failed is submitted again - unless pages changed)
-        if (photos.length && fullTakesPhoto(p) && a.dontKnow !== true && !(a.fromPhoto && a.photosRead === photos.length)) todo.push({ q, qi, p, pi, photos });
+        if (photos.length && fullTakesPhoto(p, exam) && a.dontKnow !== true && !(a.fromPhoto && a.photosRead === photos.length)) todo.push({ q, qi, p, pi, photos });
     }));
     if (!todo.length) return true;
     let cancelled = false;
     const stop = () => { cancelled = true; fullState.grading = false; };
     const stillHere = () => !cancelled && fullState.token === token;
+    // Leaving now (stopFullExam) frees the exam at once - a read still on its way is ignored.
+    fullState.cancelReading = () => { fullState.cancelReading = null; stop(); };
     showFullPart('full-reading');
     const read = async (item) => {
         const r = await ipcRenderer.invoke('full-exam-read-photos', { text: item.p.text, stem: item.q.stem || '', images: item.photos })
@@ -8138,11 +8181,11 @@ async function readFullPhotoAnswers(exam, token) {
         item.result = r || { error: t('Please try again.') };
     };
     for (let i = 0; i < todo.length; i++) {
-        if (!stillHere()) { stop(); return false; }
+        if (!stillHere()) { if (!cancelled) stop(); return false; }
         document.getElementById('full-reading-text').textContent = t('Reading your handwriting… {d} of {n}').replace('{d}', i + 1).replace('{n}', todo.length);
         await read(todo[i]);
     }
-    if (!stillHere()) { stop(); return false; }
+    if (!stillHere()) { if (!cancelled) stop(); return false; }
     return new Promise((resolve) => {
         fullState.cancelReading = () => { fullState.cancelReading = null; stop(); resolve(false); };
         const list = document.getElementById('full-transcripts-list');
@@ -8261,6 +8304,7 @@ async function submitFullExam(timeUp) {
         if (timeUp) fullState.autoSubmitFailed = true;
         fullState.timer = setInterval(tickFullExam, 1000);
         showFullPart('full-run');
+        renderFullQuestion();   // a photographed answer now holds its copy
         toast.error((start && start.error) || t('Couldn\'t start grading. Try again.'));
         return;
     }
@@ -8276,6 +8320,7 @@ async function submitFullExam(timeUp) {
             if (timeUp) fullState.autoSubmitFailed = true;
             fullState.timer = setInterval(tickFullExam, 1000);
             showFullPart('full-run');
+            renderFullQuestion();
             toast.error(out.error, t('The exam wasn\'t graded'));
         }
         return;
