@@ -7628,6 +7628,13 @@ async function openFullIntro(examId) {
     if (exam.materials) fact(`${t('Allowed material:')} ${exam.materials}`);
     const checked = exam.questions.reduce((n, q) => n + q.parts.filter(p => p.check).length, 0);
     if (checked) fact(t('{n} of {m} solutions were checked by a second, independent solution.').replace('{n}', checked).replace('{m}', partsCount));
+    // Solutions the second check never reached - said before the exam, with a way to check them.
+    const unchecked = partsCount - checked;
+    document.getElementById('full-unchecked').hidden = !unchecked;
+    document.getElementById('full-unchecked-text').textContent = t(unchecked === 1 ? '1 solution wasn\'t checked a second time - it may have a mistake.' : '{n} of {m} solutions weren\'t checked a second time - they may have mistakes.').replace('{n}', unchecked).replace('{m}', partsCount);
+    const recheck = document.getElementById('full-recheck-btn');
+    recheck.disabled = false;
+    recheck.textContent = t('Check them now');
     const instr = document.getElementById('full-intro-instructions');
     instr.textContent = exam.instructions || '';
     instr.setAttribute('translate', 'no');
@@ -7675,6 +7682,27 @@ async function openFullIntro(examId) {
 }
 
 document.getElementById('full-intro-back-btn').onclick = () => { showFullPart('full-setup'); loadFullSetup(); };
+
+// "Check them now": the second check, on the saved exam (nothing is deleted).
+document.getElementById('full-recheck-btn').onclick = async () => {
+    const exam = fullState.exam;
+    const btn = document.getElementById('full-recheck-btn');
+    if (!exam || btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = t('Checking…');
+    const start = await ipcRenderer.invoke('full-exam-recheck', exam.id).catch(err => ({ error: err.message }));
+    const out = start && start.jobId ? await waitForFullJob(start.jobId, () => {}) : { error: (start && start.error) || t('Please try again.') };
+    // Still on this exam's intro (not started, not another exam)?
+    const here = fullState.exam === exam && !fullState.running && !fullState.grading && !document.getElementById('full-intro').hidden;
+    if (out.error) {
+        toast.error(out.error, t('The solutions weren\'t checked'));
+        if (here) { btn.disabled = false; btn.textContent = t('Check them now'); }
+        return;
+    }
+    const r = out.result || {};
+    toast.success(r.left ? t('{n} more solutions checked; {m} still couldn\'t be.').replace('{n}', r.changed).replace('{m}', r.left) : t('Every solution is checked now.'));
+    if (here) openFullIntro(exam.id);
+};
 
 document.getElementById('full-start-btn').onclick = () => {
     const exam = fullState.exam;
@@ -8017,6 +8045,27 @@ function renderFullResult(exam, run) {
     const unchecked = (run.answers || []).filter(a => a.status === 'unchecked').length;
     // Older sittings have no outOf: the grade was out of the points graded.
     const outOf = run.outOf > 0 ? run.outOf : run.max;
+    // With parts left out, the number is only for what was checked - said so.
+    document.getElementById('full-result-label').textContent = unchecked ? t('Partial grade - only what was checked') : t('Your grade');
+    // "Check them again": the parts the AI couldn't grade, graded now.
+    const regrade = document.getElementById('full-regrade-btn');
+    regrade.hidden = !unchecked;
+    regrade.disabled = false;
+    regrade.textContent = t('Check them again');
+    regrade.onclick = async () => {
+        regrade.disabled = true;
+        regrade.textContent = t('Checking…');
+        const start = await ipcRenderer.invoke('full-exam-regrade', { examId: exam.id, runId: String(run.id || run._id) }).catch(err => ({ error: err.message }));
+        const out = start && start.jobId ? await waitForFullJob(start.jobId, () => {}) : { error: (start && start.error) || t('Please try again.') };
+        const here = fullState.exam === exam && !document.getElementById('full-result').hidden;
+        if (out.error) {
+            toast.error(out.error, t('Not checked'));
+            if (here) { regrade.disabled = false; regrade.textContent = t('Check them again'); }
+            return;
+        }
+        if (here) renderFullResult(exam, out.result.run);
+        if (out.result.left) toast.info(t('{n} parts still couldn\'t be checked. Try again in a few minutes.').replace('{n}', out.result.left));
+    };
     const capped = outOf > 0 && run.score > outOf;
     document.getElementById('full-score-text').textContent =
         `${t('{s} of {m} points').replace('{s}', Math.round(run.score * 10) / 10).replace('{m}', Math.round(outOf * 10) / 10)} · ${t('{n} minutes').replace('{n}', usedMin)}` +
@@ -8026,7 +8075,7 @@ function renderFullResult(exam, run) {
     weak.textContent = '';
     if (!(run.weakTopics || []).length) {
         const li = document.createElement('li');
-        li.textContent = t('No topic under 60% - well done.');
+        li.textContent = unchecked ? t('The topics show once every part is checked.') : t('No topic under 60% - well done.');
         weak.appendChild(li);
     }
     for (const w of run.weakTopics || []) {
@@ -8124,7 +8173,10 @@ function renderFullResult(exam, run) {
             if (p.check) {
                 const c = document.createElement('div');
                 c.className = 'full-check';
-                c.textContent = p.check === 'checked' ? t('This solution was checked by a second, independent solution.') : t('A second solution found a mistake in the first one - this is the corrected solution.');
+                c.textContent = p.check === 'checked' ? t('This solution was checked by a second, independent solution.')
+                    : p.check === 'doubtful' ? t('The second check thinks this question itself is wrong or unclear - compare it with your course material.')
+                    : t('A second solution found a mistake in the first one - this is the corrected solution.');
+                if (p.check === 'doubtful') c.classList.add('full-check--doubtful');
                 det.appendChild(c);
             } else {
                 const c = document.createElement('div');

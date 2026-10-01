@@ -2865,6 +2865,7 @@ function normaliseExam(raw, blueprint) {
         materials: String(raw.materials || (blueprint && blueprint.materials) || '').slice(0, 400),
         instructions: String(raw.instructions || (blueprint && blueprint.instructions) || '').slice(0, 2000),
         maxGrade: blueprint && Number(blueprint.maxGrade) > 0 ? Number(blueprint.maxGrade) : 0,
+        maxGradeOf: blueprint && Number(blueprint.regularPoints) > 0 ? Number(blueprint.regularPoints) : 0,
         dontKnowShare: blueprint && Number(blueprint.dontKnowShare) > 0 ? Number(blueprint.dontKnowShare) : 0,
         questions
     });
@@ -2878,7 +2879,10 @@ function examTotals(exam) {
     const sum = (qs) => Math.round(qs.reduce((n, q) => n + q.points, 0) * 100) / 100;
     exam.totalPoints = sum(exam.questions.filter(q => !q.bonus));
     exam.bonusPoints = sum(exam.questions.filter(q => q.bonus));
-    if (!(exam.maxGrade > 0 && exam.maxGrade < exam.totalPoints)) exam.maxGrade = 0;
+    // A cap is for the points the past exams had: an exam written (or left
+    // after a dropped part) with other points has none.
+    if (!(exam.maxGrade > 0 && exam.maxGrade < exam.totalPoints && exam.maxGrade >= exam.totalPoints * 0.75
+        && Math.abs(exam.totalPoints - (exam.maxGradeOf || 0)) < 0.6)) exam.maxGrade = 0;
     if (!(exam.dontKnowShare > 0 && exam.dontKnowShare <= 0.5)) exam.dontKnowShare = 0;
     return exam;
 }
@@ -2946,13 +2950,30 @@ function verifyBlueprintRules(blueprint, past) {
         && shown(/בונוס|סונוב|bonus/i, out.bonusQuote);
     if (qs) out.questions = qs.map(q => ({ ...q, bonus: bonusOk && q.bonus === true }));
     const regular = qs ? qs.filter(q => !q.bonus || !bonusOk).reduce((n, q) => n + (Number(q.points) || 0), 0) : Number(out.totalPoints) || 0;
+    // A number alone proves nothing ("100" is in every exam): it must sit next
+    // to the words that make it the rule.
+    const src = hasText ? text : String(out.maxGradeQuote || '') + '\n' + String(out.dontKnowQuote || '');
     const mg = Number(out.maxGrade);
+    // the number on its own: not inside 1100 or 2.100 - a full stop after it is fine
+    const numRe = (n) => new RegExp(`(?<!\\d|\\d\\.)${String(n).replace('.', '\\.')}(?!\\d|\\.\\d)`, 'g');
     out.maxGrade = Number.isFinite(mg) && mg > 0 && regular > mg && mg >= regular * 0.75
-        && shown(new RegExp(`(^|\\D)${mg}(\\D|$)`), out.maxGradeQuote) ? mg : null;
+        && near(src, numRe(mg), [/ציון|grade|score/i, /מקסימ|מרבי|לכל היותר|לא יעלה|maximum|\bmax\b|at most|capped|exceed/i]) ? mg : null;
+    out.regularPoints = regular;   // what the cap is for (a written exam of other points has none)
     const dk = Number(out.dontKnowShare);
+    const pct = Math.round(dk * 100);
     out.dontKnowShare = Number.isFinite(dk) && dk > 0 && dk <= 0.5
-        && shown(/לא\s*יודע|עדוי\s*אל|don['’]?t\s+know|do\s+not\s+know/i, out.dontKnowQuote) ? Math.round(dk * 100) / 100 : null;
+        && near(src, /לא\s*יודע|don['’]?t\s+know|do\s+not\s+know/gi, [pct === 25 ? new RegExp(`(^|[^\\d])25(?!\\d)|רבע|quarter`, 'i') : new RegExp(`(^|[^\\d])${pct}(?!\\d)`)]) ? pct / 100 : null;
     return out;
+}
+
+// True when every one of `others` is found within `span` characters of a
+// match of `anchor` (a global regex) in `src`.
+function near(src, anchor, others, span = 70) {
+    for (const m of String(src || '').matchAll(anchor)) {
+        const win = src.slice(Math.max(0, m.index - span), m.index + m[0].length + span);
+        if (others.every(re => re.test(win))) return true;
+    }
+    return false;
 }
 
 // 2. The exam itself, with answers and marking schemes. `blueprint` is a
@@ -2967,12 +2988,13 @@ async function writeExam(course, blueprint, materialText) {
     return exam;
 }
 
-// 3. A second, independent solution of every part. Changes `exam` in place:
+// 3. A second, independent solution of every part (keepParts: a saved exam -
+// a part called unsolvable is marked 'doubtful', not dropped). Changes `exam` in place:
 // marks checked parts, takes the checker's correction, drops parts it calls
 // unsolvable. Returns what happened (the exam check counts it); throws only
 // when nothing is left.
-async function checkExam(exam) {
-    const stats = { parts: exam.questions.reduce((n, q) => n + q.parts.length, 0), checked: 0, corrected: 0, dropped: 0, failed: false, error: '', verdicts: [] };
+async function checkExam(exam, { keepParts = false } = {}) {
+    const stats = { parts: exam.questions.reduce((n, q) => n + q.parts.length, 0), checked: 0, corrected: 0, dropped: 0, doubtful: 0, failed: false, error: '', verdicts: [] };
     try {
         const rawCheck = await aiProvider.generateText(buildExamCheckPrompt(exam), {
             forceJson: true, maxTokens: 20000, thinkingLevel: 'high', timeoutMs: 300000, noFallback: true, allowance: 'light'
@@ -2985,7 +3007,11 @@ async function checkExam(exam) {
             const p = q && q.parts[Number(v.p)];
             if (!p) continue;
             if (v.ok === true) { p.check = 'checked'; stats.checked += 1; continue; }
-            if (/unsolvable/i.test(String(v.problem || ''))) { drop.add(`${v.q}:${v.p}`); continue; }
+            if (/unsolvable/i.test(String(v.problem || ''))) {
+                // A saved exam keeps its parts (a sitting may point at them).
+                if (keepParts) { p.check = 'doubtful'; stats.doubtful += 1; } else drop.add(`${v.q}:${v.p}`);
+                continue;
+            }
             const fixed = cleanExamText(String(v.answer || '').trim(), p.type === 'code');
             if (fixed) {
                 p.answer = fixed.slice(0, 12000);
@@ -3068,6 +3094,36 @@ async function buildFullExam({ course, pastIds, durationMin }, stage) {
     });
     return { examId: String(saved.id || saved._id) };
 }
+
+// The check that didn't run (or missed parts) when the exam was written, run
+// on the saved exam: only the parts still unchecked change.
+async function recheckFullExam(examId, stage) {
+    stage('checking');
+    const exam = await api.getFullExam(examId);
+    const todo = [];
+    exam.questions.forEach((q, qi) => q.parts.forEach((p, pi) => { if (!p.check) todo.push([qi, pi]); }));
+    if (!todo.length) return { changed: 0, left: 0 };
+    const copy = JSON.parse(JSON.stringify(exam));
+    const stats = await checkExam(copy, { keepParts: true });
+    if (stats.failed) throw new Error('The check didn\'t run this time either. Try again in a few minutes.');
+    const parts = todo.map(([qi, pi]) => {
+        const p = copy.questions[qi].parts[pi];
+        return { q: qi, p: pi, check: p.check, answer: p.answer, rubric: p.rubric, correct: p.correct };
+    }).filter(x => x.check);
+    if (parts.length) await api.checkFullExamParts(examId, parts);
+    return { changed: parts.length, left: todo.length - parts.length };
+}
+
+ipcMain.handle('full-exam-recheck', async (event, examId) => {
+    try {
+        const id = String(examId || '');
+        if (!/^[a-f0-9]{24}$/i.test(id)) return { error: 'No exam to check.' };
+        if (aiProvider.resolveProvider() !== 'gemini') return { error: 'A full exam needs the cloud AI (a Gemini key in Settings).' };
+        return { jobId: startFullExamJob((stage) => recheckFullExam(id, stage)) };
+    } catch (err) {
+        return { error: err.message };
+    }
+});
 
 ipcMain.handle('full-exam-build', async (event, payload = {}) => {
     try {
@@ -3167,7 +3223,7 @@ async function gradeFullExam({ examId, answers, startedAt, usedSec, limitSec, cl
     stage('grading');
     const exam = await api.getFullExam(examId);
     // Messages written here (not by the AI) in the exam's language.
-    const he = exam.language === 'he' || /[\u0590-\u05ff]/.test(exam.questions.map(q => q.parts.map(p => p.text).join(' ')).join(' '));
+    const he = examIsHebrew(exam);
     // "I don't know" counts only where this exam gives points for it.
     const dontKnowOk = (a) => {
         const part = exam.questions[a.q] && exam.questions[a.q].parts[a.p];
@@ -3184,7 +3240,10 @@ async function gradeFullExam({ examId, answers, startedAt, usedSec, limitSec, cl
         let allowed = null;
         if (q.choosePartsCount > 0) {
             const idx = q.parts.map((p, pi) => pi);
-            const answered = idx.filter(pi => !answerIsBlank(byKey.get(`${qi}:${pi}`))).slice(0, q.choosePartsCount);
+            // A written answer is chosen before an "I don't know" on another part.
+            const written = idx.filter(pi => { const a = byKey.get(`${qi}:${pi}`); return !answerIsBlank(a) && !a.dontKnow; });
+            const dk = idx.filter(pi => { const a = byKey.get(`${qi}:${pi}`); return !!a && a.dontKnow === true; });
+            const answered = [...written, ...dk].slice(0, q.choosePartsCount);
             const missing = idx.filter(pi => !answered.includes(pi)).slice(0, q.choosePartsCount - answered.length);
             allowed = new Set([...answered, ...missing]);
         }
@@ -3203,7 +3262,21 @@ async function gradeFullExam({ examId, answers, startedAt, usedSec, limitSec, cl
         if (items.length) toAi.push({ q, items });
     });
 
-    // One AI call per question, three at a time.
+    await gradeRowsWithAi(toAi, stage);
+    const weakTopics = weakTopicsOf(exam, out);
+
+    stage('saving');
+    if (clientRunId) FULL_EXAM_GRADED.set(cacheId, { key: answersKey, out, weakTopics, at: Date.now() });
+    const run = await api.saveFullExamRun(examId, { answers: out, startedAt, usedSec, limitSec, clientRunId, weakTopics });
+    FULL_EXAM_GRADED.delete(cacheId);
+    return { runId: String(run.id || run._id), run };
+}
+
+// The written answers, one AI call per question, three at a time. `jobs`:
+// [{ q, items: [{ part, index, answer, row }] }]; fills each row (or marks it
+// 'unchecked' when the AI gave nothing for it).
+async function gradeRowsWithAi(jobs, stage) {
+    const toAi = jobs;
     let next = 0, done = 0;
     const worker = async () => {
         while (next < toAi.length) {
@@ -3225,8 +3298,10 @@ async function gradeFullExam({ examId, answers, startedAt, usedSec, limitSec, cl
         }
     };
     await Promise.all([worker(), worker(), worker()]);
+}
 
-    // Weakest topics: under 60% of their points.
+// Weakest topics: under 60% of their points.
+function weakTopicsOf(exam, out) {
     const byTopic = new Map();
     exam.questions.forEach((q, qi) => q.parts.forEach((p, pi) => {
         const row = out.find(r => r.q === qi && r.p === pi);
@@ -3235,15 +3310,46 @@ async function gradeFullExam({ examId, answers, startedAt, usedSec, limitSec, cl
         t.got += row.points; t.max += row.max;
         byTopic.set(p.topic, t);
     }));
-    const weakTopics = [...byTopic.entries()].filter(([, t]) => t.max && t.got / t.max < 0.6)
+    return [...byTopic.entries()].filter(([, t]) => t.max && t.got / t.max < 0.6)
         .sort((a, b) => a[1].got / a[1].max - b[1].got / b[1].max).map(([k]) => k).slice(0, 8);
-
-    stage('saving');
-    if (clientRunId) FULL_EXAM_GRADED.set(cacheId, { key: answersKey, out, weakTopics, at: Date.now() });
-    const run = await api.saveFullExamRun(examId, { answers: out, startedAt, usedSec, limitSec, clientRunId, weakTopics });
-    FULL_EXAM_GRADED.delete(cacheId);
-    return { runId: String(run.id || run._id), run };
 }
+
+const examIsHebrew = (exam) => exam.language === 'he' || /[\u0590-\u05ff]/.test(exam.questions.map(q => q.parts.map(p => p.text).join(' ')).join(' '));
+
+// "Check again": the parts of a sitting the AI couldn't grade, graded now.
+async function regradeFullExamRun(examId, runId, stage) {
+    stage('grading');
+    const [exam, runs] = await Promise.all([api.getFullExam(examId), api.getFullExamRuns(examId)]);
+    const run = (Array.isArray(runs) ? runs : []).find(r => String(r.id || r._id) === runId);
+    if (!run) throw new Error('This result is no longer here.');
+    const rows = run.answers.map(r => ({ ...r }));
+    const byQ = new Map();
+    for (const row of rows) {
+        const q = exam.questions[row.q];
+        const part = q && q.parts[row.p];
+        if (row.status !== 'unchecked' || !part) continue;
+        if (!byQ.has(row.q)) byQ.set(row.q, { q, items: [] });
+        byQ.get(row.q).items.push({ part, index: row.p, answer: { choice: row.choice || '', text: row.text || '' }, row });
+    }
+    if (!byQ.size) return { run, left: 0 };
+    // A row the AI grades now comes back 'graded'; one it misses stays 'unchecked'.
+    for (const job of byQ.values()) job.items.forEach(it => { it.row.status = 'graded'; });
+    await gradeRowsWithAi([...byQ.values()], stage);
+    stage('saving');
+    const saved = await api.regradeFullExamRun(examId, runId, { answers: rows, weakTopics: weakTopicsOf(exam, rows) });
+    return { run: saved, left: rows.filter(r => r.status === 'unchecked').length };
+}
+
+ipcMain.handle('full-exam-regrade', async (event, payload = {}) => {
+    try {
+        const examId = String((payload && payload.examId) || '');
+        const runId = String((payload && payload.runId) || '');
+        if (!/^[a-f0-9]{24}$/i.test(examId) || !/^[a-f0-9]{24}$/i.test(runId)) return { error: 'No result to check.' };
+        return { jobId: startFullExamJob((stage) => regradeFullExamRun(examId, runId, stage)) };
+    } catch (err) {
+        return { error: err.message };
+    }
+});
 
 ipcMain.handle('full-exam-grade', async (event, payload = {}) => {
     try {
