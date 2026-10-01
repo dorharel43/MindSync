@@ -6612,11 +6612,11 @@ function renderReviewList() {
                 <input type="checkbox" ${item._selected ? 'checked' : ''} />
             </label>
             <div class="review-item__body">
-                <div class="review-item__q" contenteditable="true" dir="auto" data-field="question">${escapeHtml(item.question)}</div>
+                <div class="review-item__q" contenteditable="plaintext-only" dir="auto" data-field="question">${escapeHtml(item.question)}</div>
                 ${item.answer
                     ? `<details class="review-item__reveal" ${item.solutionSource === 'ai' ? 'open' : ''}>
                          <summary>${item.solutionSource === 'ai' ? 'AI solution' : 'Show the answer'}</summary>
-                         <div class="review-item__a" contenteditable="true" dir="auto" data-field="answer">${escapeHtml(item.answer)}</div>
+                         <div class="review-item__a" contenteditable="plaintext-only" dir="auto" data-field="answer">${escapeHtml(item.answer)}</div>
                        </details>`
                     : '<div class="review-item__a review-item__a--empty">No answer passage — this will be a practice prompt.</div>'}
                 <div class="review-item__meta">
@@ -6642,7 +6642,8 @@ function renderReviewList() {
         // Edits are saved on blur, so fixing a clipped definition doesn't
         // require a separate save step.
         row.querySelectorAll('[contenteditable]').forEach(el => {
-            el.onblur = () => { item[el.dataset.field] = el.textContent.trim(); };
+            // innerText keeps the line breaks (code, steps of a solution) - textContent lost them.
+            el.onblur = () => { item[el.dataset.field] = el.innerText.replace(/\u00a0/g, ' ').trim(); };
         });
     });
 
