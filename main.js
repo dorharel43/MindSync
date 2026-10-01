@@ -2827,27 +2827,8 @@ function normaliseExam(raw, blueprint) {
     for (const [qi, q] of (raw && Array.isArray(raw.questions) ? raw.questions : []).slice(0, 30).entries()) {
         const parts = [];
         for (const p of (Array.isArray(q.parts) ? q.parts : []).slice(0, 60)) {
-            let type = ['mc', 'tf', 'open', 'code'].includes(p.type) ? p.type : 'open';
-            const options = type === 'mc' ? (Array.isArray(p.options) ? p.options : []).slice(0, 8).map(o => text(o, 1000)).filter(Boolean) : [];
-            let correct = String(p.correct == null ? '' : p.correct).trim().toLowerCase();
-            if (type === 'mc' && !(options.length >= 2 && /^\d+$/.test(correct) && Number(correct) < options.length)) type = 'open';
-            if (type === 'tf') correct = /^(true|נכון|t|1|yes)$/i.test(correct) ? 'true' : /^(false|לא נכון|f|0|no)$/i.test(correct) ? 'false' : '';
-            if (type === 'tf' && !correct) type = 'open';
-            const isCode = type === 'code';
-            const answer = text(p.answer, 12000, isCode);
-            if (!String(p.text || '').trim() || !answer) continue;
-            let rubric = (Array.isArray(p.rubric) ? p.rubric : []).slice(0, 12)
-                .map(r => ({ criterion: text(r.criterion, 400), points: num(r.points) })).filter(r => r.criterion);
-            const sum = rubric.reduce((n, r) => n + r.points, 0);
-            // No points on the part: the rubric's total is what it is worth.
-            const points = Math.min(100, num(p.points) || Math.round(sum * 100) / 100);
-            if (!rubric.length || !sum) rubric = [{ criterion: 'A complete and correct answer', points }];
-            else if (points && Math.abs(sum - points) > 0.01) rubric = rubric.map(r => ({ ...r, points: Math.round((r.points * points / sum) * 100) / 100 }));
-            parts.push({
-                label: String(p.label || '').slice(0, 20), type, text: text(p.text, 6000, isCode), options,
-                correct: type === 'mc' || type === 'tf' ? correct : '', reasonRequired: type === 'tf' && p.reasonRequired !== false,
-                points, answer, rubric, topic: String(p.topic || '').slice(0, 120), check: ''
-            });
+            const part = normaliseExamPart(p);
+            if (part) parts.push(part);
         }
         if (!parts.length) continue;
         const partSum = Math.round(parts.reduce((n, p) => n + p.points, 0) * 100) / 100;
@@ -2869,6 +2850,39 @@ function normaliseExam(raw, blueprint) {
         dontKnowShare: blueprint && Number(blueprint.dontKnowShare) > 0 ? Number(blueprint.dontKnowShare) : 0,
         questions
     });
+}
+
+// One part of the AI's exam, cleaned: valid choices, a marking scheme that
+// adds up to the points. A multiple choice or true/false without a valid
+// answer becomes an open question for now, marked `replace` (with the type
+// it had) so the build can write a proper one in its place. Null when there
+// is no text or no solution.
+function normaliseExamPart(p) {
+    const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : d; };
+    const text = (v, max, isCode = false) => cleanExamText(String(v == null ? '' : v), isCode).slice(0, max);
+    let type = ['mc', 'tf', 'open', 'code'].includes(p.type) ? p.type : 'open';
+    const asked = type;
+    const options = type === 'mc' ? (Array.isArray(p.options) ? p.options : []).slice(0, 8).map(o => text(o, 1000)).filter(Boolean) : [];
+    let correct = String(p.correct == null ? '' : p.correct).trim().toLowerCase();
+    if (type === 'mc' && !(options.length >= 2 && /^\d+$/.test(correct) && Number(correct) < options.length)) type = 'open';
+    if (type === 'tf') correct = /^(true|נכון|t|1|yes)$/i.test(correct) ? 'true' : /^(false|לא נכון|f|0|no)$/i.test(correct) ? 'false' : '';
+    if (type === 'tf' && !correct) type = 'open';
+    const isCode = type === 'code';
+    const answer = text(p.answer, 12000, isCode);
+    if (!String(p.text || '').trim() || !answer) return null;
+    let rubric = (Array.isArray(p.rubric) ? p.rubric : []).slice(0, 12)
+        .map(r => ({ criterion: text(r.criterion, 400), points: num(r.points) })).filter(r => r.criterion);
+    const sum = rubric.reduce((n, r) => n + r.points, 0);
+    // No points on the part: the rubric's total is what it is worth.
+    const points = Math.min(100, num(p.points) || Math.round(sum * 100) / 100);
+    if (!rubric.length || !sum) rubric = [{ criterion: 'A complete and correct answer', points }];
+    else if (points && Math.abs(sum - points) > 0.01) rubric = rubric.map(r => ({ ...r, points: Math.round((r.points * points / sum) * 100) / 100 }));
+    return {
+        label: String(p.label || '').slice(0, 20), type, text: text(p.text, 6000, isCode), options: type === 'mc' ? options : [],
+        correct: type === 'mc' || type === 'tf' ? correct : '', reasonRequired: type === 'tf' && p.reasonRequired !== false,
+        points, answer, rubric, topic: String(p.topic || '').slice(0, 120), check: '',
+        ...(type !== asked ? { replace: asked } : {})
+    };
 }
 
 // The exam's points: the regular questions' total, the bonus on top, and a
@@ -2957,12 +2971,12 @@ function verifyBlueprintRules(blueprint, past) {
     // the number on its own: not inside 1100 or 2.100 - a full stop after it is fine
     const numRe = (n) => new RegExp(`(?<!\\d|\\d\\.)${String(n).replace('.', '\\.')}(?!\\d|\\.\\d)`, 'g');
     out.maxGrade = Number.isFinite(mg) && mg > 0 && regular > mg && mg >= regular * 0.75
-        && near(src, numRe(mg), [/ציון|grade|score/i, /מקסימ|מרבי|לכל היותר|לא יעלה|maximum|\bmax\b|at most|capped|exceed/i]) ? mg : null;
+        && near(src, numRe(mg), [/ציון|ןויצ|grade|score/i, /מקסימ|מיסקמ|מרבי|יברמ|לכל היותר|רתויה לכל|לא יעלה|הלעי אל|maximum|\bmax\b|at most|capped|exceed/i]) ? mg : null;
     out.regularPoints = regular;   // what the cap is for (a written exam of other points has none)
     const dk = Number(out.dontKnowShare);
     const pct = Math.round(dk * 100);
     out.dontKnowShare = Number.isFinite(dk) && dk > 0 && dk <= 0.5
-        && near(src, /לא\s*יודע|don['’]?t\s+know|do\s+not\s+know/gi, [pct === 25 ? new RegExp(`(^|[^\\d])25(?!\\d)|רבע|quarter`, 'i') : new RegExp(`(^|[^\\d])${pct}(?!\\d)`)]) ? pct / 100 : null;
+        && near(src, /לא\s*יודע|עדוי\s*אל|don['’]?t\s+know|do\s+not\s+know/gi, [pct === 25 ? new RegExp(`(^|[^\\d])25(?!\\d)|רבע|quarter`, 'i') : new RegExp(`(^|[^\\d])${pct}(?!\\d)`)]) ? pct / 100 : null;
     return out;
 }
 
@@ -3009,7 +3023,7 @@ async function checkExam(exam, { keepParts = false } = {}) {
             if (v.ok === true) { p.check = 'checked'; stats.checked += 1; continue; }
             if (/unsolvable/i.test(String(v.problem || ''))) {
                 // A saved exam keeps its parts (a sitting may point at them).
-                if (keepParts) { p.check = 'doubtful'; stats.doubtful += 1; } else drop.add(`${v.q}:${v.p}`);
+                if (keepParts) { p.check = 'doubtful'; p.problem = String(v.problem).slice(0, 400); stats.doubtful += 1; } else drop.add(`${v.q}:${v.p}`);
                 continue;
             }
             const fixed = cleanExamText(String(v.answer || '').trim(), p.type === 'code');
@@ -3030,15 +3044,7 @@ async function checkExam(exam, { keepParts = false } = {}) {
         }
         if (drop.size) {
             stats.dropped = drop.size;
-            exam.questions.forEach((q, qi) => { q.parts = q.parts.filter((p, pi) => !drop.has(`${qi}:${pi}`)); });
-            exam.questions = exam.questions.filter(q => q.parts.length);
-            exam.questions.forEach(q => {
-                const s = q.parts.reduce((n, p) => n + p.points, 0);
-                q.choosePartsCount = Math.min(q.choosePartsCount, Math.max(0, q.parts.length - 1));
-                q.points = q.choosePartsCount ? Math.round((s / q.parts.length) * q.choosePartsCount * 100) / 100 : Math.round(s * 100) / 100;
-            });
-            if (exam.questions.length) examTotals(exam);
-            if (!exam.questions.length) throw new Error('The AI\'s exam didn\'t pass its own check. Try again.');
+            dropExamParts(exam, drop);
         }
     } catch (err) {
         if (/didn't pass/i.test(err.message)) throw err;
@@ -3046,6 +3052,92 @@ async function checkExam(exam, { keepParts = false } = {}) {
         stats.failed = true;
         stats.error = String(err.message || err).slice(0, 300);
     }
+    return stats;
+}
+
+// Parts taken out of an exam (keys "q:p"): each question's points and
+// "answer N of M" follow; throws when nothing is left.
+function dropExamParts(exam, keys) {
+    exam.questions.forEach((q, qi) => { q.parts = q.parts.filter((p, pi) => !keys.has(`${qi}:${pi}`)); });
+    exam.questions = exam.questions.filter(q => q.parts.length);
+    exam.questions.forEach(q => {
+        const s = q.parts.reduce((n, p) => n + p.points, 0);
+        q.choosePartsCount = Math.min(q.choosePartsCount, Math.max(0, q.parts.length - 1));
+        q.points = q.choosePartsCount ? Math.round((s / q.parts.length) * q.choosePartsCount * 100) / 100 : Math.round(s * 100) / 100;
+    });
+    if (!exam.questions.length) throw new Error('The AI\'s exam didn\'t pass its own check. Try again.');
+    examTotals(exam);
+}
+
+function buildExamReplacePrompt(course, exam, bad, material) {
+    const tag = (s) => String(s || '').replace(/</g, '＜').replace(/>/g, '＞');
+    return `Some parts of a practice exam for the university course "${course}" turned out wrong, ambiguous or unsolvable. Write a NEW part in place of each one: the same type, the same points, the same topic, as hard as the one it replaces, and fitting its question (the shared text and the other parts).
+
+${bad.map(({ qi, pi }) => {
+        const q = exam.questions[qi];
+        const p = q.parts[pi];
+        return `<replace q="${qi}" p="${pi}" type="${p.replace || p.type}" points="${p.points}" topic="${tag(p.topic)}">
+${q.stem ? `<stem>\n${tag(q.stem)}\n</stem>\n` : ''}<other_parts>
+${q.parts.filter((x, i) => i !== pi).map(x => `- ${tag(x.text).slice(0, 400)}`).join('\n') || '(none)'}
+</other_parts>
+<broken>
+${tag(p.text)}
+</broken>${p.problem ? `\n<problem>${tag(p.problem)}</problem>` : ''}
+</replace>`;
+    }).join('\n\n')}
+${material ? `\nCOURSE MATERIAL (for the topics; formulas may be damaged):\n${String(material).slice(0, 30000)}\n` : ''}
+Rules:
+- The language of the exam. ${MATH_AS_TEXT}
+${EXAM_PART_RULES}
+- SOLVE EVERY NEW PART YOURSELF AND CHECK IT: substitute back, compute a second way, test the counterexample. Nothing ambiguous.
+
+Return ONLY JSON: {"parts": [{"q": the q above, "p": the p above, "type": "mc|tf|open|code", "text": "...", "options": [], "correct": "", "reasonRequired": false, "answer": "...", "rubric": [{"criterion": "...", "points": number}], "topic": "..."}]}`;
+}
+
+// 3b. Instead of deleting a part the check calls unsolvable (or keeping a
+// multiple choice without a valid answer as an open question), a new part of
+// the same type, points and topic - checked like the rest. Only when that
+// fails too: the old behaviour (the unsolvable part is dropped, the other
+// stays open). Changes `exam` in place.
+async function replaceBrokenParts(course, exam, material) {
+    const bad = [];
+    exam.questions.forEach((q, qi) => q.parts.forEach((p, pi) => { if (p.check === 'doubtful' || p.replace) bad.push({ qi, pi }); }));
+    const stats = { broken: bad.length, replaced: 0, dropped: 0 };
+    if (!bad.length) return stats;
+    let fresh = [];
+    try {
+        const raw = await aiProvider.generateText(buildExamReplacePrompt(course, exam, bad, material), {
+            forceJson: true, maxTokens: 16000, thinkingLevel: 'high', timeoutMs: 300000, noFallback: true, allowance: 'light'
+        });
+        fresh = JSON.parse(extractJsonFromText(String(raw))).parts || [];
+    } catch (err) {
+        console.warn('⚠️ full exam: replacing broken parts failed:', err.message);
+    }
+    const candidates = [];
+    for (const b of bad) {
+        const old = exam.questions[b.qi].parts[b.pi];
+        const f = (Array.isArray(fresh) ? fresh : []).find(x => x && Number(x.q) === b.qi && Number(x.p) === b.pi);
+        const part = f ? normaliseExamPart({ ...f, label: old.label, points: old.points, type: old.replace || old.type }) : null;
+        if (part && !part.replace && part.type === (old.replace || old.type)) candidates.push({ b, part });
+    }
+    if (candidates.length) {
+        // The new parts get a second, independent solution too.
+        const mini = { questions: candidates.map(({ b, part }) => ({ stem: exam.questions[b.qi].stem, parts: [part] })) };
+        await checkExam(mini, { keepParts: true });
+        candidates.forEach(({ b }, i) => {
+            const part = mini.questions[i].parts[0];
+            if (part.check === 'doubtful') return;
+            exam.questions[b.qi].parts[b.pi] = part;
+            stats.replaced += 1;
+        });
+    }
+    const drop = new Set();
+    exam.questions.forEach((q, qi) => q.parts.forEach((p, pi) => {
+        if (p.check === 'doubtful') drop.add(`${qi}:${pi}`);
+        delete p.replace;
+        delete p.problem;
+    }));
+    if (drop.size) { stats.dropped = drop.size; dropExamParts(exam, drop); }
     return stats;
 }
 
@@ -3078,9 +3170,14 @@ async function buildFullExam({ course, pastIds, durationMin }, stage) {
     const usable = blueprint && blueprint.questions ? blueprint : null;
     const exam = await writeExam(course, usable, materialText);
 
-    // 3. A second, independent solution of every part.
+    // 3. A second, independent solution of every part; what it finds broken
+    // is written again (and checked again) rather than deleted.
     stage('checking');
-    await checkExam(exam);
+    await checkExam(exam, { keepParts: true });
+    if (exam.questions.some(q => q.parts.some(p => p.check === 'doubtful' || p.replace))) {
+        stage('replacing');
+        await replaceBrokenParts(course, exam, materialText);
+    }
 
     stage('saving');
     const saved = await api.saveFullExam({
@@ -3203,7 +3300,7 @@ async function solveExamParts(course, question) {
 
 // The stages above, for the owner's exam check on the server (exported by
 // tools/port-main.py; unused in the desktop app).
-const EXAM_STAGES = { examBlueprint, verifyBlueprintRules, writeExam, checkExam, autoMarkPart, gradeExamQuestion, solveExamParts, normaliseExam, answerIsBlank };
+const EXAM_STAGES = { examBlueprint, verifyBlueprintRules, writeExam, checkExam, replaceBrokenParts, autoMarkPart, gradeExamQuestion, solveExamParts, normaliseExam, answerIsBlank };
 
 // Graded sittings whose save failed: a retry only saves again, it doesn't
 // pay for the AI grading twice.

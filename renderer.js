@@ -7366,6 +7366,7 @@ const FULL_STAGE_TEXT = {
     blueprint: 'Reading the past exams - how they are built and what repeats…',
     writing: 'Writing the questions and their full solutions…',
     checking: 'Solving every question a second time to check the solutions…',
+    replacing: 'Writing a new part in place of one that turned out wrong…',
     saving: 'Saving the exam…',
     grading: 'Grading your answers…'
 };
@@ -7626,15 +7627,18 @@ async function openFullIntro(examId) {
         ? t('Built on the structure of {n} past exams of the course.').replace('{n}', (exam.pastExamFiles || []).length)
         : t('Built from the course material - no past exams were given, so the structure is a general one.'));
     if (exam.materials) fact(`${t('Allowed material:')} ${exam.materials}`);
-    const checked = exam.questions.reduce((n, q) => n + q.parts.filter(p => p.check).length, 0);
+    const checked = exam.questions.reduce((n, q) => n + q.parts.filter(p => p.check === 'checked' || p.check === 'corrected').length, 0);
+    const doubtful = exam.questions.reduce((n, q) => n + q.parts.filter(p => p.check === 'doubtful').length, 0);
     if (checked) fact(t('{n} of {m} solutions were checked by a second, independent solution.').replace('{n}', checked).replace('{m}', partsCount));
+    if (doubtful) fact(t(doubtful === 1 ? 'The second check thinks 1 part is wrong or unclear - it says so in the solutions.' : 'The second check thinks {n} parts are wrong or unclear - it says so in the solutions.').replace('{n}', doubtful));
     // Solutions the second check never reached - said before the exam, with a way to check them.
-    const unchecked = partsCount - checked;
+    const unchecked = partsCount - checked - doubtful;
     document.getElementById('full-unchecked').hidden = !unchecked;
     document.getElementById('full-unchecked-text').textContent = t(unchecked === 1 ? '1 solution wasn\'t checked a second time - it may have a mistake.' : '{n} of {m} solutions weren\'t checked a second time - they may have mistakes.').replace('{n}', unchecked).replace('{m}', partsCount);
     const recheck = document.getElementById('full-recheck-btn');
-    recheck.disabled = false;
-    recheck.textContent = t('Check them now');
+    // A check of this exam may still be running (Back, then opened again).
+    recheck.disabled = fullChecksRunning.has(String(exam.id));
+    recheck.textContent = recheck.disabled ? t('Checking…') : t('Check them now');
     const instr = document.getElementById('full-intro-instructions');
     instr.textContent = exam.instructions || '';
     instr.setAttribute('translate', 'no');
@@ -7683,17 +7687,24 @@ async function openFullIntro(examId) {
 
 document.getElementById('full-intro-back-btn').onclick = () => { showFullPart('full-setup'); loadFullSetup(); };
 
+// Checks still running, by exam id / sitting id - so reopening a screen
+// doesn't start a second one for the same parts.
+const fullChecksRunning = new Set();
+
 // "Check them now": the second check, on the saved exam (nothing is deleted).
 document.getElementById('full-recheck-btn').onclick = async () => {
     const exam = fullState.exam;
     const btn = document.getElementById('full-recheck-btn');
-    if (!exam || btn.disabled) return;
+    if (!exam || btn.disabled || fullChecksRunning.has(String(exam.id))) return;
+    const examId = String(exam.id);
+    fullChecksRunning.add(examId);
     btn.disabled = true;
     btn.textContent = t('Checking…');
-    const start = await ipcRenderer.invoke('full-exam-recheck', exam.id).catch(err => ({ error: err.message }));
+    const start = await ipcRenderer.invoke('full-exam-recheck', examId).catch(err => ({ error: err.message }));
     const out = start && start.jobId ? await waitForFullJob(start.jobId, () => {}) : { error: (start && start.error) || t('Please try again.') };
-    // Still on this exam's intro (not started, not another exam)?
-    const here = fullState.exam === exam && !fullState.running && !fullState.grading && !document.getElementById('full-intro').hidden;
+    fullChecksRunning.delete(examId);
+    // Still on this exam's intro (opened again is fine; not started, not another exam)?
+    const here = !!fullState.exam && String(fullState.exam.id) === examId && !fullState.running && !fullState.grading && !document.getElementById('full-intro').hidden;
     if (out.error) {
         toast.error(out.error, t('The solutions weren\'t checked'));
         if (here) { btn.disabled = false; btn.textContent = t('Check them now'); }
@@ -7701,7 +7712,7 @@ document.getElementById('full-recheck-btn').onclick = async () => {
     }
     const r = out.result || {};
     toast.success(r.left ? t('{n} more solutions checked; {m} still couldn\'t be.').replace('{n}', r.changed).replace('{m}', r.left) : t('Every solution is checked now.'));
-    if (here) openFullIntro(exam.id);
+    if (here) openFullIntro(examId);
 };
 
 document.getElementById('full-start-btn').onclick = () => {
@@ -8040,6 +8051,7 @@ async function showLastFullResult(examId) {
 }
 
 function renderFullResult(exam, run) {
+    fullState.resultRunId = String(run.id || run._id || '');
     document.getElementById('full-score').textContent = String(run.percent);
     const usedMin = Math.round((run.usedSec || 0) / 60);
     const unchecked = (run.answers || []).filter(a => a.status === 'unchecked').length;
@@ -8049,21 +8061,26 @@ function renderFullResult(exam, run) {
     document.getElementById('full-result-label').textContent = unchecked ? t('Partial grade - only what was checked') : t('Your grade');
     // "Check them again": the parts the AI couldn't grade, graded now.
     const regrade = document.getElementById('full-regrade-btn');
+    const runId = String(run.id || run._id);
     regrade.hidden = !unchecked;
-    regrade.disabled = false;
-    regrade.textContent = t('Check them again');
+    regrade.disabled = fullChecksRunning.has(runId);
+    regrade.textContent = regrade.disabled ? t('Checking…') : t('Check them again');
     regrade.onclick = async () => {
+        if (regrade.disabled || fullChecksRunning.has(runId)) return;
+        fullChecksRunning.add(runId);
         regrade.disabled = true;
         regrade.textContent = t('Checking…');
-        const start = await ipcRenderer.invoke('full-exam-regrade', { examId: exam.id, runId: String(run.id || run._id) }).catch(err => ({ error: err.message }));
+        const start = await ipcRenderer.invoke('full-exam-regrade', { examId: exam.id, runId }).catch(err => ({ error: err.message }));
         const out = start && start.jobId ? await waitForFullJob(start.jobId, () => {}) : { error: (start && start.error) || t('Please try again.') };
-        const here = fullState.exam === exam && !document.getElementById('full-result').hidden;
+        fullChecksRunning.delete(runId);
+        // Still on this sitting's result (opened again is fine)?
+        const here = !!fullState.exam && String(fullState.exam.id) === String(exam.id) && !document.getElementById('full-result').hidden && fullState.resultRunId === runId;
         if (out.error) {
             toast.error(out.error, t('Not checked'));
             if (here) { regrade.disabled = false; regrade.textContent = t('Check them again'); }
             return;
         }
-        if (here) renderFullResult(exam, out.result.run);
+        if (here) renderFullResult(fullState.exam, out.result.run);
         if (out.result.left) toast.info(t('{n} parts still couldn\'t be checked. Try again in a few minutes.').replace('{n}', out.result.left));
     };
     const capped = outOf > 0 && run.score > outOf;
