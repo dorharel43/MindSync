@@ -439,6 +439,7 @@
                         <div class="home-focus-actions">
                             <button class="home-hero__link" id="generate-study-btn"><span data-icon="file" data-icon-size="15"></span> Make questions from a file</button>
                             <button class="home-hero__link" id="manage-study-btn"><span data-icon="list" data-icon-size="15"></span> My questions</button>
+                            <button class="home-hero__link" id="full-exam-link"><span data-icon="clock" data-icon-size="15"></span> Full exam</button>
                         </div>
                     </div>
                 </section>
@@ -753,6 +754,101 @@
                         <div id="exam-answers"></div>
                     </div>
                     <div class="exam-result__actions"><button class="btn-secondary" id="exam-done-btn">Back to Study</button></div>
+                </div>
+            </div>
+
+            <!-- Full exam (1/10): a whole exam paper in the course's real structure -->
+            <div id="study-full" hidden>
+                <div class="card full-setup" id="full-setup">
+                    <h3 class="exam-setup__title">Full exam</h3>
+                    <p class="settings-hint">An exam paper like the real one: questions with parts, points and one clock. The AI writes it from your course material, with a full solution for every part, checks each solution a second time, and grades your answers with partial credit - the way a lecturer would.</p>
+                    <div class="exam-setup__row">
+                        <label class="form-label" for="full-course">Course</label>
+                        <select id="full-course" class="input-field full-course" dir="auto"></select>
+                    </div>
+                    <div class="full-past">
+                        <div class="full-past__head">
+                            <span class="form-label">Past exams of this course</span>
+                            <span class="ms-badge ms-badge--accent">Recommended</span>
+                        </div>
+                        <p class="settings-hint">With past exams, the new exam follows their structure - the number of questions, parts, points and time - and you see what repeats every year. Without them it is built from the course material only.</p>
+                        <div id="full-past-list" class="full-past__list"></div>
+                        <button class="btn-secondary btn-sm" id="full-upload-btn" type="button">Upload past exams</button>
+                    </div>
+                    <div id="full-existing" class="full-existing" hidden>
+                        <div class="form-label">Exams you already have for this course</div>
+                        <div id="full-existing-list"></div>
+                    </div>
+                    <div class="exam-setup__actions">
+                        <button class="btn-secondary" id="full-cancel-btn">Cancel</button>
+                        <button class="btn-primary" id="full-build-btn">Write the exam</button>
+                    </div>
+                </div>
+
+                <div class="card exam-checking" id="full-building" hidden>
+                    <div class="auth-spinner"></div>
+                    <p class="exam-checking__text" id="full-building-text">Reading the past exams…</p>
+                    <p class="settings-hint">This takes 1-3 minutes. You can leave this screen - the exam will wait in this course's list.</p>
+                </div>
+
+                <div class="card full-intro" id="full-intro" hidden>
+                    <h3 class="exam-setup__title" id="full-intro-title" dir="auto"></h3>
+                    <div class="exam-setup__course" id="full-intro-course" dir="auto"></div>
+                    <ul class="full-intro__facts" id="full-intro-facts"></ul>
+                    <p class="settings-hint" id="full-intro-instructions" dir="auto" hidden></p>
+                    <div class="full-recurring" id="full-recurring" hidden>
+                        <div class="form-label">What repeats in the past exams</div>
+                        <ul id="full-recurring-list"></ul>
+                    </div>
+                    <div class="exam-setup__row">
+                        <span class="form-label">Time</span>
+                        <div class="filter-group" id="full-time"></div>
+                    </div>
+                    <label class="exam-minutes" id="full-minutes-wrap" hidden>
+                        <input id="full-minutes-input" class="input-field" type="number" min="5" max="600" step="5" inputmode="numeric" aria-label="Minutes for the whole exam">
+                        <span>minutes for the whole exam</span>
+                    </label>
+                    <div class="exam-setup__actions">
+                        <button class="btn-secondary" id="full-intro-back-btn">Back</button>
+                        <button class="btn-primary" id="full-start-btn">Start the exam</button>
+                    </div>
+                </div>
+
+                <div id="full-run" class="full-run" hidden>
+                    <div class="full-run__bar">
+                        <span class="full-run__title" id="full-run-title" dir="auto"></span>
+                        <span class="exam-timer" id="full-timer" aria-live="off"></span>
+                        <button class="btn-primary btn-sm" id="full-submit-btn">Submit the exam</button>
+                    </div>
+                    <div class="full-run__body">
+                        <nav class="full-nav" id="full-nav" aria-label="Questions"></nav>
+                        <div class="card full-paper" id="full-paper"></div>
+                    </div>
+                </div>
+
+                <div class="card exam-checking" id="full-grading" hidden>
+                    <div class="auth-spinner"></div>
+                    <p class="exam-checking__text" id="full-grading-text">Grading your answers…</p>
+                </div>
+
+                <div id="full-result" hidden>
+                    <section class="home-hero exam-hero">
+                        <div class="home-hero__practice">
+                            <div class="home-hero__label" id="full-result-label">Your grade</div>
+                            <div class="home-hero__title exam-score"><span class="ms-tabular" id="full-score">0</span></div>
+                            <div class="home-hero__text" id="full-score-text"></div>
+                        </div>
+                        <div class="home-hero__next">
+                            <div class="home-hero__label">Topics to work on</div>
+                            <ul class="full-weak" id="full-weak"></ul>
+                        </div>
+                    </section>
+                    <div id="full-result-questions"></div>
+                    <div class="exam-result__actions">
+                        <button class="btn-secondary" id="full-done-btn">Back to Study</button>
+                        <button class="btn-secondary" id="full-again-btn">Take this exam again</button>
+                        <button class="btn-primary" id="full-new-btn">Write a new exam</button>
+                    </div>
                 </div>
             </div>
         </div>
