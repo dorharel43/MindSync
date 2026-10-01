@@ -2630,7 +2630,7 @@ Return ONLY JSON: {"parts": [{"index": part index, "answer": "...", "rubric": [{
 function buildExamCheckPrompt(exam) {
     const tag = (s) => String(s || '').replace(/</g, '＜').replace(/>/g, '＞');
     const body = exam.questions.map((q, qi) => `<question index="${qi}">${q.stem ? `\n<stem>\n${tag(q.stem)}\n</stem>` : ''}
-${q.parts.map((p, pi) => `<part index="${pi}" type="${p.type}">
+${q.parts.map((p, pi) => `<part index="${pi}" type="${p.type}" points="${p.points}">
 <text>
 ${tag(p.text)}${p.type === 'mc' ? `\n${p.options.map((o, i) => `(${i}) ${tag(o)}`).join('\n')}` : ''}
 </text>
@@ -2643,7 +2643,7 @@ ${tag(p.answer)}
 
 ${body}
 
-Return ONLY JSON: {"parts": [{"q": question index, "p": part index, "ok": true or false, "answer": "only when ok is false: the correct full solution", "correct": "only for mc/tf when the key's choice is wrong: the right index or true/false", "problem": "only when ok is false: one sentence on what was wrong; 'unsolvable' when the question itself is wrong or ambiguous"}]}
+Return ONLY JSON: {"parts": [{"q": question index, "p": part index, "ok": true or false, "answer": "only when ok is false: the correct full solution", "correct": "only for mc/tf when the key's choice is wrong: the right index or true/false", "rubric": "only when ok is false: 2-5 criteria for YOUR solution, [{\"criterion\": \"...\", \"points\": number}], adding up to the part's points", "problem": "only when ok is false: one sentence on what was wrong; 'unsolvable' when the question itself is wrong or ambiguous"}]}
 One entry per part. "ok": true when the key's result and reasoning are right (a different correct method is fine).`;
 }
 
@@ -2807,7 +2807,16 @@ async function checkExam(exam) {
             if (v.ok === true) { p.check = 'checked'; stats.checked += 1; continue; }
             if (/unsolvable/i.test(String(v.problem || ''))) { drop.add(`${v.q}:${v.p}`); continue; }
             const fixed = cleanExamText(String(v.answer || '').trim(), p.type === 'code');
-            if (fixed) { p.answer = fixed.slice(0, 12000); p.check = 'corrected'; }
+            if (fixed) {
+                p.answer = fixed.slice(0, 12000);
+                p.check = 'corrected';
+                // The marking scheme was written for the old (wrong) solution:
+                // take the checker's, or a plain one - never keep the old one.
+                const rubric = (Array.isArray(v.rubric) ? v.rubric : []).slice(0, 12)
+                    .map(r => ({ criterion: cleanExamText(String(r && r.criterion || '')).slice(0, 400), points: Number(r && r.points) || 0 })).filter(r => r.criterion && r.points > 0);
+                const sum = rubric.reduce((n, r) => n + r.points, 0);
+                p.rubric = sum ? rubric.map(r => ({ ...r, points: Math.round((r.points * p.points / sum) * 100) / 100 })) : [{ criterion: 'A complete and correct answer', points: p.points }];
+            }
             const c = String(v.correct == null ? '' : v.correct).trim().toLowerCase();
             if (p.type === 'mc' && /^\d+$/.test(c) && Number(c) < p.options.length) { p.correct = c; p.check = 'corrected'; }
             if (p.type === 'tf' && (c === 'true' || c === 'false')) { p.correct = c; p.check = 'corrected'; }
