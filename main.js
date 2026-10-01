@@ -2467,13 +2467,22 @@ A document can contain more than one kind. Handle each part by its own rules.
 
 ---
 FOR (A) TEACHING MATERIAL -> mode "recall"
-Mix two kinds - an exam asks both, and only-definitions trains memorising:
-- About a third: KNOW IT - a definition, theorem, condition, formula or method,
-  answered as the material states it.
-- The rest: UNDERSTAND IT - why a condition is needed, what changes if it is
-  missing, how two close concepts differ, which method fits a short concrete
-  case and why, what a result means. The answer explains, in 1-4 sentences,
-  using only what the material says or directly implies.
+Two kinds - an exam asks both, and only-definitions trains memorising:
+- KNOW IT ("kind": "know") - a definition, theorem, condition, formula or
+  method, answered as the material states it.
+- UNDERSTAND IT ("kind": "understand") - the answer explains, in 1-4
+  sentences, using only what the material says or directly implies. Forms:
+  * what happens if something changes:   "מה יקרה ל-β אם נקטין את α ונשאיר את n קבוע?"
+  * a common mistake to judge, with why: "האם ערך p הוא ההסתברות ש-H0 נכונה? הסבר."
+  * which of two close methods fits a short concrete case, and why:
+                                         "מתי משתמשים במבחן t ולא במבחן Z?"
+  * why a condition is needed / what goes wrong without it
+  * how two close concepts differ, or what a result means
+WORK CONCEPT BY CONCEPT: for each concept write the UNDERSTAND item first. Add
+a KNOW item only when the exact definition or formula is itself what an exam
+asks. AT LEAST HALF of the teaching-material items must be "understand" -
+count them before you answer. When you need more items, add more UNDERSTAND
+items (another angle on the same concept), never more definitions.
 Set "solutionSource": "document".
 "evidence": the few words from the material that the answer rests on (a short
 exact quote). If you can't point to one, the item is not grounded - leave it out.
@@ -2527,13 +2536,19 @@ RULES FOR EVERYTHING:
   GOOD: "λI",          "A · v",       "σ^2"
   Use x_1 and x^2 for sub/superscripts.
 - Cover the WHOLE document, start to finish - the last pages as much as the first.
-- ONE idea per item. Never "define X, Y and Z" or "what is A and how does it
-  relate to B" in one question - split it: each item must be answerable in
+- ONE idea and ONE question per item. Never "define X, Y and Z" or "what is A
+  and how does it relate to B" - split it: each item must be answerable in
   1-3 sentences, and a half-known bundle can't be marked fairly.
+  No second question joined by "and" ("...ומהי...", "...וכיצד...", "...and how..."):
+  a related detail (its symbol, its probability, its formula) goes in the
+  ANSWER, not in a second question.
   BAD (one item):  "הגדר טעות מסוג ראשון, טעות מסוג שני ועוצמת מבחן."
-  GOOD (three items): "מהי טעות מסוג ראשון?" / "מהי טעות מסוג שני?" / "מהי עוצמת מבחן ואיך היא קשורה ל-β?"
+  GOOD (three items): "מהי טעות מסוג ראשון?" / "מהי טעות מסוג שני?" / "מהי עוצמת מבחן?"
+  BAD:  "מהי טעות מסוג ראשון ומהי הסתברותה?"
+  GOOD: "מהי טעות מסוג ראשון?" (the answer mentions α)
   BAD:  "What is a p-value, and what is the decision rule?"
   GOOD: "What is a p-value?" / "When do you reject H0 using the p-value?"
+  A practice exercise keeps its own parts - that is one problem, not a bundle.
 - First list to yourself every distinct definition, condition, relation,
   method, formula and worked example in the material; then write at least one
   item for EACH. As a guide, a page of dense lecture notes gives 6-12 items; a
@@ -2547,10 +2562,10 @@ RULES FOR EVERYTHING:
 Also return "course": the name of the course this material belongs to, as the material itself shows it (title slide, header, footer) - without a course number. null if the material doesn't say.
 
 Return ONLY JSON:
-{"course": "...", "concepts": ["every distinct idea, rule, method or worked example in the material, in order - short names"], "items": [{"concept": "which of the concepts", "question": "...", "answer": "...", "mode": "recall|practice", "solutionSource": "document|ai", "skillTag": "short skill or topic name", "evidence": "short exact quote (teaching material)"}]}
+{"course": "...", "concepts": ["every distinct idea, rule, method or worked example in the material, in order - short names"], "items": [{"concept": "which of the concepts", "kind": "know|understand|practice", "question": "...", "answer": "...", "mode": "recall|practice", "solutionSource": "document|ai", "skillTag": "short skill or topic name", "evidence": "short exact quote (teaching material)"}]}
 
 Fill "concepts" FIRST - it is your checklist - then write "items" until EVERY concept has at least one item of its own. Fewer items than concepts means you stopped early.${minItems ? `
-This material is long enough for AT LEAST ${minItems} items (one idea each) - write that many or more, unless it truly has fewer ideas.` : ''}${existingNote(existing)}`;
+This material is long enough for AT LEAST ${minItems} items (one idea each) - write that many or more, unless it truly has fewer ideas. Reach it with UNDERSTAND items, not extra definitions.` : ''}${existingNote(existing)}`;
 }
 
 // The questions the student already has from this file (30/9): generating
