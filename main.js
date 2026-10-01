@@ -2042,7 +2042,7 @@ ipcMain.handle('generate-study-items', async (event, sourceText, options = {}) =
         // window holds far less.
         const maxChars = aiProvider.resolveProvider() === 'gemini' ? 120000 : 15000;
         const existing = await existingQuestionsFor(sourceFile);
-        const prompt = `${buildStudyPrompt(category, existing)}
+        const prompt = `${buildStudyPrompt(category, existing, minItemsFor({ chars: Math.min(text.length, maxChars) }))}
 
 THE MATERIAL (text extracted from the file - formulas, tables and right-to-left order may be damaged; skip anything you can't read with confidence rather than guessing):
 
@@ -2445,7 +2445,16 @@ function cleanMathNotation(text) {
 
 // The study-question prompt, shared by the PDF and image paths so the two
 // can't drift apart.
-function buildStudyPrompt(category, existing = []) {
+// How many items this much material should give at least (1/10): the live
+// quality check got 6 bundled questions from a lecture with ~12 ideas - a
+// number is followed where "one per idea" wasn't. ~1 per 120 characters of
+// dense text, or 2 per PDF page; 5 to 35.
+function minItemsFor({ chars = 0, pages = 0 } = {}) {
+    const n = pages ? pages * 2 : Math.round(chars / 120);
+    return Math.max(5, Math.min(35, n || 5));
+}
+
+function buildStudyPrompt(category, existing = [], minItems = 0) {
     return `You are looking at a student's course material${category ? ` for "${category}"` : ''}. Turn it into study items.
 
 FIRST, decide what kind of document this is:
@@ -2521,6 +2530,10 @@ RULES FOR EVERYTHING:
 - ONE idea per item. Never "define X, Y and Z" or "what is A and how does it
   relate to B" in one question - split it: each item must be answerable in
   1-3 sentences, and a half-known bundle can't be marked fairly.
+  BAD (one item):  "הגדר טעות מסוג ראשון, טעות מסוג שני ועוצמת מבחן."
+  GOOD (three items): "מהי טעות מסוג ראשון?" / "מהי טעות מסוג שני?" / "מהי עוצמת מבחן ואיך היא קשורה ל-β?"
+  BAD:  "What is a p-value, and what is the decision rule?"
+  GOOD: "What is a p-value?" / "When do you reject H0 using the p-value?"
 - First list to yourself every distinct definition, condition, relation,
   method, formula and worked example in the material; then write at least one
   item for EACH. As a guide, a page of dense lecture notes gives 6-12 items; a
@@ -2536,7 +2549,8 @@ Also return "course": the name of the course this material belongs to, as the ma
 Return ONLY JSON:
 {"course": "...", "concepts": ["every distinct idea, rule, method or worked example in the material, in order - short names"], "items": [{"concept": "which of the concepts", "question": "...", "answer": "...", "mode": "recall|practice", "solutionSource": "document|ai", "skillTag": "short skill or topic name", "evidence": "short exact quote (teaching material)"}]}
 
-Fill "concepts" FIRST - it is your checklist - then write "items" until EVERY concept has at least one item of its own. Fewer items than concepts means you stopped early.${existingNote(existing)}`;
+Fill "concepts" FIRST - it is your checklist - then write "items" until EVERY concept has at least one item of its own. Fewer items than concepts means you stopped early.${minItems ? `
+This material is long enough for AT LEAST ${minItems} items (one idea each) - write that many or more, unless it truly has fewer ideas.` : ''}${existingNote(existing)}`;
 }
 
 // The questions the student already has from this file (30/9): generating
@@ -2692,7 +2706,10 @@ ipcMain.handle('generate-study-items-pdf', async (event, sourcePath, options = {
         }
 
         const existing = await existingQuestionsFor(sourceFile);
-        const prompt = buildStudyPrompt(category, existing);
+        // Pages: counted in the file (newer PDFs can hide them in compressed
+        // streams - then a rough guess from the size).
+        const pages = (buffer.toString('latin1').match(/\/Type\s*\/Page(?!s)/g) || []).length || Math.round(buffer.length / 60000);
+        const prompt = buildStudyPrompt(category, existing, minItemsFor({ pages }));
         const responseText = await aiProvider.generateFromPdf(buffer, prompt, {
             // Reading a whole document and drafting 15+ questions is a
             // multi-step task, so it gets a real thinking allowance and a
