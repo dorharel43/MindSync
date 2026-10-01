@@ -861,6 +861,12 @@ ipcMain.handle('import-syllabus-items', async (event, items = [], options = {}) 
 // window (a course per row, one "until" for all) and import-syllabus-items.
 const TIMETABLE_TYPES = ['lecture', 'tutorial', 'lab', 'seminar', 'other'];
 
+async function countPdfPages(buffer) {
+    const pdfjs = require('pdfjs-dist/legacy/build/pdf.js');
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer), isEvalSupported: false, disableFontFace: true }).promise;
+    try { return doc.numPages; } finally { doc.destroy(); }
+}
+
 function buildTimetablePrompt(known) {
     return `This is a student's weekly university timetable - a screenshot or a photo, often from the college portal, usually in Hebrew. Days are columns or rows (Sunday to Saturday); each class is a block with its course, its kind and its hours.
 
@@ -895,9 +901,19 @@ ipcMain.handle('read-timetable', async (event, payload = {}) => {
             .map(k => String(k || '').trim().slice(0, 80)).filter(Boolean).slice(0, 60);
         const prompt = buildTimetablePrompt(known);
         const opts = { forceJson: true, maxTokens: 8192, thinkingLevel: 'medium', timeoutMs: 120000, withMeta: true, noFallback: true };
-        const r = isPdf
-            ? await aiProvider.generateFromPdf(Buffer.from(data, 'base64'), prompt, opts)
-            : await aiProvider.generateFromImages([{ mimeType, data }], prompt, opts);
+        let r;
+        if (isPdf) {
+            // A timetable is a page or two. Counted here: a small file can hold
+            // thousands of blank pages, and the AI reads (and bills) every one.
+            const buffer = Buffer.from(data, 'base64');
+            let pages = 0;
+            try { pages = await countPdfPages(buffer); } catch (e) { return { error: 'This PDF could not be read. Take a screenshot of the timetable instead.' }; }
+            if (pages > 3) return { error: `A timetable is one or two pages - this PDF has ${pages}. Take a screenshot of the timetable instead.` };
+            buffer.numPages = pages;   // the server's own page cap reads this
+            r = await aiProvider.generateFromPdf(buffer, prompt, opts);
+        } else {
+            r = await aiProvider.generateFromImages([{ mimeType, data }], prompt, opts);
+        }
         let parsed;
         try { parsed = JSON.parse(extractJsonFromText(r.text || '')); } catch (e) {
             console.error('❌ read-timetable: not JSON:', String(r.text).slice(0, 300));
@@ -907,8 +923,10 @@ ipcMain.handle('read-timetable', async (event, payload = {}) => {
 
         // Classes already in the Planner (weekly, same day, time and course)
         // start unticked, so importing the same timetable twice adds nothing.
+        // (Not ones that have ended: a year-long course comes back in semester B.)
+        const todayIso = toLocalIsoDate(new Date());
         const events = await api.getEvents().catch(() => []);
-        const weekly = (events || []).filter(e => !e.date);
+        const weekly = (events || []).filter(e => !e.date && (!e.until || e.until >= todayIso));
         const toMin = (hm) => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
         const items = [];
         const seen = new Set();
@@ -919,8 +937,13 @@ ipcMain.handle('read-timetable', async (event, payload = {}) => {
             let start = normalizeTimeText(c.start);
             let end = normalizeTimeText(c.end);
             if (!printed || !weekday || !start) continue;
-            // A right-to-left "10:00 - 08:30" read the wrong way round.
-            if (end && toMin(end) < toMin(start)) [start, end] = [end, start];
+            // A right-to-left "10:00 - 08:30" read the wrong way round. Only a
+            // plausible class is swapped - "12:00 - 01:30" or "08:00 - 2:00"
+            // (12-hour) isn't: under 6 hours long and starting from 06:00.
+            if (end && toMin(end) < toMin(start)) {
+                if (toMin(start) - toMin(end) < 360 && toMin(end) >= 360) [start, end] = [end, start];
+                else end = null;
+            }
             const len = end ? toMin(end) - toMin(start) : null;
             // The AI's match only counts when it is one of the student's courses, as written.
             const match = known.find(k => k === String(c.match || '').trim()) || '';
@@ -939,7 +962,7 @@ ipcMain.handle('read-timetable', async (event, payload = {}) => {
                 everyWeek: c.everyWeek !== false,
                 note: String(c.note || '').replace(/\s+/g, ' ').trim().slice(0, 200),
                 alreadyExists: weekly.some(e => e.day === weekday && e.time === start &&
-                    (normalizeForMatch(e.title).includes(nc) || normalizeForMatch(e.title).includes(np)))
+                    ((nc && normalizeForMatch(e.title).includes(nc)) || (np && normalizeForMatch(e.title).includes(np))))
             });
         }
         const order = (i) => `${WEEKDAYS_EN.indexOf(i.weekday)}|${i.time}`;
@@ -947,7 +970,6 @@ ipcMain.handle('read-timetable', async (event, payload = {}) => {
 
         // When the semester ends: the latest end date the student already
         // gave a weekly class that hasn't ended - offered, not imposed.
-        const todayIso = toLocalIsoDate(new Date());
         const untils = weekly.map(e => e.until).filter(u => /^\d{4}-\d{2}-\d{2}$/.test(u || '') && u >= todayIso).sort();
         console.log(`📅 read-timetable: ${items.length} class(es) from ${isPdf ? 'a PDF' : 'a picture'} (${r.model})`);
         return { items, suggestedUntil: untils.length ? untils[untils.length - 1] : null, model: r.model };

@@ -2840,7 +2840,16 @@ function closeSyllabusModal() {
     syllabusModal.style.display = 'none';
     syllabusState = null;
     setSyllabusMode('syllabus');
+    // A syllabus or timetable that finished reading while this window was in
+    // use opens now (the window is shared - it never replaces an open review).
+    // One at a time, in the order they finished.
+    const next = pendingSyllabusReviews.shift();
+    if (next) next();
 }
+const pendingSyllabusReviews = [];
+// Every close goes through closeSyllabusModal, so a review in hand (even one
+// still getting ready to show) means the window is taken.
+const syllabusWindowBusy = () => !!syllabusState;
 
 async function openSyllabusImport(file, btn) {
     const originalText = btn ? btn.textContent : '';
@@ -2864,6 +2873,15 @@ async function openSyllabusImport(file, btn) {
         return;
     }
 
+    if (syllabusWindowBusy()) {
+        pendingSyllabusReviews.push(() => showSyllabusReview(file, res));
+        toast.info(t('It opens when you close the window that is open now.'), t('The file is read'));
+        return;
+    }
+    await showSyllabusReview(file, res);
+}
+
+async function showSyllabusReview(file, res) {
     // Ticked by default: everything that can go in and doesn't need a look.
     const items = res.items.map(i => {
         const note = syllabusNote(i);
@@ -2887,7 +2905,23 @@ async function confirmSyllabusImport() {
     const picked = state.items.filter(i => i.checked);
     if (!picked.length) return;
     const timetable = state.mode === 'timetable';
-    if (timetable && !state.until && !state.noEnd) return;
+    if (timetable) {
+        // A date typed but not applied yet (no Enter, straight to Add): apply it first.
+        const typed = syllabusUntilText ? syllabusUntilText.value.trim() : '';
+        // Clicking Add also blurs the field, whose change event may have
+        // started reading it already - wait for that read too.
+        if ((typed && typed !== state.untilTextApplied && !state.noEnd) || state.untilPending) {
+            state.saving = true;
+            syllabusConfirm.disabled = true;
+            syllabusCancel.disabled = true;   // no closing half way: Add was clicked
+            if (typed && typed !== state.untilTextApplied && !state.noEnd) await applyTimetableUntil(typed);
+            while (state.untilPending) await state.untilPending;
+            state.saving = false;
+            syllabusCancel.disabled = false;
+            if (syllabusState !== state) return;
+        }
+        if (!state.until && !state.noEnd) { updateSyllabusConfirm(); return; }
+    }
     const course = timetable ? '' : syllabusCourse.value.trim();
     const syncToGoogle = !!(syllabusGoogle && syllabusGoogle.checked && picked.some(i => i.kind === 'exam' || i.kind === 'class'));
 
@@ -2910,11 +2944,11 @@ async function confirmSyllabusImport() {
     const events = (res && res.created && res.created.events) || [];
     const tasks = (res && res.created && res.created.tasks) || [];
     if (!events.length && !tasks.length) {
-        updateSyllabusConfirm();
+        if (syllabusState === state) updateSyllabusConfirm();
         toast.error((res && res.errors && res.errors[0]) || 'Please try again.', 'Nothing was added');
         return;
     }
-    closeSyllabusModal();
+    if (syllabusState === state) closeSyllabusModal();
 
     await loadAndRenderTasks();
     await loadAndRenderWeeklyBoard();
@@ -3063,12 +3097,21 @@ async function openTimetableImport(file, btn) {
         toast.info(t('No classes found in this picture. Try a clearer screenshot of the whole week.'), t('Nothing found'));
         return;
     }
+    if (syllabusWindowBusy()) {
+        pendingSyllabusReviews.push(() => showTimetableReview(file, res, known));
+        toast.info(t('It opens when you close the window that is open now.'), t('The timetable is read'));
+        return;
+    }
+    showTimetableReview(file, res, known);
+}
+
+function showTimetableReview(file, res, known) {
     setSyllabusMode('timetable');
     syllabusState = {
         mode: 'timetable', file: { name: file.name }, saving: false,
         // Ticked unless already in the Planner or not every week.
         items: res.items.map(i => ({ ...i, checked: !i.alreadyExists && i.everyWeek !== false })),
-        until: res.suggestedUntil || null, noEnd: false, untilError: null
+        until: res.suggestedUntil || null, noEnd: false, untilError: null, untilTextApplied: ''
     };
     document.getElementById('syllabus-file').textContent = file.name;
     const list = document.getElementById('syllabus-courses');
@@ -3164,7 +3207,7 @@ function renderTimetableList() {
         const where = [item.location, item.lecturer].filter(Boolean).join(' · ');
         if (where) {
             const meta = document.createElement('span');
-            meta.className = 'syllabus-row__meta';
+            meta.className = 'syllabus-row__meta timetable-row__where';
             meta.dir = 'auto';
             meta.textContent = where;
             body.append(meta);
@@ -3172,7 +3215,7 @@ function renderTimetableList() {
         const note = timetableNote(item);
         if (note) {
             const n = document.createElement('span');
-            n.className = 'syllabus-row__note' + (note.soft ? ' syllabus-row__note--soft' : '');
+            n.className = 'syllabus-row__note' + (note.soft ? ' syllabus-row__note--soft' : '') + (note.user ? ' timetable-row__ai-note' : '');
             if (note.user) n.dir = 'auto';
             n.textContent = note.text;
             body.append(n);
@@ -3188,7 +3231,8 @@ function updateTimetableConfirm() {
     const picked = state.items.filter(i => i.checked);
     // A ticked class needs a course and a start time.
     const incomplete = picked.filter(i => !String(i.course || '').trim() || !/^\d\d:\d\d$/.test(i.time || '')).length;
-    const ready = !!(state.until || state.noEnd);
+    const typed = syllabusUntilText ? syllabusUntilText.value.trim() : '';
+    const ready = !!(state.until || state.noEnd || (typed && typed !== state.untilTextApplied));
     syllabusConfirm.disabled = picked.length === 0 || !ready || incomplete > 0 || state.saving;
     syllabusConfirm.textContent = picked.length === 0 ? t('Add') : t(picked.length === 1 ? 'Add 1 item' : `Add ${picked.length} items`);
     if (syllabusGoogleRow) syllabusGoogleRow.hidden = picked.length === 0;
@@ -3206,21 +3250,36 @@ function updateTimetableConfirm() {
 // The one end date: a typed "15.2" (read like every date in the app) or the date picker.
 async function applyTimetableUntil(text) {
     const state = syllabusState;
-    if (!state || state.mode !== 'timetable') return;
-    const r = await ipcRenderer.invoke('parse-exam-dates', text).catch(e => ({ error: e.message }));
-    if (!syllabusState || syllabusState !== state) return;
-    if (!r || r.error || !r.exams || !r.exams.length) {
+    if (!state || state.mode !== 'timetable' || text === state.untilTextApplied) return;
+    state.untilTextApplied = text;   // Enter and the field's change both fire - read it once
+    const pending = ipcRenderer.invoke('parse-exam-dates', text).catch(e => ({ error: e.message }));
+    state.untilPending = pending;
+    const r = await pending;
+    if (state.untilPending === pending) state.untilPending = null;
+    if (!syllabusState || syllabusState !== state || state.untilTextApplied !== text) return;
+    const date = r && !r.error && r.exams && r.exams.length ? r.exams[0].date : null;
+    if (!date) {
+        state.until = null;   // never keep an older date behind an error
         state.untilError = (r && r.error) || t('Couldn\'t tell the date. Try writing it like "15.2".');
+    } else if (date < localIsoDate(new Date())) {
+        state.until = null;
+        state.untilError = t('That day has already passed.');
     } else {
-        state.until = r.exams[0].date;
+        state.until = date;
         state.untilError = null;
-        state.noEnd = false;
-        if (syllabusUntilDate) syllabusUntilDate.value = state.until;
-        if (syllabusNoEnd) syllabusNoEnd.checked = false;
+        if (syllabusUntilDate) syllabusUntilDate.value = date;
     }
     updateSyllabusConfirm();
 }
+// Typing a date means "this date", not "no end date".
+function typedTimetableUntil() {
+    if (!syllabusState || syllabusState.mode !== 'timetable') return;
+    syllabusState.noEnd = false;
+    syllabusState.untilError = null;   // an error about the old text, not this one
+    if (syllabusNoEnd) syllabusNoEnd.checked = false;
+}
 if (syllabusUntilText) {
+    syllabusUntilText.addEventListener('input', () => { typedTimetableUntil(); updateSyllabusConfirm(); });
     syllabusUntilText.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); const v = syllabusUntilText.value.trim(); if (v) applyTimetableUntil(v); }
     });
@@ -3239,6 +3298,9 @@ if (syllabusUntilDate) {
             state.untilError = null;
             if (state.until) { state.noEnd = false; if (syllabusNoEnd) syllabusNoEnd.checked = false; }
         }
+        // The picker wins over text typed before it.
+        if (syllabusUntilText) syllabusUntilText.value = '';
+        state.untilTextApplied = '';
         updateSyllabusConfirm();
     });
 }
@@ -3383,6 +3445,8 @@ function closeModalSafely(modal) {
     if (modalIsBusy(modal)) return;
     // An edit is closed properly (cleared); a new item being typed keeps its draft.
     if (modal === addEventModal && editingEvent) { closeAddEventModal(); return; }
+    // The import window: closed properly, so a review waiting for it opens.
+    if (modal === syllabusModal) { closeSyllabusModal(); return; }
     modal.style.display = 'none';
 }
 document.querySelectorAll('.modal-overlay').forEach(modal => {
