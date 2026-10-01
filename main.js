@@ -2060,7 +2060,13 @@ ${text.slice(0, maxChars)}`;
             noFallback: true,
             localModel: LOCAL_MODEL
         });
-        return JSON.stringify(finaliseStudyItems(responseText, category, sourceFile, existing));
+        const first = finaliseStudyItems(responseText, category, sourceFile, existing);
+        const items = await withUnderstandingTopUp(first, category, sourceFile, existing, (topUp) => aiProvider.generateText(`${topUp}
+
+THE MATERIAL:
+
+${text.slice(0, maxChars)}`, { forceJson: true, maxTokens: 8192, thinkingLevel: 'medium', timeoutMs: 120000, noFallback: true, localModel: LOCAL_MODEL }));
+        return JSON.stringify(items);
     } catch (error) {
         console.error('❌ generate-study-items failed:', error.message);
         return JSON.stringify({ error: error.message });
@@ -2603,6 +2609,12 @@ function finaliseStudyItems(responseText, category, sourceFile, existing = []) {
 
     const seen = new Set();
     const cleaned = [];
+    // A second plain "what is it" item on a concept that already has one
+    // (1/10 live check: "the condition in Schwarz's theorem" AND "what Schwarz's
+    // theorem says") - the same card twice. Understanding items are kept: two
+    // angles on one concept is the point of them.
+    const knowConcepts = new Set();
+    const conceptKey = (c) => String(c || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
     for (const raw of list) {
         if (!raw || !raw.question) continue;
@@ -2647,6 +2659,16 @@ function finaliseStudyItems(responseText, category, sourceFile, existing = []) {
         }
         if (existingKeys && existingKeys.has(key)) continue;   // already in the deck
 
+        const kind = mode === 'practice' ? 'practice' : (raw.kind === 'understand' ? 'understand' : 'know');
+        const concept = conceptKey(raw.concept);
+        if (kind === 'know' && concept) {
+            if (knowConcepts.has(concept)) {
+                console.warn(`   ⛔ Rejected (second definition of "${concept.slice(0, 40)}"): "${question.slice(0, 55)}"`);
+                continue;
+            }
+            knowConcepts.add(concept);
+        }
+
         const answer = cleanMathNotation(String(raw.answer || '').trim());
 
         // A practice item with no worked solution is the dead end we removed
@@ -2665,7 +2687,11 @@ function finaliseStudyItems(responseText, category, sourceFile, existing = []) {
             solutionSource,
             skillTag: String(raw.skillTag || raw.topic || '').trim().slice(0, 120),
             category,
-            sourceFile
+            sourceFile,
+            // Not saved (the server picks its fields) - used by the top-up
+            // below and by the owner's AI quality check.
+            kind,
+            concept: String(raw.concept || '').trim().slice(0, 120)
         });
     }
 
@@ -2683,6 +2709,63 @@ function finaliseStudyItems(responseText, category, sourceFile, existing = []) {
         return { error: 'No examinable content was found in this document.' };
     }
     return cleaned.slice(0, 40);
+}
+
+// Understanding top-up (1/10). The prompt asks for at least half "understand"
+// items, and the model still drifts to definitions on formula-heavy material
+// (live check, Calculus 2: 45%). When the first answer falls short, ONE more
+// request asks only for the missing understanding items - about the concepts
+// that so far have nothing but a definition - and they are added to the set.
+// How many are missing: u + k >= (r + k) / 2  ->  k >= r - 2u.
+function understandingShortfall(items) {
+    if (!Array.isArray(items)) return 0;
+    const recall = items.filter(i => i.kind !== 'practice');
+    const understand = recall.filter(i => i.kind === 'understand').length;
+    if (recall.length < 4) return 0;
+    return Math.max(0, Math.min(10, recall.length - 2 * understand));
+}
+
+function buildTopUpPrompt(category, items, need) {
+    const known = [...new Set(items.filter(i => i.kind === 'know' && i.concept).map(i => i.concept))];
+    const covered = new Set(items.filter(i => i.kind === 'understand' && i.concept).map(i => i.concept));
+    const targets = known.filter(c => !covered.has(c));
+    return `You are looking at a student's course material${category ? ` for "${category}"` : ''}. Questions were already written from it, but too many only ask to recall a definition or formula. Write ${need} NEW study items, every one of them "kind": "understand".
+
+${targets.length ? `Write them about these concepts first (they have only a definition so far):\n${targets.slice(0, 20).map(c => `- ${c}`).join('\n')}\n` : ''}
+An "understand" item asks the student to REASON with the material, answered in 1-4 sentences using only what the material says or directly implies:
+- what happens if something changes:   "מה יקרה ל-β אם נקטין את α ונשאיר את n קבוע?"
+- a common mistake to judge, with why: "האם קיום הנגזרות החלקיות בנקודה מבטיח רציפות בה? הסבר."
+- which of two close methods fits a short concrete case, and why
+- why a condition is needed / what goes wrong without it
+- how two close concepts differ, or what a result means
+NOT an understand item: "what is X", "what does theorem Y state", "how is X computed" (that is recall).
+
+Rules: one question per item; the item stands alone (name the thing, include any formula it needs); the same language as the material; maths as readable text, not LaTeX (λ, Σ, √, x^2, x_1); "evidence" = a short exact quote from the material the answer rests on.
+
+Do NOT repeat or rephrase these existing questions:
+${items.map(i => `- ${String(i.question).replace(/\s+/g, ' ').slice(0, 160)}`).join('\n')}
+
+Return ONLY JSON:
+{"items": [{"concept": "...", "kind": "understand", "question": "...", "answer": "...", "mode": "recall", "solutionSource": "document", "skillTag": "short topic name", "evidence": "short exact quote"}]}`;
+}
+
+// Runs the top-up when it's needed; never fails the main result - on any
+// error the first set is returned as it was.
+async function withUnderstandingTopUp(items, category, sourceFile, existing, ask) {
+    const need = understandingShortfall(items);
+    if (!need) return items;
+    try {
+        console.log(`🧠 understanding top-up: ${need} more "understand" item(s) wanted`);
+        const raw = await ask(buildTopUpPrompt(category, items, need));
+        const extra = finaliseStudyItems(raw, category, sourceFile, [...(existing || []), ...items.map(i => i.question)]);
+        if (!Array.isArray(extra)) return items;
+        const added = extra.filter(i => i.kind === 'understand').slice(0, need + 2);
+        console.log(`🧠 top-up added ${added.length} item(s)`);
+        return [...items, ...added].slice(0, 45);
+    } catch (e) {
+        console.warn('⚠️ understanding top-up skipped:', e.message);
+        return items;
+    }
 }
 
 // The questions already made from this file - so a second "Make questions"
@@ -2735,7 +2818,9 @@ ipcMain.handle('generate-study-items-pdf', async (event, sourcePath, options = {
             forceJson: true
         });
 
-        return JSON.stringify(finaliseStudyItems(responseText, category, sourceFile, existing));
+        const first = finaliseStudyItems(responseText, category, sourceFile, existing);
+        const items = await withUnderstandingTopUp(first, category, sourceFile, existing, (topUp) => aiProvider.generateFromPdf(buffer, topUp, { maxTokens: 8192, thinkingLevel: 'medium', forceJson: true }));
+        return JSON.stringify(items);
     } catch (error) {
         console.error('❌ PDF generation failed:', error.message);
         return JSON.stringify({ error: error.message });
