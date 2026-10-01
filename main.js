@@ -2575,6 +2575,15 @@ Rules:
 
 const DEFAULT_EXAM_STRUCTURE = `No past exams were given - use a general university structure: 4 to 6 questions, 100 points in total, 120 minutes. Mostly open questions with 2-4 parts each (computations, explanations, proofs or code - whatever fits this material), plus one question of 4-6 short parts that are multiple choice or true/false with a justification. Spread the questions over the main topics of the material.`;
 
+// What every part of an answer key has - the writer and the solver
+// (buildExamSolvePrompt) follow the same rules.
+const EXAM_PART_RULES = `- For EVERY part:
+  "answer": a complete worked solution, like the lecturer's answer key - the method, the steps and the result. A proof in full. For "tf": the verdict, then the proof or the counterexample.
+  "rubric": 2-5 criteria whose points add up to the part's points, e.g. [{"criterion": "the derivative of the inner function", "points": 2}, ...]. For "tf" with a justification required: the bare verdict is worth at most 20% of the part.
+  "topic": a short topic name.
+  "mc": "options" (as many as the past exams use, otherwise 4) with plausible wrong options (typical mistakes), and "correct": the 0-based index of the right one.
+  "tf": "correct": "true" or "false".`;
+
 function buildExamWritePrompt(course, blueprint, material) {
     const structure = blueprint ? JSON.stringify({
         durationMin: blueprint.durationMin, materials: blueprint.materials, totalPoints: blueprint.totalPoints, questions: blueprint.questions
@@ -2592,16 +2601,30 @@ Rules:
 - The same language as the past exams (or the material). Only topics the material or the past exams cover. The same difficulty as the past exams - not easier.
 - Every question stands alone: include all the data, code, tables and functions it needs. A text shared by several parts goes in "stem".
 - ${MATH_AS_TEXT}
-- For EVERY part:
-  "answer": a complete worked solution, like the lecturer's answer key - the method, the steps and the result. A proof in full. For "tf": the verdict, then the proof or the counterexample.
-  "rubric": 2-5 criteria whose points add up to the part's points, e.g. [{"criterion": "the derivative of the inner function", "points": 2}, ...]. For "tf" with a justification required: the bare verdict is worth at most 20% of the part.
-  "topic": a short topic name.
-  "mc": "options" (as many as the past exams use, otherwise 4) with plausible wrong options (typical mistakes), and "correct": the 0-based index of the right one.
-  "tf": "correct": "true" or "false".
+${EXAM_PART_RULES}
 - SOLVE EVERY PART YOURSELF AND CHECK IT: substitute back, compute a second way, test the counterexample. A part you can't solve with certainty: replace it with one you can.
 
 Return ONLY JSON:
 {"title": "...", "durationMin": number, "materials": "...", "instructions": "...", "questions": [{"n": 1, "title": "...", "points": number, "stem": "", "choosePartsCount": 0, "parts": [{"label": "א", "type": "mc|tf|open|code", "text": "...", "options": [], "correct": "", "reasonRequired": false, "points": number, "answer": "...", "rubric": [{"criterion": "...", "points": number}], "topic": "..."}]}]}`;
+}
+
+// An answer key for a question that already exists (a real past exam's) -
+// the same rules as the writer's. The owner's exam check uses it to measure
+// how often the writer's solutions are right, on questions with known answers.
+function buildExamSolvePrompt(course, question) {
+    const tag = (s) => String(s || '').replace(/</g, '＜').replace(/>/g, '＞');
+    return `Write the answer key for this question of the university course "${course}", as the course's lecturer would.
+${question.stem ? `\n<stem>\n${tag(question.stem)}\n</stem>\n` : ''}
+${question.parts.map((p, i) => `<part index="${i}" type="${p.type}" points="${p.points}"${p.type === 'tf' && p.reasonRequired ? ' justification="required"' : ''}>
+${tag(p.text)}${p.type === 'mc' ? `\n${(p.options || []).map((o, k) => `(${k}) ${tag(o)}`).join('\n')}` : ''}
+</part>`).join('\n')}
+
+Rules:
+- The language of the question. ${MATH_AS_TEXT}
+${EXAM_PART_RULES}
+- SOLVE EVERY PART YOURSELF AND CHECK IT: substitute back, compute a second way, test the counterexample.
+
+Return ONLY JSON: {"parts": [{"index": part index, "answer": "...", "rubric": [{"criterion": "...", "points": number}], "correct": "mc: the 0-based index; tf: true or false; otherwise ''", "topic": "..."}]}`;
 }
 
 function buildExamCheckPrompt(exam) {
@@ -2720,6 +2743,97 @@ function courseMaterialText(files, budget = 90000) {
 
 const isPdfFile = (f) => /\.pdf$/i.test(f.name || '') || /\.pdf$/i.test(f.sourcePath || '');
 
+// ---- The stages of a full exam. Each one takes its inputs directly, so the
+// owner's exam check (the server's tools/exam-check.js) can run the SAME code
+// on real past exams whose answers are known. ----
+
+// 1. How a course's exam is built, from its past exams. `past`: [{ name,
+// buffer (the PDF, or null), text }]. Returns the blueprint or null.
+async function examBlueprint(course, past) {
+    const buffers = [];
+    let bytes = 0;
+    const asText = [];
+    for (const f of past) {
+        if (f.buffer && bytes + f.buffer.length <= 18 * 1024 * 1024) { buffers.push(f.buffer); bytes += f.buffer.length; } else if (String(f.text || '').trim()) asText.push(`=== ${f.name} ===\n${String(f.text).slice(0, 25000)}`);
+    }
+    const texts = asText.join('\n\n');
+    const opts = { forceJson: true, maxTokens: 12000, thinkingLevel: 'medium', timeoutMs: 240000, noFallback: true };
+    let raw;
+    try {
+        raw = buffers.length ? await aiProvider.generateFromPdf(buffers, buildExamBlueprintPrompt(course, texts), opts)
+            : await aiProvider.generateText(buildExamBlueprintPrompt(course, texts), opts);
+    } catch (err) {
+        // A PDF the AI couldn't read: try their text.
+        if (!buffers.length) throw err;
+        const fallback = past.filter(f => String(f.text || '').trim()).map(f => `=== ${f.name} ===\n${String(f.text).slice(0, 25000)}`).join('\n\n');
+        if (!fallback) throw err;
+        raw = await aiProvider.generateText(buildExamBlueprintPrompt(course, fallback), opts);
+    }
+    let blueprint;
+    try { blueprint = JSON.parse(extractJsonFromText(String(raw))); } catch (e) { blueprint = null; }
+    if (blueprint && (!Array.isArray(blueprint.questions) || !blueprint.questions.length)) blueprint = { ...blueprint, questions: null };
+    return blueprint;
+}
+
+// 2. The exam itself, with answers and marking schemes. `blueprint` is a
+// usable blueprint (with questions) or null.
+async function writeExam(course, blueprint, materialText) {
+    const rawExam = await aiProvider.generateText(buildExamWritePrompt(course, blueprint, materialText), {
+        forceJson: true, maxTokens: 30000, thinkingLevel: 'high', timeoutMs: 360000, noFallback: true
+    });
+    let exam;
+    try { exam = normaliseExam(JSON.parse(extractJsonFromText(String(rawExam))), blueprint); } catch (e) { exam = null; }
+    if (!exam) throw new Error('The AI didn\'t return a usable exam. Try again.');
+    return exam;
+}
+
+// 3. A second, independent solution of every part. Changes `exam` in place:
+// marks checked parts, takes the checker's correction, drops parts it calls
+// unsolvable. Returns what happened (the exam check counts it); throws only
+// when nothing is left.
+async function checkExam(exam) {
+    const stats = { parts: exam.questions.reduce((n, q) => n + q.parts.length, 0), checked: 0, corrected: 0, dropped: 0, failed: false, error: '', verdicts: [] };
+    try {
+        const rawCheck = await aiProvider.generateText(buildExamCheckPrompt(exam), {
+            forceJson: true, maxTokens: 20000, thinkingLevel: 'high', timeoutMs: 300000, noFallback: true, allowance: 'light'
+        });
+        const verdicts = JSON.parse(extractJsonFromText(String(rawCheck))).parts || [];
+        stats.verdicts = verdicts;
+        const drop = new Set();
+        for (const v of verdicts) {
+            const q = exam.questions[Number(v.q)];
+            const p = q && q.parts[Number(v.p)];
+            if (!p) continue;
+            if (v.ok === true) { p.check = 'checked'; stats.checked += 1; continue; }
+            if (/unsolvable/i.test(String(v.problem || ''))) { drop.add(`${v.q}:${v.p}`); continue; }
+            const fixed = cleanExamText(String(v.answer || '').trim(), p.type === 'code');
+            if (fixed) { p.answer = fixed.slice(0, 12000); p.check = 'corrected'; }
+            const c = String(v.correct == null ? '' : v.correct).trim().toLowerCase();
+            if (p.type === 'mc' && /^\d+$/.test(c) && Number(c) < p.options.length) { p.correct = c; p.check = 'corrected'; }
+            if (p.type === 'tf' && (c === 'true' || c === 'false')) { p.correct = c; p.check = 'corrected'; }
+            if (p.check === 'corrected') stats.corrected += 1;
+        }
+        if (drop.size) {
+            stats.dropped = drop.size;
+            exam.questions.forEach((q, qi) => { q.parts = q.parts.filter((p, pi) => !drop.has(`${qi}:${pi}`)); });
+            exam.questions = exam.questions.filter(q => q.parts.length);
+            exam.questions.forEach(q => {
+                const s = q.parts.reduce((n, p) => n + p.points, 0);
+                q.choosePartsCount = Math.min(q.choosePartsCount, Math.max(0, q.parts.length - 1));
+                q.points = q.choosePartsCount ? Math.round((s / q.parts.length) * q.choosePartsCount * 100) / 100 : Math.round(s * 100) / 100;
+            });
+            exam.totalPoints = Math.round(exam.questions.reduce((n, q) => n + q.points, 0) * 100) / 100;
+            if (!exam.questions.length) throw new Error('The AI\'s exam didn\'t pass its own check. Try again.');
+        }
+    } catch (err) {
+        if (/didn't pass/i.test(err.message)) throw err;
+        console.warn('⚠️ full exam check skipped:', err.message);   // the exam is still usable, just unchecked
+        stats.failed = true;
+        stats.error = String(err.message || err).slice(0, 300);
+    }
+    return stats;
+}
+
 async function buildFullExam({ course, pastIds, durationMin }, stage) {
     stage('reading');
     const files = await api.getFiles();
@@ -2734,28 +2848,12 @@ async function buildFullExam({ course, pastIds, durationMin }, stage) {
     let blueprint = null;
     if (past.length) {
         stage('blueprint');
-        const buffers = [];
-        let bytes = 0;
-        const asText = [];
+        const pastFiles = [];
         for (const f of past) {
-            const buf = isPdfFile(f) ? await readOriginalFile(f.sourcePath).catch(() => null) : null;
-            if (buf && bytes + buf.length <= 18 * 1024 * 1024) { buffers.push(buf); bytes += buf.length; } else if (String(f.content || '').trim()) asText.push(`=== ${f.name} ===\n${String(f.content).slice(0, 25000)}`);
+            const buffer = isPdfFile(f) ? await readOriginalFile(f.sourcePath).catch(() => null) : null;
+            pastFiles.push({ name: f.name, buffer, text: f.content || '' });
         }
-        const texts = asText.join('\n\n');
-        const opts = { forceJson: true, maxTokens: 12000, thinkingLevel: 'medium', timeoutMs: 240000, noFallback: true };
-        let raw;
-        try {
-            raw = buffers.length ? await aiProvider.generateFromPdf(buffers, buildExamBlueprintPrompt(course, texts), opts)
-                : await aiProvider.generateText(buildExamBlueprintPrompt(course, texts), opts);
-        } catch (err) {
-            // A PDF the AI couldn't read: try their text.
-            if (!buffers.length) throw err;
-            const fallback = past.filter(f => String(f.content || '').trim()).map(f => `=== ${f.name} ===\n${String(f.content).slice(0, 25000)}`).join('\n\n');
-            if (!fallback) throw err;
-            raw = await aiProvider.generateText(buildExamBlueprintPrompt(course, fallback), opts);
-        }
-        try { blueprint = JSON.parse(extractJsonFromText(String(raw))); } catch (e) { blueprint = null; }
-        if (blueprint && (!Array.isArray(blueprint.questions) || !blueprint.questions.length)) blueprint = { ...blueprint, questions: null };
+        blueprint = await examBlueprint(course, pastFiles);
     }
 
     // 2. The exam itself, with answers and marking schemes.
@@ -2763,48 +2861,11 @@ async function buildFullExam({ course, pastIds, durationMin }, stage) {
     const materialText = courseMaterialText(material) ||
         past.map(f => `=== ${f.name} ===\n${String(f.content || '').slice(0, 20000)}`).join('\n\n').slice(0, 60000);
     const usable = blueprint && blueprint.questions ? blueprint : null;
-    const rawExam = await aiProvider.generateText(buildExamWritePrompt(course, usable, materialText), {
-        forceJson: true, maxTokens: 30000, thinkingLevel: 'high', timeoutMs: 360000, noFallback: true
-    });
-    let exam;
-    try { exam = normaliseExam(JSON.parse(extractJsonFromText(String(rawExam))), usable); } catch (e) { exam = null; }
-    if (!exam) throw new Error('The AI didn\'t return a usable exam. Try again.');
+    const exam = await writeExam(course, usable, materialText);
 
     // 3. A second, independent solution of every part.
     stage('checking');
-    try {
-        const rawCheck = await aiProvider.generateText(buildExamCheckPrompt(exam), {
-            forceJson: true, maxTokens: 20000, thinkingLevel: 'high', timeoutMs: 300000, noFallback: true, allowance: 'light'
-        });
-        const verdicts = JSON.parse(extractJsonFromText(String(rawCheck))).parts || [];
-        const drop = new Set();
-        for (const v of verdicts) {
-            const q = exam.questions[Number(v.q)];
-            const p = q && q.parts[Number(v.p)];
-            if (!p) continue;
-            if (v.ok === true) { p.check = 'checked'; continue; }
-            if (/unsolvable/i.test(String(v.problem || ''))) { drop.add(`${v.q}:${v.p}`); continue; }
-            const fixed = cleanExamText(String(v.answer || '').trim(), p.type === 'code');
-            if (fixed) { p.answer = fixed.slice(0, 12000); p.check = 'corrected'; }
-            const c = String(v.correct == null ? '' : v.correct).trim().toLowerCase();
-            if (p.type === 'mc' && /^\d+$/.test(c) && Number(c) < p.options.length) { p.correct = c; p.check = 'corrected'; }
-            if (p.type === 'tf' && (c === 'true' || c === 'false')) { p.correct = c; p.check = 'corrected'; }
-        }
-        if (drop.size) {
-            exam.questions.forEach((q, qi) => { q.parts = q.parts.filter((p, pi) => !drop.has(`${qi}:${pi}`)); });
-            exam.questions = exam.questions.filter(q => q.parts.length);
-            exam.questions.forEach(q => {
-                const s = q.parts.reduce((n, p) => n + p.points, 0);
-                q.choosePartsCount = Math.min(q.choosePartsCount, Math.max(0, q.parts.length - 1));
-                q.points = q.choosePartsCount ? Math.round((s / q.parts.length) * q.choosePartsCount * 100) / 100 : Math.round(s * 100) / 100;
-            });
-            exam.totalPoints = Math.round(exam.questions.reduce((n, q) => n + q.points, 0) * 100) / 100;
-            if (!exam.questions.length) throw new Error('The AI\'s exam didn\'t pass its own check. Try again.');
-        }
-    } catch (err) {
-        if (/no usable|didn't pass/i.test(err.message)) throw err;
-        console.warn('⚠️ full exam check skipped:', err.message);   // the exam is still usable, just unchecked
-    }
+    await checkExam(exam);
 
     stage('saving');
     const saved = await api.saveFullExam({
@@ -2833,6 +2894,64 @@ ipcMain.handle('full-exam-build', async (event, payload = {}) => {
 });
 
 const answerIsBlank = (a) => !a || (!String(a.choice || '').trim() && !String(a.text || '').trim());
+
+// Parts marked here, without the AI: multiple choice, true/false without a
+// reason, and a wrong true/false verdict (0, whatever the reasoning).
+// Returns { points, feedback }, or null when the AI grades the part.
+function autoMarkPart(part, answer, he) {
+    if (part.type === 'mc' || (part.type === 'tf' && !part.reasonRequired)) {
+        const right = String(answer.choice) === String(part.correct);
+        return {
+            points: right ? part.points : 0,
+            feedback: right ? '' : part.type === 'mc'
+                ? (he ? `התשובה הנכונה היא ${Number(part.correct) + 1}.` : `The right option is ${Number(part.correct) + 1}.`)
+                : (he ? `הטענה ${part.correct === 'true' ? 'נכונה' : 'לא נכונה'}.` : `The claim is ${part.correct === 'true' ? 'true' : 'false'}.`)
+        };
+    }
+    if (part.type === 'tf' && String(answer.choice) && String(answer.choice) !== String(part.correct)) {
+        return { points: 0, feedback: he ? `הטענה ${part.correct === 'true' ? 'נכונה' : 'לא נכונה'} - ראו את הפתרון.` : `The claim is ${part.correct === 'true' ? 'true' : 'false'} - see the solution.` };
+    }
+    return null;
+}
+
+// One question's answers graded by the AI against the key and its marking
+// scheme. `items`: [{ part, index, answer: { choice, text } }]. Returns the
+// AI's [{ index, points, feedback }] (unchecked - the caller caps the points).
+async function gradeExamQuestion(question, items) {
+    const raw = await aiProvider.generateText(buildExamGradePrompt(question, items), {
+        forceJson: true, maxTokens: 6000, thinkingLevel: 'medium', timeoutMs: 120000, noFallback: true, allowance: 'light'
+    });
+    return JSON.parse(extractJsonFromText(String(raw))).parts || [];
+}
+
+// An answer key for a question that already exists (see buildExamSolvePrompt):
+// [{ index, answer, rubric, correct, topic }], cleaned like the writer's.
+async function solveExamParts(course, question) {
+    const raw = await aiProvider.generateText(buildExamSolvePrompt(course, question), {
+        forceJson: true, maxTokens: 16000, thinkingLevel: 'high', timeoutMs: 300000, noFallback: true, allowance: 'light'
+    });
+    const parts = JSON.parse(extractJsonFromText(String(raw))).parts || [];
+    return parts.map(p => {
+        const part = question.parts[Number(p.index)];
+        if (!part) return null;
+        const isCode = part.type === 'code';
+        let correct = String(p.correct == null ? '' : p.correct).trim().toLowerCase();
+        if (part.type === 'tf') correct = /^(true|נכון|t|1|yes)$/i.test(correct) ? 'true' : /^(false|לא נכון|f|0|no)$/i.test(correct) ? 'false' : '';
+        if (part.type !== 'mc' && part.type !== 'tf') correct = '';
+        return {
+            index: Number(p.index),
+            answer: cleanExamText(String(p.answer || ''), isCode).slice(0, 12000),
+            rubric: (Array.isArray(p.rubric) ? p.rubric : []).slice(0, 12)
+                .map(r => ({ criterion: cleanExamText(String(r.criterion || '')).slice(0, 400), points: Number(r.points) || 0 })).filter(r => r.criterion),
+            correct,
+            topic: String(p.topic || '').slice(0, 120)
+        };
+    }).filter(Boolean);
+}
+
+// The stages above, for the owner's exam check on the server (exported by
+// tools/port-main.py; unused in the desktop app).
+const EXAM_STAGES = { examBlueprint, writeExam, checkExam, autoMarkPart, gradeExamQuestion, solveExamParts, normaliseExam, answerIsBlank };
 
 // Graded sittings whose save failed: a retry only saves again, it doesn't
 // pay for the AI grading twice.
@@ -2874,18 +2993,8 @@ async function gradeFullExam({ examId, answers, startedAt, usedSec, limitSec, cl
             out.push(row);
             if (allowed && !allowed.has(pi)) { row.status = 'not_chosen'; row.max = 0; return; }
             if (answerIsBlank(a)) { row.status = 'blank'; return; }
-            if (part.type === 'mc' || (part.type === 'tf' && !part.reasonRequired)) {
-                const right = String(a.choice) === String(part.correct);
-                row.points = right ? part.points : 0;
-                row.feedback = right ? '' : part.type === 'mc'
-                    ? (he ? `התשובה הנכונה היא ${Number(part.correct) + 1}.` : `The right option is ${Number(part.correct) + 1}.`)
-                    : (he ? `הטענה ${part.correct === 'true' ? 'נכונה' : 'לא נכונה'}.` : `The claim is ${part.correct === 'true' ? 'true' : 'false'}.`);
-                return;
-            }
-            if (part.type === 'tf' && String(a.choice) && String(a.choice) !== String(part.correct)) {
-                row.feedback = he ? `הטענה ${part.correct === 'true' ? 'נכונה' : 'לא נכונה'} - ראו את הפתרון.` : `The claim is ${part.correct === 'true' ? 'true' : 'false'} - see the solution.`;
-                return;   // a wrong verdict gets 0, whatever the reasoning
-            }
+            const auto = autoMarkPart(part, a, he);
+            if (auto) { row.points = auto.points; row.feedback = auto.feedback; return; }
             items.push({ part, index: pi, answer: { choice: row.choice, text: row.text }, row });
         });
         if (items.length) toAi.push({ q, items });
@@ -2897,10 +3006,7 @@ async function gradeFullExam({ examId, answers, startedAt, usedSec, limitSec, cl
         while (next < toAi.length) {
             const job = toAi[next++];
             try {
-                const raw = await aiProvider.generateText(buildExamGradePrompt(job.q, job.items), {
-                    forceJson: true, maxTokens: 6000, thinkingLevel: 'medium', timeoutMs: 120000, noFallback: true, allowance: 'light'
-                });
-                const graded = JSON.parse(extractJsonFromText(String(raw))).parts || [];
+                const graded = await gradeExamQuestion(job.q, job.items);
                 for (const it of job.items) {
                     const g = graded.find(x => Number(x.index) === it.index);
                     if (!g || !Number.isFinite(Number(g.points))) { it.row.status = 'unchecked'; continue; }
