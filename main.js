@@ -2065,7 +2065,7 @@ ${text.slice(0, maxChars)}`;
 
 THE MATERIAL:
 
-${text.slice(0, maxChars)}`, { forceJson: true, maxTokens: 8192, thinkingLevel: 'medium', timeoutMs: 120000, noFallback: true, localModel: LOCAL_MODEL }));
+${text.slice(0, maxChars)}`, { forceJson: true, maxTokens: 8192, thinkingLevel: 'medium', timeoutMs: 120000, noFallback: true, localModel: LOCAL_MODEL, allowance: 'light' }));
         return JSON.stringify(items);
     } catch (error) {
         console.error('❌ generate-study-items failed:', error.message);
@@ -2345,6 +2345,129 @@ ipcMain.handle('make-twin-question', async (event, payload = {}) => {
         return { question: q, answer: a };
     } catch (err) {
         console.error('❌ make-twin-question:', err.message);
+        return { error: err.message };
+    }
+});
+
+// New versions of questions (1/10). The student answers a question once as
+// written; every later review shows a NEW version of it - the same idea or
+// method with other numbers, another function or another situation - so the
+// answer can't be remembered, only worked out. Written ahead in one batched
+// request (today's queue when Study opens, tomorrow's at the end of a
+// session), so nobody waits and a free AI key isn't spent one call a card.
+function buildVariantsPrompt(items) {
+    const tag = (s) => String(s || '').replace(/</g, '＜').replace(/>/g, '＞');   // see buildGradePrompt
+    const blocks = items.map(i => `<item id="${i.id}" mode="${i.mode === 'practice' ? 'practice' : 'recall'}">
+<question>
+${tag(i.question)}
+</question>
+<answer source="${i.solutionSource === 'ai' ? 'written by AI - check it' : 'the course material'}">
+${tag(i.answer)}
+</answer>${(i.pastVersions || []).length ? `
+<already_shown>
+${i.pastVersions.map(v => `- ${tag(String(v).replace(/\s+/g, ' '))}`).join('\n')}
+</already_shown>` : ''}
+</item>`).join('\n\n');
+    return `A university student practises with the questions below and has answered each one before. Write a NEW VERSION of each, so the next time it comes up the student must work it out again instead of remembering the answer.
+
+${blocks}
+
+For each item:
+- A practice problem: the SAME kind of problem, solved by the SAME method, at the same difficulty - with different numbers, a different function or a different code snippet. Solve it, then CHECK the result (substitute back, or solve it a second way). If you are not sure of the result, write a simpler one you are sure of.
+- An understanding question: the SAME idea from a different angle - a different concrete case, the reverse direction, a different condition changing, or a contrast with a close concept. Not the same question in other words.
+- Use only what the question and answer say or directly imply (and your own calculation) - no new facts.
+- Different from the question AND from everything under <already_shown>.
+- Stand alone: the student won't see the original. Don't give the answer away in the question.
+- Never ask to recall or write out a formula - put the formula in the question if it is needed.
+- The SAME LANGUAGE as the original. Maths as readable text (x^2, √, σ, Σ), no LaTeX. Code inside the question, formatted with its line breaks.
+- "answer": complete but short - for a problem the key steps and the result; otherwise 1-3 sentences.
+- Set "keep": true (and no question) ONLY when the item just asks what a term means and has no other angle - those are shown as they are.
+
+Return ONLY JSON: {"variants": [{"id": "<the item id>", "keep": false, "question": "...", "answer": "..."}]} - one entry per item, same ids.`;
+}
+
+// One request for up to 6 questions -> { written: [{orig, question, answer}],
+// keep: [orig], failed: [orig] }. Throws on an AI error.
+async function writeVariants(chunk) {
+    const raw = await aiProvider.generateText(buildVariantsPrompt(chunk), {
+        forceJson: true, maxTokens: 7000, thinkingLevel: 'medium', timeoutMs: 120000, noFallback: true, allowance: 'light'
+    });
+    const data = JSON.parse(extractJsonFromText(String(raw)));
+    const norm = (x) => String(x || '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 400);
+    const byId = new Map(chunk.map(c => [String(c.id), c]));
+    const out = { written: [], keep: [], failed: [] };
+    for (const v of (data && Array.isArray(data.variants) ? data.variants : [])) {
+        const orig = v && byId.get(String(v.id));
+        if (!orig) continue;
+        byId.delete(String(v.id));
+        if (v.keep === true) { out.keep.push(orig); continue; }
+        const q = cleanMathNotation(String(v.question || '').trim()).slice(0, 2000);
+        const a = cleanMathNotation(String(v.answer || '').trim()).slice(0, 4000);
+        const seen = [orig.question, cleanMathNotation(orig.question), ...(orig.pastVersions || [])].map(norm);
+        if (q.length < 10 || a.length < 5 || !isSelfContained(q) || FORMULA_RECALL.test(q) || seen.includes(norm(q))) { out.failed.push(orig); continue; }
+        out.written.push({ orig, question: q, answer: a });
+    }
+    // Left out of the AI's answer altogether.
+    for (const orig of byId.values()) out.failed.push(orig);
+    return out;
+}
+
+// The owner's AI quality check (1/10): versions of a few just-written
+// questions, shown on /admin - nothing is saved.
+ipcMain.handle('preview-variants', async (event, items = []) => {
+    try {
+        const chunk = (Array.isArray(items) ? items : []).slice(0, 6).map((i, n) => ({
+            id: `p${n}`, question: String(i.question || '').slice(0, 2000), answer: String(i.answer || '').slice(0, 4000),
+            mode: i.mode === 'practice' ? 'practice' : 'recall', solutionSource: i.solutionSource === 'ai' ? 'ai' : 'document', pastVersions: []
+        })).filter(i => i.question && i.answer);
+        if (!chunk.length) return [];
+        const out = await writeVariants(chunk);
+        return [
+            ...out.written.map(w => ({ question: w.orig.question, version: w.question, answer: w.answer, mode: w.orig.mode })),
+            ...out.keep.map(o => ({ question: o.question, kept: true, mode: o.mode })),
+            ...out.failed.map(o => ({ question: o.question, failed: true, mode: o.mode }))
+        ];
+    } catch (err) {
+        return { error: err.message };
+    }
+});
+
+ipcMain.handle('prepare-variants', async (event, payload = {}) => {
+    try {
+        // A small local model writes poor problems and checks them worse.
+        if (aiProvider.resolveProvider() !== 'gemini') return { prepared: 0, skipped: 'no cloud AI' };
+        const when = payload && payload.when === 'tomorrow' ? 'tomorrow' : 'today';
+        const candidates = await api.getVariantCandidates(when);
+        if (!Array.isArray(candidates) || !candidates.length) return { prepared: 0 };
+        let prepared = 0, kept = 0, failed = 0;
+        for (let i = 0; i < candidates.length; i += 6) {
+            const chunk = candidates.slice(i, i + 6);
+            let out;
+            try {
+                out = await writeVariants(chunk);
+            } catch (err) {
+                console.warn('⚠️ prepare-variants: a batch failed:', err.message);
+                // Out of AI for today (any of the allowance messages): stop.
+                if (err.aiLimit || /allowance|limit|quota|confirm your email|too many ai requests/i.test(err.message)) return { prepared, kept, error: err.message };
+                failed += chunk.length;
+                continue;
+            }
+            // Recorded on the question, so it isn't sent to the AI again and
+            // again: "keep" = shown as it is from now on; anything unusable =
+            // not asked for a few days.
+            const mark = (id, body) => api.setStudyVariant(id, body).catch(() => null);
+            for (const o of out.keep) { kept += 1; await mark(o.id, { keep: true }); }
+            for (const o of out.failed) { failed += 1; await mark(o.id, { failed: true }); }
+            for (const w of out.written) {
+                try { await api.setStudyVariant(w.orig.id, { question: w.question, answer: w.answer, solutionSource: 'ai' }); prepared += 1; } catch (err) {
+                    if (!/already waiting/i.test(err.message)) failed += 1;   // another run got there first: fine
+                }
+            }
+        }
+        console.log(`🔁 prepare-variants (${when}): ${prepared} new version(s), ${kept} kept as is, ${failed} not usable`);
+        return { prepared, kept, failed };
+    } catch (err) {
+        console.error('❌ prepare-variants:', err.message);
         return { error: err.message };
     }
 });
@@ -2893,7 +3016,7 @@ ipcMain.handle('generate-study-items-pdf', async (event, sourcePath, options = {
         });
 
         const first = finaliseStudyItems(responseText, category, sourceFile, existing);
-        const items = await withUnderstandingTopUp(first, category, sourceFile, existing, (topUp) => aiProvider.generateFromPdf(buffer, topUp, { maxTokens: 8192, thinkingLevel: 'medium', forceJson: true }));
+        const items = await withUnderstandingTopUp(first, category, sourceFile, existing, (topUp) => aiProvider.generateFromPdf(buffer, topUp, { maxTokens: 8192, thinkingLevel: 'medium', forceJson: true, allowance: 'light' }));
         return JSON.stringify(items);
     } catch (error) {
         console.error('❌ PDF generation failed:', error.message);

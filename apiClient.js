@@ -212,6 +212,9 @@ module.exports = {
   saveExamRun: (run) => request('POST', '/study/exam/runs', run),
   getExamRuns: (course) => request('GET', `/study/exam/runs${course ? `?course=${encodeURIComponent(course)}` : ''}`),
   submitStudyReview: (id, payload) => request('POST', `/study/${enc(id)}/review`, payload),
+  // New versions of questions (1/10)
+  getVariantCandidates: (when) => request('GET', `/study/variant-candidates?when=${when === 'tomorrow' ? 'tomorrow' : 'today'}`),
+  setStudyVariant: (id, variant) => request('PUT', `/study/${enc(id)}/variant`, variant),
   updateStudyItem: (id, updates) => request('PUT', `/study/${enc(id)}`, updates).then(withIdAlias),
   deleteStudyItem: (id) => request('DELETE', `/study/${enc(id)}`),
 
