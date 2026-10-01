@@ -123,6 +123,12 @@ if (authToggleLink) {
         setAuthMode(authMode === 'login' ? 'register' : 'login');
     };
 }
+// The website's "Create an account" button opens /app/#signup (30/9): straight
+// to the sign-up form, not the login a new student has to find a way out of.
+if (/(^|[#&])signup(&|$)/.test(location.hash || '')) {
+    setAuthMode('register');
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* old browser */ }
+}
 
 // Called once, either immediately (a saved session was still valid) or
 // after a successful login/register. Reveals the app and re-runs the loads
@@ -270,9 +276,13 @@ if (authDeleteBtn) {
             authDeleteBtn.disabled = false;
             if (res && res.success) {
                 toast.success('Your account and its data were deleted.', 'Account deleted');
+                // A clean page (review fix 30/9): the account's screens stayed
+                // filled behind the login form. Same as logging out.
+                rememberSession(false);
+                // (The website goes to its home page by itself - web-shim.)
+                if (!window.MINDSYNC_WEB) setTimeout(() => location.reload(), 1200);
                 if (authForm) authForm.reset();
                 setAuthMode('register');
-                rememberSession(false);
                 if (authLoading) authLoading.hidden = true;
                 if (authFormWrap) authFormWrap.hidden = false;
                 document.body.classList.add('auth-pending');
@@ -721,7 +731,8 @@ function buildScheduleRow(evt, folders) {
     deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         deleteBtn.disabled = true;
-        await ipcRenderer.invoke('delete-event', evt.id);
+        const delRes = await ipcRenderer.invoke('delete-event', evt.id).catch(err => ({ error: err.message }));
+        if (delRes && delRes.error) { deleteBtn.disabled = false; toast.error(delRes.error, t('Could not delete')); return; }
         await loadAndRenderEvents();
         await loadAndRenderWeeklyBoard();
         await loadAndRenderHome();
@@ -1069,7 +1080,7 @@ function renderWeeklyBoard() {
                     <button class="btn-icon edit-weekly-btn" title="${weekly ? 'Edit - changes it in every week' : 'Edit'}" aria-label="Edit">${icon('edit')}</button>
                     <button class="btn-icon btn-icon--danger delete-weekly-btn" title="${weekly ? 'Delete - removes it from every week' : 'Delete from calendar'}" aria-label="Delete from calendar">${icon('trash')}</button>
                 </div>
-                <div class="task-time">${escapeHtml(evt.time)}${weekly ? ` <span class="task-repeat" title="${evt.until ? `Every week until ${untilLabel(evt.until)}` : 'Every week'}">↻${evt.until ? ` until ${untilLabel(evt.until)}` : ''}</span>` : ''}</div>
+                <div class="task-time">${escapeHtml(evt.time)}${weekly ? ` <span class="task-repeat" title="${escapeHtml(evt.until ? t('Every week until {d}', { d: untilLabel(evt.until) }) : t('Every week'))}">↻${evt.until ? ` ${escapeHtml(t('until {d}', { d: untilLabel(evt.until) }))}` : ''}</span>` : ''}</div>
                 <div class="task-card__title" dir="auto">${escapeHtml(evt.title)}</div>
             `;
 
@@ -1098,7 +1109,8 @@ function renderWeeklyBoard() {
                     { confirmText: t('Delete'), danger: true });
                 if (!ok) return;
                 delBtn.disabled = true;
-                await ipcRenderer.invoke('delete-event', evt.id);
+                const delRes = await ipcRenderer.invoke('delete-event', evt.id).catch(err => ({ error: err.message }));
+                if (delRes && delRes.error) { delBtn.disabled = false; toast.error(delRes.error, t('Could not delete')); return; }
                 await loadAndRenderWeeklyBoard();
                 await loadAndRenderHome();
             };
@@ -1866,10 +1878,20 @@ function renderTasksList() {
                 message: `Nothing matches "${taskSearchQuery}". Try a different search.`
             });
         } else if (activeTaskStatusFilter !== 'all') {
+            // The chip's own words, not the internal key ("urgent" showed
+            // up in English in the Hebrew app - review fix 30/9).
+            const chipLabel = (document.querySelector(`#task-status-filters [data-filter="${activeTaskStatusFilter}"]`) || {}).textContent || activeTaskStatusFilter;
             renderEmptyState(empty, {
                 icon: 'plus',
                 title: 'Nothing here',
-                message: `No tasks match the "${activeTaskStatusFilter}" filter right now.`
+                message: t('No tasks in "{f}" right now.', { f: chipLabel.trim() })
+            });
+        } else if (activeTaskCategory === 'All') {
+            // Everything done (the list only shows open tasks): say so.
+            renderEmptyState(empty, {
+                icon: 'checkCircle',
+                title: tasks.length ? 'All done' : 'No tasks yet',
+                message: tasks.length ? 'No open tasks. Nice.' : 'Add one above - write it in your own words.'
             });
         } else {
             renderEmptyState(empty, {
@@ -3572,30 +3594,39 @@ async function loadProfile() {
     // Email not confirmed yet (30/9): one quiet row in Settings, only when
     // the server can send email at all.
     const verifyRow = document.getElementById('email-verify-row');
-    if (verifyRow) verifyRow.hidden = !(profile.mailEnabled && profile.emailVerified === false);
+    const unconfirmed = !!(profile.mailEnabled && profile.emailVerified === false);
+    if (verifyRow) verifyRow.hidden = !unconfirmed;
+    // ...and on Home too (30/9): until it's confirmed the AI does only a few
+    // file actions a day, and a student who never opens Settings didn't know why.
+    const homeVerify = document.getElementById('home-verify');
+    if (homeVerify) homeVerify.hidden = !unconfirmed;
     // The server writes our emails in the app's language - keep it in step.
     const lang = (window.I18N && I18N.lang) || 'en';
     if (profile.lang && profile.lang !== lang) ipcRenderer.invoke('save-profile', { lang }).catch(() => {});
 }
 
-const emailResendBtn = document.getElementById('email-resend-btn');
-if (emailResendBtn) emailResendBtn.onclick = async () => {
-    if (emailResendBtn.disabled) return;
-    emailResendBtn.disabled = true;
+async function resendVerification(btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
     try {
         const res = await ipcRenderer.invoke('auth-resend-verification').catch(e => ({ error: e.message }));
         if (res && res.alreadyVerified) {
             toast.success('Your email is already confirmed.');
             document.getElementById('email-verify-row').hidden = true;
+            const hv = document.getElementById('home-verify'); if (hv) hv.hidden = true;
         } else if (res && res.sent) {
             toast.success('Sent. Check your inbox (and the spam folder).', 'Confirmation email');
         } else {
             toast.error((res && res.error) || 'Please try again later.', 'Couldn\'t send it');
         }
     } finally {
-        emailResendBtn.disabled = false;
+        btn.disabled = false;
     }
-};
+}
+const emailResendBtn = document.getElementById('email-resend-btn');
+if (emailResendBtn) emailResendBtn.onclick = () => resendVerification(emailResendBtn);
+const homeVerifyBtn = document.getElementById('home-verify-btn');
+if (homeVerifyBtn) homeVerifyBtn.onclick = () => resendVerification(homeVerifyBtn);
 
 const finishOnboardBtn = document.getElementById('finish-onboard-btn');
 if (finishOnboardBtn) {
@@ -3742,18 +3773,19 @@ async function loadAndRenderHome() {
         });
 
         if (!nextEventFound) {
-            if (nextTitle) nextTitle.innerText = t('All done for today');
+            // "Done for today" read oddly with open tasks on the same screen.
+            if (nextTitle) nextTitle.innerText = t('Nothing more on the calendar today');
             if (nextTime) nextTime.innerText = "Today's classes and events are over.";
-            if (sidebarNextTitle) sidebarNextTitle.innerText = t('All done for today');
+            if (sidebarNextTitle) sidebarNextTitle.innerText = t('Nothing more on the calendar today');
             if (sidebarNextMeta) sidebarNextMeta.innerText = tasks.length > 0 ? `${tasks.length} open task${tasks.length === 1 ? '' : 's'}` : '';
         }
     }
     
     const hour = new Date().getHours();
-    let greeting = "Good night";
-    if (hour >= 6 && hour < 12) greeting = "Good morning";
-    else if (hour >= 12 && hour < 18) greeting = "Good afternoon";
-    else if (hour >= 18 && hour < 22) greeting = "Good evening";
+    // No "Good night" (review fix 30/9): in Hebrew "לילה טוב" is a goodbye.
+    let greeting = "Good evening";
+    if (hour >= 5 && hour < 12) greeting = "Good morning";
+    else if (hour >= 12 && hour < 17) greeting = "Good afternoon";
     
     const greetingEl = document.getElementById('home-greeting-time');
     if (greetingEl) greetingEl.innerText = greeting;
@@ -4053,11 +4085,13 @@ if (copyLogBtn) {
 const resetBtn = document.getElementById('settings-hard-reset-btn');
 if (resetBtn) {
     resetBtn.onclick = async () => {
-        const sure = await confirmDialog("Reset everything?", "This deletes all tasks, calendar events, folders and files. Your profile is kept. This cannot be undone.", { confirmText: "Reset everything", danger: true });
+        const sure = await confirmDialog("Reset everything?", "This deletes all tasks, calendar events, folders and files, and all your practice questions, answers and mock exams. Your account is kept. This cannot be undone.", { confirmText: "Reset everything", danger: true });
         if (sure) {
-            await ipcRenderer.invoke('hard-reset');
+            const res = await ipcRenderer.invoke('hard-reset').catch(e => ({ error: e.message }));
+            // Said "done" even when it failed (review fix 30/9).
+            if (res && res.error) { toast.error(res.error, t('Nothing was reset')); return; }
             toast.success("A new semester begins!", "System reset");
-            location.reload(); 
+            location.reload();
         }
     };
 }
@@ -4097,16 +4131,19 @@ if (generateWeeklyAiBtn) {
             // Blocks the planner placed last time are removed first (through
             // delete-event, so their Google Calendar copies go too); events
             // the user added themselves are never touched.
+            // The new plan is built FIRST, around everything except the old
+            // plan's blocks; only when it came back are those removed (review
+            // fix 30/9 - a failed plan used to leave the student with none).
             const previousPlan = events.filter(e => e.autoScheduled);
-            for (const old of previousPlan) {
-                await ipcRenderer.invoke('delete-event', old.id);
-            }
             if (previousPlan.length) events = events.filter(e => !e.autoScheduled);
 
             const aiResponse = await ipcRenderer.invoke('generate-weekly-plan', tasks, events);
             const parsed = JSON.parse(aiResponse);
             const newPlan = Array.isArray(parsed) ? parsed : (parsed.plan || []);
             const unplaced = (parsed && parsed.unplaced) || [];
+            if (!parsed.error && newPlan.length > 0) {
+                for (const old of previousPlan) await ipcRenderer.invoke('delete-event', old.id);
+            }
 
             if (parsed.error) {
                 toast.error("Could not build a plan: " + parsed.error);

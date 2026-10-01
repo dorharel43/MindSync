@@ -192,6 +192,15 @@
                 <div class="home-date" id="home-date"></div>
             </div>
 
+            <!-- Email not confirmed (30/9) - see loadProfile. -->
+            <div class="home-verify" id="home-verify" hidden>
+                <div class="home-verify__text">
+                    <strong>Confirm your email</strong>
+                    <span>The link is in your inbox - check the spam folder too. Until it's confirmed, the AI does only a few file actions a day.</span>
+                </div>
+                <button class="btn-secondary btn-sm" id="home-verify-btn">Send it again</button>
+            </div>
+
             <!-- Getting started: shown to new users until the first steps are
                  done (or they hide it). Testers landed on a Home full of zeros
                  with nothing telling them what to do first - this does. The
