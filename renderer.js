@@ -3051,27 +3051,41 @@ async function timetablePayload(file) {
         if (file.size > TIMETABLE_MAX_BYTES) throw new Error(t('This PDF is too large. Take a screenshot of the timetable instead.'));
         return { mimeType: 'application/pdf', data: await readAsBase64(file) };
     }
+    return shrinkPhoto(file, {
+        maxBytes: TIMETABLE_MAX_BYTES,
+        tooLarge: t('The picture is too large. Take a screenshot instead, or crop it to the timetable.'),
+        cantOpen: t('This picture can\'t be opened here. Take a screenshot of it and choose that instead.')
+    });
+}
+
+// A photo as a JPEG made here, in the browser (white behind transparency):
+// the first of `steps` (longest side, quality) that fits `maxBytes`. A format
+// this browser can't draw (HEIC on Chrome) goes as it is, if small enough.
+async function shrinkPhoto(file, { maxBytes, tooLarge, cantOpen, steps = [[2000, 0.9]] }) {
     try {
         const img = await loadImage(file);
-        const scale = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
-        canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';   // a transparent PNG would turn black as a JPEG
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.9));
-        if (!blob) throw new Error('encode');
-        if (blob.size > TIMETABLE_MAX_BYTES) throw new Error(t('The picture is too large. Take a screenshot instead, or crop it to the timetable.'));
+        let blob = null;
+        for (const [edge, quality] of steps) {
+            const scale = Math.min(1, edge / Math.max(img.naturalWidth, img.naturalHeight));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+            canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';   // a transparent PNG would turn black as a JPEG
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
+            if (!blob) throw new Error('encode');
+            if (blob.size <= maxBytes) break;
+        }
+        if (blob.size > maxBytes) throw new Error(tooLarge);
         return { mimeType: 'image/jpeg', data: await readAsBase64(blob) };
     } catch (err) {
         if (err.message !== 'decode' && err.message !== 'encode') throw err;
-        // A format this browser can't draw (HEIC on Chrome): send it as it is, if small enough.
-        if (/^image\/(png|jpeg|webp|heic|heif)$/.test(file.type) && file.size <= TIMETABLE_MAX_BYTES) {
+        if (/^image\/(png|jpeg|webp|heic|heif)$/.test(file.type) && file.size <= maxBytes) {
             return { mimeType: file.type, data: await readAsBase64(file) };
         }
-        throw new Error(t('This picture can\'t be opened here. Take a screenshot of it and choose that instead.'));
+        throw new Error(cantOpen);
     }
 }
 
@@ -7371,8 +7385,81 @@ const FULL_STAGE_TEXT = {
     grading: 'Grading your answers…'
 };
 
+// Photographed answers of the sitting in progress ("q:p" -> [{ mimeType, data }]):
+// in memory and on this device (IndexedDB, so the sitting can be continued).
+// They go only to the reading of the handwriting and are deleted after grading.
+const fullPhotos = new Map();
+const FULL_PHOTOS_PER_PART = 3;
+const FULL_PHOTO_MAX_BYTES = 700 * 1024;   // 3 of them fit one request
+function fullPhotoDb() {
+    return new Promise((resolve, reject) => {
+        const r = indexedDB.open('mindsync-photos', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('runs');
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+    });
+}
+async function fullPhotosStore(mode, runId, value) {
+    if (!runId) return null;
+    try {
+        const db = await fullPhotoDb();
+        return await new Promise((resolve) => {
+            const tx = db.transaction('runs', mode === 'get' ? 'readonly' : 'readwrite');
+            const store = tx.objectStore('runs');
+            const r = mode === 'get' ? store.get(runId) : mode === 'put' ? store.put(value, runId) : store.delete(runId);
+            r.onsuccess = () => resolve(mode === 'get' ? r.result || null : true);
+            r.onerror = () => resolve(null);
+        });
+    } catch (e) { return null; }   // no storage here: the photos live in memory only
+}
+const saveFullPhotos = () => fullPhotosStore('put', fullState.clientRunId, [...fullPhotos.entries()]);
+async function loadFullPhotos(runId) {
+    const saved = await fullPhotosStore('get', runId);
+    // Another sitting started meanwhile: these photos aren't its.
+    if (!fullState.running || fullState.clientRunId !== runId) return false;
+    fullPhotos.clear();
+    if (Array.isArray(saved)) for (const [k, v] of saved) if (Array.isArray(v) && v.length) fullPhotos.set(k, v);
+    // A part the draft says has photos that this device didn't keep: not answered.
+    let lost = 0;
+    for (const [k, a] of Object.entries(fullState.answers)) {
+        const n = (fullPhotos.get(k) || []).length;
+        if ((a.photos || 0) !== n) { if ((a.photos || 0) > n) lost += 1; fullState.answers[k] = { ...a, photos: n }; }
+    }
+    if (lost) { saveFullDraft(); toast.info(t('Some photos weren\'t kept on this device - photograph them again.')); }
+    return true;
+}
+// Photos of sittings that can't be continued any more (graded, or left
+// behind): deleted when the full exam opens.
+async function pruneFullPhotos() {
+    const live = new Set();
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (!k || !k.startsWith('mindsync.fullExam.')) continue;
+            const d = JSON.parse(localStorage.getItem(k) || 'null');
+            if (d && d.clientRunId && !d.submitted) live.add(d.clientRunId);
+        }
+    } catch (e) { return; }   // no way to tell what is live: keep everything
+    try {
+        const db = await fullPhotoDb();
+        const tx = db.transaction('runs', 'readwrite');
+        const store = tx.objectStore('runs');
+        const r = store.getAllKeys();
+        r.onsuccess = () => { for (const k of r.result || []) if (!live.has(k) && k !== fullState.clientRunId) store.delete(k); };
+    } catch (e) { /* no storage here */ }
+}
+// Worked out on paper: the writer says so; an older exam - maths in the text.
+const FULL_MATHY = /[∫∑Σ√∞≤≥≠∂π∇²³]|\^|\b(lim|sin|cos|tan|log|ln|dx|dy)\b|\d\s*[+\-*/=]\s*\d/;
+// A part graded by the choice alone takes a photo too, by the student's
+// choice: it never changes the points - if the choice is wrong, the AI shows
+// where the working went wrong.
+function fullTakesPhoto(p, exam = fullState.exam) {
+    if (p.type === 'code') return false;
+    return exam && exam.handwrittenMarked ? p.handwritten === true : FULL_MATHY.test(p.text || '');
+}
+
 function showFullPart(part) {
-    ['full-setup', 'full-building', 'full-intro', 'full-run', 'full-grading', 'full-result']
+    ['full-setup', 'full-building', 'full-intro', 'full-run', 'full-grading', 'full-result', 'full-reading', 'full-transcripts']
         .forEach(id => { document.getElementById(id).hidden = id !== part; });
     window.scrollTo(0, 0);
 }
@@ -7422,12 +7509,14 @@ async function stopFullExam(ask = true) {
     clearInterval(fullState.timer);
     fullState.running = false;
     fullState.token += 1;   // a build or grading still running belongs to the old screen
+    if (fullState.cancelReading) fullState.cancelReading();
     if (box) box.hidden = true;
     return true;
 }
 
 async function openFullExam(course) {
     if (!(await stopExam())) return false;
+    pruneFullPhotos();
     ['study-home', 'study-session', 'study-summary', 'study-review', 'study-manage', 'study-exam'].forEach(id => {
         const el = document.getElementById(id); if (el) el.hidden = true;
     });
@@ -7749,7 +7838,13 @@ document.getElementById('full-start-btn').onclick = () => {
     tickFullExam();
     showFullPart('full-run');
     renderFullNav();
+    fullPhotos.clear();
     renderFullQuestion();
+    // A continued sitting: its photos come back from this device.
+    if (draft) {
+        const runId = fullState.clientRunId;
+        loadFullPhotos(runId).then((mine) => { if (mine) { renderFullNav(); renderFullQuestion(); } });
+    }
 };
 
 function tickFullExam() {
@@ -7767,7 +7862,8 @@ function tickFullExam() {
 }
 
 const fullKey = (qi, pi) => `${qi}:${pi}`;
-const fullAnswered = (a) => !!a && (a.dontKnow === true || !!String(a.choice || '').trim() || !!String(a.text || '').trim());
+// (a photo of the working answers a written part - not a choice: there the choice is the answer)
+const fullAnswered = (a, p) => !!a && (a.dontKnow === true || (a.photos > 0 && !(p && fullAutoMarked(p))) || !!String(a.choice || '').trim() || !!String(a.text || '').trim());
 // Parts marked by the choice alone - "I don't know" doesn't apply to them.
 const fullAutoMarked = (p) => (p.type === 'mc' || p.type === 'tf') && !p.reasonRequired;
 function fullBonusBadge() {
@@ -7781,7 +7877,7 @@ function renderFullNav() {
     const nav = document.getElementById('full-nav');
     nav.textContent = '';
     fullState.exam.questions.forEach((q, qi) => {
-        const answered = q.parts.filter((p, pi) => fullAnswered(fullState.answers[fullKey(qi, pi)])).length;
+        const answered = q.parts.filter((p, pi) => fullAnswered(fullState.answers[fullKey(qi, pi)], p)).length;
         const need = q.choosePartsCount > 0 ? q.choosePartsCount : q.parts.length;
         const b = document.createElement('button');
         b.type = 'button';
@@ -7805,6 +7901,92 @@ function setFullAnswer(qi, pi, patch) {
     fullState.answers[k] = { ...(fullState.answers[k] || { choice: '', text: '' }), ...patch };
     saveFullDraft();
     renderFullNav();
+}
+
+// "Photograph your solution": up to 3 pages, shown as thumbnails.
+function fullPhotoBlock(qi, pi, p) {
+    const feedbackOnly = fullAutoMarked(p);
+    const key = fullKey(qi, pi);
+    const wrap = document.createElement('div');
+    wrap.className = 'full-photos';
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    input.hidden = true;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-secondary btn-sm full-photos__btn';
+    const list = document.createElement('div');
+    list.className = 'full-photos__list';
+    const hint = document.createElement('p');
+    hint.className = 'full-photos__hint';
+    const draw = () => {
+        const photos = fullPhotos.get(key) || [];
+        list.textContent = '';
+        photos.forEach((ph, i) => {
+            const item = document.createElement('div');
+            item.className = 'full-photos__item';
+            const img = document.createElement('img');
+            img.src = `data:${ph.mimeType};base64,${ph.data}`;
+            img.alt = t('Page {n}').replace('{n}', i + 1);
+            const del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'full-photos__del';
+            del.textContent = '×';
+            del.title = t('Remove this page');
+            del.onclick = () => {
+                photos.splice(i, 1);
+                if (photos.length) fullPhotos.set(key, photos); else fullPhotos.delete(key);
+                saveFullPhotos();
+                pagesChanged(photos.length);
+            };
+            item.append(img, del);
+            list.appendChild(item);
+        });
+        btn.textContent = photos.length ? t('Add a page') : t(feedbackOnly ? 'Photograph your working (optional)' : 'Photograph your solution');
+        btn.hidden = photos.length >= FULL_PHOTOS_PER_PART;
+        hint.textContent = feedbackOnly
+            ? t('The points are for the choice only. If it is wrong, the AI looks at your working and shows where it went wrong.')
+            : photos.length ? t('The AI copies your handwriting when you submit - you check the copy before grading.')
+            : t('Solved it on paper? Photograph it (up to 3 pages) instead of typing.');
+    };
+    btn.onclick = () => input.click();
+    input.onchange = async () => {
+        const files = [...input.files];
+        input.value = '';
+        btn.disabled = true;
+        for (const f of files) {
+            const photos = fullPhotos.get(key) || [];
+            if (photos.length >= FULL_PHOTOS_PER_PART) break;
+            try {
+                photos.push(await shrinkPhoto(f, {
+                    maxBytes: FULL_PHOTO_MAX_BYTES, steps: [[1800, 0.85], [1500, 0.75], [1200, 0.65]],
+                    tooLarge: t('This photo is too large. Take it again, closer to the page.'),
+                    cantOpen: t('This picture can\'t be opened here. Take it again as a regular photo.')
+                }));
+                fullPhotos.set(key, photos);
+            } catch (e) { toast.error(e.message); }
+        }
+        btn.disabled = false;
+        saveFullPhotos();
+        pagesChanged((fullPhotos.get(key) || []).length);
+    };
+    // New pages make an old copy wrong: back to what was typed, read again on submit.
+    const pagesChanged = (count) => {
+        const a = fullState.answers[key] || {};
+        if (a.fromPhoto) {
+            setFullAnswer(qi, pi, { photos: count, text: a.typed || '', fromPhoto: false, photoEdited: false, photosRead: 0 });
+            toast.info(t('The pages changed - they are read again when you submit.'));
+            renderFullQuestion();
+            return;
+        }
+        setFullAnswer(qi, pi, { photos: count });
+        draw();
+    };
+    wrap.append(btn, input, list, hint);
+    draw();
+    return wrap;
 }
 
 // A written answer (a solution, code, a proof - or the reason for a choice).
@@ -7918,6 +8100,7 @@ function renderFullQuestion() {
             box.appendChild(opts);
             // "Circle and explain": the reason is part of the answer.
             if (p.reasonRequired) box.appendChild(fullAnswerBox(qi, pi, p, a));
+            if (fullTakesPhoto(p)) box.appendChild(fullPhotoBlock(qi, pi, p));
         } else {
             if (p.type === 'tf') {
                 const tf = document.createElement('div');
@@ -7937,6 +8120,7 @@ function renderFullQuestion() {
                 box.appendChild(tf);
             }
             if (p.type !== 'tf' || p.reasonRequired) box.appendChild(fullAnswerBox(qi, pi, p, a));
+            if (fullTakesPhoto(p)) box.appendChild(fullPhotoBlock(qi, pi, p));
         }
         // "I don't know" - only where the past exams give points for it.
         if (exam.dontKnowShare > 0 && !fullAutoMarked(p) && !q.bonus) {
@@ -7948,7 +8132,7 @@ function renderFullQuestion() {
             const s = document.createElement('span');
             s.textContent = t('I don\'t know ({p}% of the points)').replace('{p}', Math.round(exam.dontKnowShare * 100));
             dk.append(cb, s);
-            const lock = () => box.querySelectorAll('textarea, input[type=radio]').forEach(el => { el.disabled = cb.checked; });
+            const lock = () => box.querySelectorAll('textarea, input[type=radio], .full-photos button').forEach(el => { el.disabled = cb.checked; });
             cb.onchange = () => { setFullAnswer(qi, pi, { dontKnow: cb.checked }); lock(); };
             box.appendChild(dk);
             lock();
@@ -7980,13 +8164,160 @@ function renderFullQuestion() {
 
 document.getElementById('full-submit-btn').onclick = () => submitFullExam(false);
 
+// The photographed parts, read one by one, then a screen to check the copy.
+// Resolves true to go on to grading; false when the student left meanwhile
+// (the sitting stays on this device and can be continued).
+async function readFullPhotoAnswers(exam, token) {
+    const todo = [];
+    exam.questions.forEach((q, qi) => q.parts.forEach((p, pi) => {
+        const photos = fullPhotos.get(fullKey(qi, pi)) || [];
+        const a = fullState.answers[fullKey(qi, pi)] || {};
+        // (already read and checked - a grading that failed is submitted again - unless pages changed)
+        if (photos.length && fullTakesPhoto(p, exam) && !fullAutoMarked(p) && a.dontKnow !== true && !(a.fromPhoto && a.photosRead === photos.length)) todo.push({ q, qi, p, pi, photos });
+    }));
+    if (!todo.length) return true;
+    let cancelled = false;
+    const stop = () => { cancelled = true; fullState.grading = false; };
+    const stillHere = () => !cancelled && fullState.token === token;
+    // Leaving now (stopFullExam) frees the exam at once - a read still on its way is ignored.
+    fullState.cancelReading = () => { fullState.cancelReading = null; stop(); };
+    showFullPart('full-reading');
+    const read = async (item) => {
+        const r = await ipcRenderer.invoke('full-exam-read-photos', { text: item.p.text, stem: item.q.stem || '', images: item.photos })
+            .catch(err => ({ error: err.message }));
+        item.result = r || { error: t('Please try again.') };
+    };
+    for (let i = 0; i < todo.length; i++) {
+        if (!stillHere()) { if (!cancelled) stop(); return false; }
+        document.getElementById('full-reading-text').textContent = t('Reading your handwriting… {d} of {n}').replace('{d}', i + 1).replace('{n}', todo.length);
+        await read(todo[i]);
+    }
+    if (!stillHere()) { if (!cancelled) stop(); return false; }
+    return new Promise((resolve) => {
+        fullState.cancelReading = () => { fullState.cancelReading = null; stop(); resolve(false); };
+        const list = document.getElementById('full-transcripts-list');
+        list.textContent = '';
+        for (const item of todo) {
+            const a = fullState.answers[fullKey(item.qi, item.pi)] || {};
+            const card = document.createElement('div');
+            card.className = 'full-transcript';
+            const h = document.createElement('div');
+            h.className = 'full-transcript__head';
+            h.textContent = `${t('Question')} ${item.qi + 1}${item.p.label ? ` · ${item.p.label}` : ''}`;
+            const pics = document.createElement('div');
+            pics.className = 'full-photos__list';
+            item.photos.forEach((ph, i) => {
+                const img = document.createElement('img');
+                img.src = `data:${ph.mimeType};base64,${ph.data}`;
+                img.alt = t('Page {n}').replace('{n}', i + 1);
+                img.className = 'full-transcript__img';
+                img.onclick = () => img.classList.toggle('is-large');
+                pics.appendChild(img);
+            });
+            const ta = document.createElement('textarea');
+            ta.className = 'input-field full-answer';
+            // Hebrew with maths: a line starting with "f(x)" shouldn't turn the whole copy left-to-right.
+            ta.dir = exam.language === 'he' || /[\u0590-\u05ff]/.test(item.p.text || '') ? 'rtl' : 'auto';
+            const note = document.createElement('p');
+            note.className = 'full-transcript__note';
+            const fill = () => {
+                const r = item.result;
+                // What was typed stays; the copy of the page comes after it.
+                item.typed = String(a.typed !== undefined ? a.typed : a.text || '').trim();
+                item.start = [item.typed, r.error ? '' : r.text].filter(Boolean).join('\n\n');
+                ta.value = item.start;
+                note.textContent = r.error ? `${t('Couldn\'t read the photo:')} ${t(r.error)}`
+                    : !r.text ? (r.problem || t('No answer was found in the photo.'))
+                    // each one isolated, so "0·f'(x0)" keeps its own direction
+                    : r.unsure && r.unsure.length ? `${t('Not sure of:')} ${r.unsure.map(u => `\u2068${u}\u2069`).join(', ')}` : '';
+                note.classList.toggle('is-error', !!r.error || !r.text);
+                again.hidden = !r.error && !!r.text;
+            };
+            const again = document.createElement('button');
+            again.type = 'button';
+            again.className = 'btn-secondary btn-sm';
+            again.textContent = t('Read it again');
+            again.onclick = async () => {
+                again.disabled = true;
+                again.textContent = t('Reading…');
+                await read(item);
+                again.disabled = false;
+                again.textContent = t('Read it again');
+                if (stillHere()) fill();
+            };
+            item.box = ta;
+            card.append(h, pics, ta, note, again);
+            list.appendChild(card);
+            fill();
+        }
+        showFullPart('full-transcripts');
+        document.getElementById('full-transcripts-done').onclick = () => {
+            if (!stillHere()) return;
+            fullState.cancelReading = null;
+            for (const item of todo) {
+                const k = fullKey(item.qi, item.pi);
+                const text = item.box.value.trim();
+                // "from a photo" only when something was copied from it
+                const copied = !item.result.error && !!item.result.text;
+                fullState.answers[k] = { ...(fullState.answers[k] || { choice: '' }), text, typed: item.typed, photosRead: copied ? item.photos.length : 0, fromPhoto: copied, photoEdited: copied && text !== item.start.trim() };
+            }
+            showFullPart('full-grading');
+            resolve(true);
+        };
+    });
+}
+
+// "Where did I go wrong?" for each wrong choice with a photo of the working:
+// shown under the part (if the result is on screen) and saved with the result.
+async function fullPhotoFeedback(exam, run, jobs) {
+    const runId = String(run.id || run._id);
+    const box = (job) => document.querySelector(`#full-result-questions .full-rpart[data-key="${job.qi}:${job.pi}"]`);
+    const show = (job, text, state) => {
+        if (fullState.resultRunId !== runId) return;
+        const part = box(job);
+        if (!part) return;
+        let el = part.querySelector('.full-photo-fb');
+        if (!el) {
+            el = document.createElement('div');
+            el.className = 'full-photo-fb';
+            el.setAttribute('translate', 'no');
+            el.dir = 'auto';
+            part.insertBefore(el, part.querySelector('details'));
+        }
+        el.textContent = text;
+        el.classList.toggle('is-loading', state === 'loading');
+        el.classList.toggle('is-error', state === 'error');
+    };
+    for (const job of jobs) {
+        show(job, t('Looking at your working…'), 'loading');
+        const r = await ipcRenderer.invoke('full-exam-photo-feedback', {
+            part: { type: job.p.type, text: job.p.text, options: job.p.options, correct: job.p.correct, answer: job.p.answer },
+            stem: job.q.stem || '', choice: job.choice, images: job.photos
+        }).catch(err => ({ error: err.message }));
+        if (r && r.feedback) {
+            show(job, `${t('Where it went wrong:')} ${r.feedback}`);
+            const row = (run.answers || []).find(x => x.q === job.qi && x.p === job.pi);
+            if (row) row.photoFeedback = r.feedback;
+            // Saved with the result (once more if the first try fails); if it still
+            // can't be, say so - it is shown now but won't be there next time.
+            const save = () => ipcRenderer.invoke('full-exam-save-photo-feedback', { examId: exam.id, runId, q: job.qi, p: job.pi, feedback: r.feedback }).catch(err => ({ error: err.message }));
+            let saved = await save();
+            if (!saved || saved.error) saved = await save();
+            if (!saved || saved.error) show(job, `${t('Where it went wrong:')} ${r.feedback}\n(${t('Not saved - it is shown only now.')})`);
+        } else {
+            show(job, `${t('Couldn\'t look at your working:')} ${t((r && r.error) || 'Please try again.')}`, 'error');
+        }
+        job.photos = null;   // done with them
+    }
+}
+
 async function submitFullExam(timeUp) {
     const exam = fullState.exam;
     if (!exam || !fullState.running || fullState.grading) return;
     if (!timeUp) {
         const empty = exam.questions.reduce((n, q, qi) => {
             const need = q.choosePartsCount > 0 ? q.choosePartsCount : q.parts.length;
-            const done = q.parts.filter((p, pi) => fullAnswered(fullState.answers[fullKey(qi, pi)])).length;
+            const done = q.parts.filter((p, pi) => fullAnswered(fullState.answers[fullKey(qi, pi)], p)).length;
             return n + Math.max(0, need - done);
         }, 0);
         const ok = await confirmDialog(t('Submit the exam?'),
@@ -8002,11 +8333,13 @@ async function submitFullExam(timeUp) {
     fullState.running = false;
     fullState.grading = true;
     const token = ++fullState.token;
+    const usedSec = Math.round((Date.now() - fullState.startedAt) / 1000);   // reading the photos isn't exam time
+    // Photographed answers: copied by the AI, checked by the student.
+    if (!(await readFullPhotoAnswers(exam, token))) return;
     const answers = Object.entries(fullState.answers).map(([k, a]) => {
         const [q, p] = k.split(':').map(Number);
-        return { q, p, choice: a.choice || '', text: a.text || '', dontKnow: a.dontKnow === true };
+        return { q, p, choice: a.choice || '', text: a.text || '', dontKnow: a.dontKnow === true, fromPhoto: a.fromPhoto === true, photoEdited: a.photoEdited === true };
     });
-    const usedSec = Math.round((Date.now() - fullState.startedAt) / 1000);
     const clientRunId = fullState.clientRunId;
     markFullDraft(exam.id, clientRunId, true);
     document.getElementById('full-grading-text').textContent = t('Grading your answers…');
@@ -8022,6 +8355,7 @@ async function submitFullExam(timeUp) {
         if (timeUp) fullState.autoSubmitFailed = true;
         fullState.timer = setInterval(tickFullExam, 1000);
         showFullPart('full-run');
+        renderFullQuestion();   // a photographed answer now holds its copy
         toast.error((start && start.error) || t('Couldn\'t start grading. Try again.'));
         return;
     }
@@ -8037,12 +8371,27 @@ async function submitFullExam(timeUp) {
             if (timeUp) fullState.autoSubmitFailed = true;
             fullState.timer = setInterval(tickFullExam, 1000);
             showFullPart('full-run');
+            renderFullQuestion();
             toast.error(out.error, t('The exam wasn\'t graded'));
         }
         return;
     }
     clearFullDraft(exam.id, clientRunId);
-    if (fullState.token === token && !document.getElementById('study-full').hidden) renderFullResult(exam, out.result.run);
+    // A wrong choice with a photo of its working: feedback after the result
+    // (these photos stay in memory until then; none are kept on the device).
+    const run = out.result.run;
+    const feedback = [];
+    exam.questions.forEach((q, qi) => q.parts.forEach((p, pi) => {
+        const photos = fullPhotos.get(fullKey(qi, pi));
+        const row = (run.answers || []).find(r => r.q === qi && r.p === pi);
+        if (photos && photos.length && fullAutoMarked(p) && row && row.status === 'graded' && row.points < row.max && String(row.choice || '')) {
+            feedback.push({ q, qi, p, pi, photos, choice: row.choice });
+        }
+    }));
+    fullPhotosStore('delete', clientRunId);   // the photos aren't kept after grading
+    if (fullState.clientRunId === clientRunId) fullPhotos.clear();
+    if (fullState.token === token && !document.getElementById('study-full').hidden) renderFullResult(exam, run);
+    if (feedback.length) fullPhotoFeedback(exam, run, feedback);
 }
 
 async function showLastFullResult(examId) {
@@ -8140,6 +8489,7 @@ function renderFullResult(exam, run) {
             const r = rows[pi] || { choice: '', text: '', points: 0, max: p.points, status: 'blank', feedback: '' };
             const part = document.createElement('div');
             part.className = 'full-rpart';
+            part.dataset.key = `${qi}:${pi}`;
             const ph = document.createElement('div');
             ph.className = 'full-rpart__head';
             const lab = document.createElement('span');
@@ -8174,6 +8524,12 @@ function renderFullResult(exam, run) {
                 else shown = r.text;
                 mine.textContent = shown || t('No answer');
                 part.appendChild(mine);
+                if (r.fromPhoto) {
+                    const src = document.createElement('div');
+                    src.className = 'full-check';
+                    src.textContent = r.photoEdited ? t('Copied from your photo, and corrected by you.') : t('Copied from your photo.');
+                    part.appendChild(src);
+                }
             }
             if (r.feedback) {
                 const fb = document.createElement('div');
@@ -8183,6 +8539,15 @@ function renderFullResult(exam, run) {
                 fb.textContent = r.feedback;
                 part.appendChild(fb);
             }
+            if (r.photoFeedback) {
+                const pf = document.createElement('div');
+                pf.className = 'full-photo-fb';
+                pf.setAttribute('translate', 'no');
+                pf.dir = 'auto';
+                pf.textContent = `${t('Where it went wrong:')} ${r.photoFeedback}`;
+                part.appendChild(pf);
+            }
+
             const det = document.createElement('details');
             const sum = document.createElement('summary');
             sum.textContent = t('The solution');
