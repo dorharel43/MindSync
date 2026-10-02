@@ -2960,14 +2960,16 @@ async function confirmSyllabusImport() {
             state.saving = false;
             syllabusCancel.disabled = false;
             if (syllabusState !== state) return;
-            // The start just read can change which classes are already in the
-            // Planner, and so their ticks - the student sees that before adding.
-            const nowPicked = state.items.filter(i => i.checked);
-            if (nowPicked.length !== picked.length || nowPicked.some(i => !picked.includes(i))) {
-                updateSyllabusConfirm();
-                toast.info(t('The start date changed which classes are ticked - check them and press Add again.'));
-                return;
-            }
+        }
+        // The start just read can change which classes are already in the
+        // Planner, and so their ticks - the student sees that before adding.
+        // By time, not by comparing ticks: a start read locally lands between
+        // the press and the click, before `picked` was taken.
+        if (state.ticksChangedAt && Date.now() - state.ticksChangedAt < 1000) {
+            state.ticksChangedAt = 0;
+            updateSyllabusConfirm();
+            toast.info(t('The start date changed which classes are ticked - check them and press Add again.'));
+            return;
         }
         if (!state.until && !state.noEnd) { updateSyllabusConfirm(); return; }
         if (state.fromError || timetableEndsBeforeStart(state)) { updateSyllabusConfirm(); return; }
@@ -3403,7 +3405,7 @@ function refreshTimetableExisting(state) {
         item.checked = !exists && item.everyWeek !== false;
         changed = true;
     }
-    if (changed) renderSyllabusList();
+    if (changed) { state.ticksChangedAt = Date.now(); renderSyllabusList(); }
 }
 function timetableEndsBeforeStart(state) {
     return !!(state.from && state.until && !state.noEnd && state.until < state.from);
