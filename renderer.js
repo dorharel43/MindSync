@@ -2960,6 +2960,14 @@ async function confirmSyllabusImport() {
             state.saving = false;
             syllabusCancel.disabled = false;
             if (syllabusState !== state) return;
+            // The start just read can change which classes are already in the
+            // Planner, and so their ticks - the student sees that before adding.
+            const nowPicked = state.items.filter(i => i.checked);
+            if (nowPicked.length !== picked.length || nowPicked.some(i => !picked.includes(i))) {
+                updateSyllabusConfirm();
+                toast.info(t('The start date changed which classes are ticked - check them and press Add again.'));
+                return;
+            }
         }
         if (!state.until && !state.noEnd) { updateSyllabusConfirm(); return; }
         if (state.fromError || timetableEndsBeforeStart(state)) { updateSyllabusConfirm(); return; }
@@ -3425,6 +3433,7 @@ if (syllabusFromText) {
         if (!syllabusFromText.value.trim()) {
             state.from = null; state.fromTextApplied = '';
             if (syllabusFromDate) syllabusFromDate.value = '';
+            refreshTimetableExisting(state);   // judged at today again
         }
         updateSyllabusConfirm();
     });

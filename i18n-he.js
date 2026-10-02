@@ -194,6 +194,7 @@
         'Couldn\'t tell the date. Try writing it like "11.10".': 'לא הצלחנו להבין את התאריך. כדאי לכתוב אותו כך: "11.10".',
         'That day has passed - the classes start from today.': 'היום הזה כבר עבר - השיעורים יתחילו מהיום.',
         'That date is too far ahead.': 'התאריך הזה רחוק מדי.',
+        'The start date changed which classes are ticked - check them and press Add again.': 'תאריך ההתחלה שינה אילו שיעורים מסומנים - כדאי לבדוק אותם וללחוץ שוב על הוספה.',
         'Also delete the other class from the same timetable': 'למחוק גם את השיעור השני מאותה מערכת שעות',
         "I don't know yet - add them with no end date": 'עוד לא ידוע - להוסיף בלי תאריך סיום',
         'The file could not be read.': 'לא הצלחנו לקרוא את הקובץ.',
