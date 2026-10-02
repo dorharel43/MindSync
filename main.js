@@ -968,7 +968,7 @@ ipcMain.handle('full-exam-photo-feedback', async (event, payload = {}) => {
             { forceJson: true, maxTokens: 4000, thinkingLevel: 'medium', timeoutMs: 120000, noFallback: true });
         let out;
         try { out = JSON.parse(extractJsonFromText(String(raw))); } catch (e) { return { error: 'The AI didn\'t return the text. Try again.' }; }
-        const feedback = cleanExamText(String(out.feedback || '')).slice(0, 3000);
+        const feedback = cutText(cleanExamText(String(out.feedback || '')), 3000);
         return feedback ? { feedback } : { error: 'The AI didn\'t return the text. Try again.' };
     } catch (err) {
         return { error: err.message };
@@ -1008,7 +1008,7 @@ ipcMain.handle('full-exam-read-photos', async (event, payload = {}) => {
         let out;
         try { out = JSON.parse(extractJsonFromText(String(raw))); } catch (e) { return { error: 'The AI didn\'t return the text. Try again.' }; }
         return {
-            text: cleanExamText(String(out.text || '')).slice(0, 20000),
+            text: cutText(cleanExamText(String(out.text || '')), 20000),
             unsure: (Array.isArray(out.unsure) ? out.unsure : []).map(u => String(u || '').slice(0, 80)).filter(Boolean).slice(0, 20),
             problem: String(out.problem || '').slice(0, 300)
         };
@@ -2647,8 +2647,8 @@ ipcMain.handle('make-twin-question', async (event, payload = {}) => {
         const text = await aiProvider.generateText(buildTwinPrompt({ question, answer, practice, referenceByAi: payload.solutionSource === 'ai' }),
             { forceJson: true, maxTokens: practice ? 3000 : 1500, thinkingLevel: practice ? 'medium' : 'low', noFallback: true, timeoutMs: 45000 });
         const data = JSON.parse(extractJsonFromText(String(text)));
-        const q = cleanMathNotation(String(data.question || '').trim()).slice(0, 2000);
-        const a = cleanMathNotation(String(data.answer || '').trim()).slice(0, 4000);
+        const q = cutText(cleanMathNotation(String(data.question || '').trim()), 2000);
+        const a = cutText(cleanMathNotation(String(data.answer || '').trim()), 4000);
         // The same filters generated questions pass: it must stand alone and
         // not be the original again.
         if (q.length < 10 || !a || !isSelfContained(q) || q.toLowerCase() === question.trim().toLowerCase()) return { error: 'No usable twin question came back.' };
@@ -2711,8 +2711,8 @@ async function writeVariants(chunk) {
         if (!orig) continue;
         byId.delete(String(v.id));
         if (v.keep === true) { out.keep.push(orig); continue; }
-        const q = cleanMathNotation(String(v.question || '').trim()).slice(0, 2000);
-        const a = cleanMathNotation(String(v.answer || '').trim()).slice(0, 4000);
+        const q = cutText(cleanMathNotation(String(v.question || '').trim()), 2000);
+        const a = cutText(cleanMathNotation(String(v.answer || '').trim()), 4000);
         const seen = [orig.question, cleanMathNotation(orig.question), ...(orig.pastVersions || [])].map(norm);
         if (q.length < 10 || a.length < 5 || !isSelfContained(q) || FORMULA_RECALL.test(q) || seen.includes(norm(q))) { out.failed.push(orig); continue; }
         out.written.push({ orig, question: q, answer: a });
@@ -2841,9 +2841,11 @@ async function readOriginalFile(sourcePath) {
 // screen never shows a broken formula.
 let katexLib = null;
 try { katexLib = require('katex'); } catch (e) { console.warn('KaTeX not installed - formulas are saved as plain text.'); }
-// $$...$$ / \[...\] (on its own line) or $...$ / \(...\) (inline). Inline $
-// can't touch a space inside ("$5 and $10" is money) - the rule math.js uses.
-const MATH_SEGMENT = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$(?!\s)([^$\n]+?)(?<!\s)\$/g;
+// $$...$$ (on its own line) or $...$ (inline) - the rule math.js uses. Inline
+// $ can't touch a space inside ("$5 and $10" is money), nor be followed by a
+// digit ("$5-$10"). Not \(...\) / \[...\]: the AI is told to use $, and
+// those are regular expressions and shell in code ("grep '\(ab\)*'").
+const MATH_SEGMENT = /\$\$([\s\S]+?)\$\$|\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g;
 // JSON reads a single backslash as an escape: "\frac" arrives as a form feed
 // + "rac", "\beta" as a backspace + "eta", "\theta" as a tab + "heta", "\rho"
 // as a carriage return + "ho", "\neq" as a new line + "eq". Put back before
@@ -2851,31 +2853,53 @@ const MATH_SEGMENT = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\
 // would eat "\rho"). A form feed or backspace is never real text; a tab, a
 // carriage return or a new line only before a command's name - a new line
 // only inside $...$.
+// (A tab or a new line only inside a single-$ formula of a line or two - not
+// $$...$$, where a new line is real, and never across a blank line.)
 function repairJsonTex(text) {
     return String(text)
         .replace(/\f/g, '\\f').replace(/\x08/g, '\\b')
-        .replace(/\t(?=(?:heta|au|imes|ext|extbf|o|an|riangle|op|ilde|frac|imes)(?![a-zA-Z]))/g, '\\t')
         .replace(/\r(?=(?:ho|ightarrow|ight|angle|floor|ceil|vert|Rightarrow)(?![a-zA-Z]))/g, '\\r')
-        .replace(/\$[^$]+\$/g, (m) => m.replace(/\n(?=(?:eq|e|abla|u|ot|otin|eg|mid|exists|subseteq|leq|geq|ewline)(?![a-zA-Z]))/g, '\\n'));
+        .replace(/(?<!\$)\$(?![ \n$])([^$]{1,300}?)(?<![ \n])\$(?![\d$])/g, (m) => /\n\s*\n/.test(m) ? m : m
+            .replace(/\t(?=(?:heta|au|imes|ext|extbf|o|an|riangle|op|ilde|frac)(?![a-zA-Z]))/g, '\\t')
+            .replace(/\n(?=(?:eq|e|abla|u|ot|otin|eg|mid|exists|subseteq|leq|geq|ewline)(?![a-zA-Z]))/g, '\\n'));
 }
-// (Hebrew inside a formula is drawn without the font's metrics - and breaks
-// the rule given to the AI: words stay outside the formula. Flattened.)
+// What KaTeX is never given: a macro definition (\def\a{..}\a\a.. expands
+// for seconds - it would freeze the app, or the server for everyone), the
+// commands that need trust (drawn as red errors), Hebrew (no font metrics,
+// and against the rule given to the AI) or a formula too long to be one.
+const TEX_REFUSED = /\\(?:def|gdef|edef|xdef|let|futurelet|newcommand|renewcommand|providecommand|global|href|url|includegraphics|htmlClass|htmlId|htmlStyle|htmlData)(?![a-zA-Z])|[\u0590-\u05FF]/;
+const KATEX_LIMITS = { throwOnError: true, strict: 'ignore', trust: false, maxSize: 20, maxExpand: 100 };
 function texRenders(tex) {
-    if (!katexLib || /[\u0590-\u05FF]/.test(tex)) return false;
-    try { katexLib.renderToString(tex, { throwOnError: true, strict: 'ignore', trust: false }); return true; } catch (e) { return false; }
+    if (!katexLib || tex.length > 1000 || TEX_REFUSED.test(tex)) return false;
+    try { katexLib.renderToString(tex, KATEX_LIMITS); return true; } catch (e) { return false; }
 }
 // How many formulas were kept / flattened since the start (tools/exam-check
 // reports it: how well the model writes LaTeX).
 const FORMULA_STATS = { kept: 0, flattened: 0 };
+// Text cut to `max` characters - never inside a formula (a cut "$\frac{a}{b"
+// would show as source): back to before its opening $.
+function cutText(text, max) {
+    const t = String(text == null ? '' : text);
+    if (t.length <= max) return t;
+    let cut = t.slice(0, max);
+    for (const m of t.matchAll(MATH_SEGMENT)) {
+        if (m.index >= max) break;
+        if (m.index + m[0].length > max) { cut = t.slice(0, m.index); break; }
+    }
+    return cut.replace(/\s+$/, '');
+}
 // `flatten` turns text (or a formula that can't be drawn) into readable symbols.
 function keepFormulas(text, flatten) {
     const src = String(text == null ? '' : text);
     let out = '', last = 0;
     for (const m of src.matchAll(MATH_SEGMENT)) {
         out += flatten(src.slice(last, m.index));
-        const display = m[1] !== undefined || m[2] !== undefined;
-        const tex = (m[1] ?? m[2] ?? m[3] ?? m[4]).trim();
+        const display = m[1] !== undefined;
+        const tex = (m[1] ?? m[2]).trim();
         const ok = !!tex && texRenders(tex);
+        // A pair that can't be drawn and has no LaTeX command isn't a formula
+        // ("$a&&$b" in shell, "$5 ו-$10"): left exactly as written.
+        if (!ok && !/\\[a-zA-Z]/.test(tex)) { out += m[0]; last = m.index + m[0].length; continue; }
         FORMULA_STATS[ok ? 'kept' : 'flattened'] += 1;
         // (what a broken formula leaves after flattening: its commands without the backslash)
         out += ok ? (display ? `$$${tex}$$` : `$${tex}$`) : flatten(tex).replace(/\\([a-zA-Z]+)/g, '$1');
@@ -3075,7 +3099,7 @@ Return ONLY JSON: {"parts": [{"index": part index, "marks": [{"c": criterion num
 // valid choices, clean text. Returns null if nothing usable is left.
 function normaliseExam(raw, blueprint) {
     const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : d; };
-    const text = (v, max, isCode = false) => cleanExamText(String(v == null ? '' : v), isCode).slice(0, max);
+    const text = (v, max, isCode = false) => cutText(cleanExamText(String(v == null ? '' : v), isCode), max);
     const questions = [];
     // Multiple choice with a required reason only when the past exams ask for one.
     const mcReason = !!(blueprint && Array.isArray(blueprint.questions) && blueprint.questions.some(q => Array.isArray(q.parts) && q.parts.some(x => x && x.type === 'mc' && x.reasonRequired === true)));
@@ -3117,7 +3141,7 @@ function normaliseExam(raw, blueprint) {
 // is no text or no solution.
 function normaliseExamPart(p, { mcReason = false } = {}) {
     const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : d; };
-    const text = (v, max, isCode = false) => cleanExamText(String(v == null ? '' : v), isCode).slice(0, max);
+    const text = (v, max, isCode = false) => cutText(cleanExamText(String(v == null ? '' : v), isCode), max);
     let type = ['mc', 'tf', 'open', 'code'].includes(p.type) ? p.type : 'open';
     const asked = type;
     const options = type === 'mc' ? (Array.isArray(p.options) ? p.options : []).slice(0, 8).map(o => text(o, 1000)).filter(Boolean) : [];
@@ -3296,7 +3320,7 @@ async function checkExam(exam, { keepParts = false } = {}) {
                 // The marking scheme was written for the old (wrong) solution:
                 // take the checker's, or a plain one - never keep the old one.
                 const rubric = (Array.isArray(v.rubric) ? v.rubric : []).slice(0, 12)
-                    .map(r => ({ criterion: cleanExamText(String(r && r.criterion || '')).slice(0, 400), points: Number(r && r.points) || 0 })).filter(r => r.criterion && r.points > 0);
+                    .map(r => ({ criterion: cutText(cleanExamText(String(r && r.criterion || '')), 400), points: Number(r && r.points) || 0 })).filter(r => r.criterion && r.points > 0);
                 const sum = rubric.reduce((n, r) => n + r.points, 0);
                 p.rubric = sum ? rubric.map(r => ({ ...r, points: Math.round((r.points * p.points / sum) * 100) / 100 })) : [{ criterion: 'A complete and correct answer', points: p.points }];
             }
@@ -3577,7 +3601,7 @@ function marksFromAi(part, g) {
         const pts = Number(m && m.points);
         if (!Number.isInteger(c) || c < 0 || c >= rubric.length || marks.some(x => x.c === c) || !Number.isFinite(pts)) return null;
         const max = Number(rubric[c].points) || 0;
-        marks.push({ c, points: Math.max(0, Math.min(max, Math.round(pts * 100) / 100)), note: cleanExamText(String(m.note || '').replace(/\s+/g, ' ')).slice(0, 300) });
+        marks.push({ c, points: Math.max(0, Math.min(max, Math.round(pts * 100) / 100)), note: cutText(cleanExamText(String(m.note || '')).replace(/\s+/g, ' '), 300) });
     }
     return marks.sort((a, b) => a.c - b.c);
 }
@@ -3613,9 +3637,9 @@ async function solveExamParts(course, question) {
         if (part.type !== 'mc' && part.type !== 'tf') correct = '';
         return {
             index: Number(p.index),
-            answer: cleanExamText(String(p.answer || ''), isCode).slice(0, 12000),
+            answer: cutText(cleanExamText(String(p.answer || ''), isCode), 12000),
             rubric: (Array.isArray(p.rubric) ? p.rubric : []).slice(0, 12)
-                .map(r => ({ criterion: cleanExamText(String(r.criterion || '')).slice(0, 400), points: Number(r.points) || 0 })).filter(r => r.criterion),
+                .map(r => ({ criterion: cutText(cleanExamText(String(r.criterion || '')), 400), points: Number(r.points) || 0 })).filter(r => r.criterion),
             correct,
             topic: String(p.topic || '').slice(0, 120)
         };
@@ -3624,7 +3648,7 @@ async function solveExamParts(course, question) {
 
 // The stages above, for the owner's exam check on the server (exported by
 // tools/port-main.py; unused in the desktop app).
-const EXAM_STAGES = { examBlueprint, verifyBlueprintRules, writeExam, checkExam, replaceBrokenParts, autoMarkPart, reasonedChoicePoints, gradeExamQuestion, marksFromAi, pointsFromAi, solveExamParts, normaliseExam, answerIsBlank, cleanExamText, cleanMathNotation, FORMULA_STATS };
+const EXAM_STAGES = { examBlueprint, verifyBlueprintRules, writeExam, checkExam, replaceBrokenParts, autoMarkPart, reasonedChoicePoints, gradeExamQuestion, marksFromAi, pointsFromAi, solveExamParts, normaliseExam, answerIsBlank, cleanExamText, cleanMathNotation, cutText, FORMULA_STATS };
 
 // Graded sittings whose save failed: a retry only saves again, it doesn't
 // pay for the AI grading twice.
@@ -3713,7 +3737,7 @@ async function gradeRowsWithAi(jobs, stage) {
                     if (!g || !(marks || Number.isFinite(Number(g.points)) || (reasoned && /^(full|partial|wrong|none)$/i.test(String(g.reason || '').trim())))) { it.row.status = 'unchecked'; continue; }
                     it.row.points = reasoned ? reasonedChoicePoints(it.part, g) : pointsFromAi(it.part, g, marks);
                     it.row.marks = marks || [];
-                    it.row.feedback = cleanExamText(String(g.feedback || '')).slice(0, 3000);
+                    it.row.feedback = cutText(cleanExamText(String(g.feedback || '')), 3000);
                 }
             } catch (err) {
                 console.warn('⚠️ full exam grading: a question failed:', err.message);

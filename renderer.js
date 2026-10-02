@@ -835,6 +835,15 @@ const outOfLabel = (got, max) => `\u2066${got} / ${max}\u2069`;
 // el.textContent = text, with its formulas drawn (math.js; plain text if it
 // isn't loaded). Not for code - its $ are never maths.
 const setMathText = (el, text) => { if (window.MathText) window.MathText.setText(el, text); else el.textContent = String(text == null ? '' : text); };
+// escapeHtml(text) for a list built as HTML, with its formulas drawn.
+const mathHtml = (text) => window.MathText ? window.MathText.toHtml(text) : escapeHtml(text);
+// A cut that doesn't end inside a formula (a cut "$\frac{a}{b" shows as source).
+function cutMathText(text, max) {
+    const t = String(text == null ? '' : text);
+    if (t.length <= max) return t;
+    const open = t.slice(0, max).split('$').length - 1;
+    return open % 2 ? t.slice(0, t.lastIndexOf('$', max - 1)).replace(/\s+$/, '') : t.slice(0, max);
+}
 
 // "2027-01-15" -> "15 Jan" / "15 בינו׳" when it's within the coming year (no
 // doubt which one is meant, and it fits a narrow Planner column), else with
@@ -5823,7 +5832,7 @@ function renderAttentionList(panelId, items, emptyMessage, tone) {
         <div class="attention-item">
             <span class="attention-item__dot" style="background: ${dotColor}"></span>
             <div class="attention-item__body">
-                <div class="attention-item__title" dir="auto">${escapeHtml(i.question)}</div>
+                <div class="attention-item__title" dir="auto">${mathHtml(i.question)}</div>
                 <div class="attention-item__meta">${escapeHtml(i.category || 'Uncategorized')} · ${escapeHtml(MODE_LABELS[i.mode] || i.mode)}${i.accuracy !== undefined ? ` · ${i.accuracy}% (${i.reviewCount})` : ''}</div>
             </div>
         </div>`).join('');
@@ -6679,7 +6688,7 @@ function renderExamResult(saved, results, stopReason, run) {
         el.querySelector('.exam-answer__yours').textContent = a.typed || '-';
         setMathText(el.querySelector('.exam-answer__feedback'), r.feedback || '');
         el.querySelectorAll('.exam-answer__label')[1].textContent = t('The answer:');
-        const right = r.answer || String(item.answer || '').slice(0, 400);
+        const right = r.answer || cutMathText(item.answer || '', 400);
         setMathText(el.querySelector('.exam-answer__correct'), right);
         el.querySelector('.exam-answer__right').hidden = !right || r.verdict === 'correct';
         list.append(el);
@@ -7139,7 +7148,7 @@ async function loadManageList(refetch = true) {
                 <input type="checkbox" class="manage-select-box" ${selectedQuestionIds.has(i.id) ? 'checked' : ''} />
             </label>
             <div class="manage-item__body">
-                <div class="manage-item__q" dir="auto">${escapeHtml(i.question)}</div>
+                <div class="manage-item__q" dir="auto">${mathHtml(i.question)}</div>
                 <div class="manage-item__meta">
                     ${escapeHtml(MODE_LABELS[i.mode] || i.mode)}
                     ${i.category ? ' · ' + escapeHtml(i.category) : ''}
@@ -8285,8 +8294,8 @@ function renderFullQuestion() {
         txt.className = 'full-part__text';
         txt.setAttribute('translate', 'no');
         txt.dir = 'auto';
-        // (a code line keeps its $ - math.js tells code lines apart)
-        setMathText(txt, p.text);
+        // (a code question as written: its $, \( and $$ are code)
+        if (p.type === 'code') txt.textContent = p.text; else setMathText(txt, p.text);
         box.append(ph, txt);
         const name = `full-${qi}-${pi}`;
         if (p.type === 'mc') {
@@ -8711,7 +8720,7 @@ function renderFullResult(exam, run) {
             txt.dir = 'auto';
             // (shortened - unless it has a formula, which a cut would break)
             const shortText = p.text.length > 220 && !(window.MathText && window.MathText.hasMath(p.text)) ? `${p.text.slice(0, 220)}…` : p.text;
-            setMathText(txt, shortText);
+            if (p.type === 'code') txt.textContent = shortText; else setMathText(txt, shortText);
             const pts = document.createElement('span');
             pts.className = 'full-rpart__pts';
             if (r.status === 'not_chosen') pts.textContent = t('Not chosen');
