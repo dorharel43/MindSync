@@ -832,6 +832,10 @@ function eventOccursOn(evt, date) {
 // flipped it to "25 / 20".
 const outOfLabel = (got, max) => `\u2066${got} / ${max}\u2069`;
 
+// el.textContent = text, with its formulas drawn (math.js; plain text if it
+// isn't loaded). Not for code - its $ are never maths.
+const setMathText = (el, text) => { if (window.MathText) window.MathText.setText(el, text); else el.textContent = String(text == null ? '' : text); };
+
 // "2027-01-15" -> "15 Jan" / "15 בינו׳" when it's within the coming year (no
 // doubt which one is meant, and it fits a narrow Planner column), else with
 // the year. The month in words: "15/1" reads as the 1st of month 15 to
@@ -5991,7 +5995,7 @@ function renderStudyCard() {
     const versionBadge = document.getElementById('study-version-badge');
     if (versionBadge) versionBadge.hidden = !item.variantShown;
 
-    document.getElementById('study-question').textContent = item.question;
+    setMathText(document.getElementById('study-question'), item.question);
     // Last time: sure, and wrong. Say so - that's the whole point of the list.
     const last = Array.isArray(item.reviews) && item.reviews.length ? item.reviews[item.reviews.length - 1] : null;
     let sureFlag = document.getElementById('study-sure-flag');
@@ -6098,7 +6102,7 @@ async function fetchShortAnswer(item) {
     if (studyState.index !== index || studyState.queue[index] !== item) return;   // moved on meanwhile
     box.classList.remove('is-loading');
     if (res && res.answer) {
-        text.textContent = res.answer;
+        setMathText(text, res.answer);
         document.getElementById('study-answer').classList.add('study-answer--source');
     } else {
         box.hidden = true;   // the material's answer below is still there
@@ -6135,7 +6139,7 @@ function revealAnswer(check = null) {
             const why = !check.verdict && check.failed
                 ? (isAiLimit(check.failed) ? check.failed : check.failed === 'timeout' ? t('The check took too long.') : '')
                 : '';
-            document.getElementById('study-verdict-feedback').textContent = check.verdict ? (check.feedback || '') : why;
+            setMathText(document.getElementById('study-verdict-feedback'), check.verdict ? (check.feedback || '') : why);
             document.getElementById('study-verdict-yours').textContent = `${t('You wrote:')} ${check.typed}`;
         }
         // The core moment, said right where it happens (same words as the
@@ -6149,7 +6153,7 @@ function revealAnswer(check = null) {
         const short = check && check.verdict && check.answer ? check.answer : '';
         shortBox.hidden = !short;
         shortBox.classList.remove('is-loading');
-        document.getElementById('study-short-answer-text').textContent = short;
+        setMathText(document.getElementById('study-short-answer-text'), short);
     }
     // With a short answer above, the material's quote is the source - smaller.
     document.getElementById('study-answer').classList.toggle('study-answer--source', !!(check && check.answer));
@@ -6175,7 +6179,7 @@ function revealAnswer(check = null) {
     }
 
     if (item.answer && item.answer.trim()) {
-        answerEl.textContent = item.answer;
+        setMathText(answerEl, item.answer);
         answerEl.classList.remove('study-answer--none');
         answerEl.classList.toggle('study-answer--ai', item.solutionSource === 'ai');
 
@@ -6506,7 +6510,7 @@ function renderExamCard() {
     document.getElementById('exam-progress-fill').style.width = `${(i / n) * 100}%`;
     document.getElementById('exam-course-badge').textContent = examState.label;
     document.getElementById('exam-past-badge').hidden = !item.fromPastExam;
-    document.getElementById('exam-question').textContent = item.question;
+    setMathText(document.getElementById('exam-question'), item.question);
     const box = document.getElementById('exam-answer');
     box.value = examState.answers[i].typed;
     box.placeholder = t(item.mode === 'practice' ? 'Your solution - the steps and the result' : 'Your answer');
@@ -6670,13 +6674,13 @@ function renderExamResult(saved, results, stopReason, run) {
             <div class="exam-answer__line exam-answer__right"><span class="exam-answer__label"></span> <span class="exam-answer__correct" dir="auto" translate="no"></span></div>`;
         el.querySelector('.exam-answer__verdict').textContent = t(VERDICT_LABELS[r.verdict]);
         el.querySelector('.exam-answer__conf').textContent = a.confidence !== 'none' ? `${t('You said:')} ${t(CONF_LABELS[a.confidence])}` : '';
-        el.querySelector('.exam-answer__q').textContent = item.question;
+        setMathText(el.querySelector('.exam-answer__q'), item.question);
         el.querySelectorAll('.exam-answer__label')[0].textContent = t('Your answer:');
         el.querySelector('.exam-answer__yours').textContent = a.typed || '-';
-        el.querySelector('.exam-answer__feedback').textContent = r.feedback || '';
+        setMathText(el.querySelector('.exam-answer__feedback'), r.feedback || '');
         el.querySelectorAll('.exam-answer__label')[1].textContent = t('The answer:');
         const right = r.answer || String(item.answer || '').slice(0, 400);
-        el.querySelector('.exam-answer__correct').textContent = right;
+        setMathText(el.querySelector('.exam-answer__correct'), right);
         el.querySelector('.exam-answer__right').hidden = !right || r.verdict === 'correct';
         list.append(el);
     });
@@ -8052,12 +8056,12 @@ function fullMarksTable(part, marks) {
         crit.className = 'full-marks__crit';
         crit.setAttribute('translate', 'no');
         crit.dir = 'auto';
-        crit.textContent = criterion === 'A complete and correct answer' ? t(criterion) : criterion;
+        setMathText(crit, criterion === 'A complete and correct answer' ? t(criterion) : criterion);
         if (m.note) {
             const note = document.createElement('div');
             note.className = 'full-marks__note';
             note.dir = 'auto';
-            note.textContent = m.note;
+            setMathText(note, m.note);
             crit.appendChild(note);
         }
         const pts = document.createElement('td');
@@ -8257,7 +8261,7 @@ function renderFullQuestion() {
         stem.className = 'full-q__stem';
         stem.setAttribute('translate', 'no');
         stem.dir = 'auto';
-        stem.textContent = q.stem;
+        setMathText(stem, q.stem);
         paper.appendChild(stem);
     }
     q.parts.forEach((p, pi) => {
@@ -8281,7 +8285,8 @@ function renderFullQuestion() {
         txt.className = 'full-part__text';
         txt.setAttribute('translate', 'no');
         txt.dir = 'auto';
-        txt.textContent = p.text;
+        // (a code line keeps its $ - math.js tells code lines apart)
+        setMathText(txt, p.text);
         box.append(ph, txt);
         const name = `full-${qi}-${pi}`;
         if (p.type === 'mc') {
@@ -8297,7 +8302,7 @@ function renderFullQuestion() {
                 const s = document.createElement('span');
                 s.setAttribute('translate', 'no');
                 s.dir = 'auto';
-                s.textContent = `${oi + 1}. ${o}`;
+                setMathText(s, `${oi + 1}. ${o}`);
                 lab.append(r, s);
                 opts.appendChild(lab);
             });
@@ -8686,7 +8691,7 @@ function renderFullResult(exam, run) {
             stem.className = 'full-q__stem';
             stem.setAttribute('translate', 'no');
             stem.dir = 'auto';
-            stem.textContent = q.stem;
+            setMathText(stem, q.stem);
             card.appendChild(stem);
         }
         q.parts.forEach((p, pi) => {
@@ -8704,7 +8709,9 @@ function renderFullResult(exam, run) {
             txt.className = 'full-part__text';
             txt.setAttribute('translate', 'no');
             txt.dir = 'auto';
-            txt.textContent = p.text.length > 220 ? `${p.text.slice(0, 220)}…` : p.text;
+            // (shortened - unless it has a formula, which a cut would break)
+            const shortText = p.text.length > 220 && !(window.MathText && window.MathText.hasMath(p.text)) ? `${p.text.slice(0, 220)}…` : p.text;
+            setMathText(txt, shortText);
             const pts = document.createElement('span');
             pts.className = 'full-rpart__pts';
             if (r.status === 'not_chosen') pts.textContent = t('Not chosen');
@@ -8726,7 +8733,9 @@ function renderFullResult(exam, run) {
                 else if (p.type === 'mc') shown = [r.choice !== '' && p.options[Number(r.choice)] != null ? `${Number(r.choice) + 1}. ${p.options[Number(r.choice)]}` : '', p.reasonRequired ? r.text : ''].filter(Boolean).join('\n');
                 else if (p.type === 'tf') shown = [r.choice === 'true' ? t('True') : r.choice === 'false' ? t('False') : '', r.text].filter(Boolean).join(' - ');
                 else shown = r.text;
-                mine.textContent = shown || t('No answer');
+                // (a chosen option can hold a formula; code stays as typed)
+                if (p.type === 'code') mine.textContent = shown || t('No answer');
+                else setMathText(mine, shown || t('No answer'));
                 part.appendChild(mine);
                 if (r.fromPhoto) {
                     const src = document.createElement('div');
@@ -8745,7 +8754,7 @@ function renderFullResult(exam, run) {
                 fb.className = 'full-rpart__feedback';
                 fb.setAttribute('translate', 'no');
                 fb.dir = 'auto';
-                fb.textContent = r.feedback;
+                setMathText(fb, r.feedback);
                 part.appendChild(fb);
             }
             if (r.photoFeedback) {
@@ -8765,7 +8774,7 @@ function renderFullResult(exam, run) {
             sol.setAttribute('translate', 'no');
             sol.dir = 'auto';
             const right = p.type === 'mc' ? `${Number(p.correct) + 1}. ${p.options[Number(p.correct)] || ''}\n\n` : p.type === 'tf' ? `${p.correct === 'true' ? t('True') : t('False')}\n\n` : '';
-            sol.textContent = right + p.answer;
+            if (p.type === 'code') sol.textContent = right + p.answer; else setMathText(sol, right + p.answer);
             det.append(sum, sol);
             if (p.check) {
                 const c = document.createElement('div');
