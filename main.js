@@ -2853,22 +2853,30 @@ const MATH_SEGMENT = /\$\$([\s\S]+?)\$\$|\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g;
 // would eat "\rho"). A form feed or backspace is never real text; a tab, a
 // carriage return or a new line only before a command's name - a new line
 // only inside $...$.
-// (A tab or a new line only inside a single-$ formula of a line or two - not
-// $$...$$, where a new line is real, and never across a blank line.)
+// A tab before a command's name, anywhere but at the start of a line (there
+// it indents code). A new line only inside a formula: in a single-$ one of a
+// line or two (not across a blank line, not money); in $$...$$ only before
+// names no real line starts with ("eq", "abla" - not "e" or "u": a step of a
+// computation can start "u = ..."), and never after the closing $$.
+const TEX_N_NAMES = 'eq|abla|ot|otin|eg|mid|exists|subseteq|leq|geq|ewline';
 function repairJsonTex(text) {
     return String(text)
         .replace(/\f/g, '\\f').replace(/\x08/g, '\\b')
         .replace(/\r(?=(?:ho|ightarrow|ight|angle|floor|ceil|vert|Rightarrow)(?![a-zA-Z]))/g, '\\r')
-        .replace(/(?<!\$)\$(?![ \n$])([^$]{1,300}?)(?<![ \n])\$(?![\d$])/g, (m) => /\n\s*\n/.test(m) ? m : m
-            .replace(/\t(?=(?:heta|au|imes|ext|extbf|o|an|riangle|op|ilde|frac)(?![a-zA-Z]))/g, '\\t')
-            .replace(/\n(?=(?:eq|e|abla|u|ot|otin|eg|mid|exists|subseteq|leq|geq|ewline)(?![a-zA-Z]))/g, '\\n'));
+        .replace(/(?<=[^\n])\t(?=(?:heta|au|imes|ext|extbf|o|an|riangle|op|ilde|frac)(?![a-zA-Z]))/g, '\\t')
+        .replace(/\$\$([\s\S]+?)\$\$/g, (m) => m.replace(new RegExp(`\\n(?=(?:${TEX_N_NAMES})(?![a-zA-Z]))`, 'g'), '\\n'))
+        .replace(/(?<!\$)\$(?![ $])([^$]{1,300}?)(?<![ \n])\$(?![\d$])/g, (m) => /\n\s*\n/.test(m) ? m : m
+            .replace(new RegExp(`\\n(?=(?:${TEX_N_NAMES}|e|u|nu)(?![a-zA-Z]))`, 'g'), '\\n'));
 }
 // What KaTeX is never given: a macro definition (\def\a{..}\a\a.. expands
 // for seconds - it would freeze the app, or the server for everyone), the
 // commands that need trust (drawn as red errors), Hebrew (no font metrics,
 // and against the rule given to the AI) or a formula too long to be one.
-const TEX_REFUSED = /\\(?:def|gdef|edef|xdef|let|futurelet|newcommand|renewcommand|providecommand|global|href|url|includegraphics|htmlClass|htmlId|htmlStyle|htmlData)(?![a-zA-Z])|[\u0590-\u05FF]/;
-const KATEX_LIMITS = { throwOnError: true, strict: 'ignore', trust: false, maxSize: 20, maxExpand: 100 };
+// (\message / \show write to the log. maxExpand 1000: with the definers
+// refused, every built-in macro repeated to 1000 characters takes < 20 ms;
+// 100 rejected real proofs - \implies costs 8, \neq 25.)
+const TEX_REFUSED = /\\(?:def|gdef|edef|xdef|let|futurelet|newcommand|renewcommand|providecommand|global|href|url|includegraphics|htmlClass|htmlId|htmlStyle|htmlData|message|errmessage|show)(?![a-zA-Z])|[\u0590-\u05FF]/;
+const KATEX_LIMITS = { throwOnError: true, strict: 'ignore', trust: false, maxSize: 20, maxExpand: 1000 };
 function texRenders(tex) {
     if (!katexLib || tex.length > 1000 || TEX_REFUSED.test(tex)) return false;
     try { katexLib.renderToString(tex, KATEX_LIMITS); return true; } catch (e) { return false; }
@@ -2878,15 +2886,19 @@ function texRenders(tex) {
 const FORMULA_STATS = { kept: 0, flattened: 0 };
 // Text cut to `max` characters - never inside a formula (a cut "$\frac{a}{b"
 // would show as source): back to before its opening $.
-function cutText(text, max) {
+// (Code is cut plainly - its $ are never maths. A cut that would leave less
+// than half - one long formula - is cut plainly too.)
+function cutText(text, max, isCode = false) {
     const t = String(text == null ? '' : text);
     if (t.length <= max) return t;
+    if (isCode) return t.slice(0, max);
     let cut = t.slice(0, max);
     for (const m of t.matchAll(MATH_SEGMENT)) {
         if (m.index >= max) break;
         if (m.index + m[0].length > max) { cut = t.slice(0, m.index); break; }
     }
-    return cut.replace(/\s+$/, '');
+    cut = cut.replace(/\s+$/, '');
+    return cut.length >= max / 2 ? cut : t.slice(0, max);
 }
 // `flatten` turns text (or a formula that can't be drawn) into readable symbols.
 function keepFormulas(text, flatten) {
@@ -2899,7 +2911,8 @@ function keepFormulas(text, flatten) {
         const ok = !!tex && texRenders(tex);
         // A pair that can't be drawn and has no LaTeX command isn't a formula
         // ("$a&&$b" in shell, "$5 ו-$10"): left exactly as written.
-        if (!ok && !/\\[a-zA-Z]/.test(tex)) { out += m[0]; last = m.index + m[0].length; continue; }
+        // (Hebrew inside is the AI breaking the rule - flattened, not left raw.)
+        if (!ok && !/\\[a-zA-Z]/.test(tex) && !/[\u0590-\u05FF]/.test(tex)) { out += m[0]; last = m.index + m[0].length; continue; }
         FORMULA_STATS[ok ? 'kept' : 'flattened'] += 1;
         // (what a broken formula leaves after flattening: its commands without the backslash)
         out += ok ? (display ? `$$${tex}$$` : `$${tex}$`) : flatten(tex).replace(/\\([a-zA-Z]+)/g, '$1');
@@ -3099,7 +3112,7 @@ Return ONLY JSON: {"parts": [{"index": part index, "marks": [{"c": criterion num
 // valid choices, clean text. Returns null if nothing usable is left.
 function normaliseExam(raw, blueprint) {
     const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : d; };
-    const text = (v, max, isCode = false) => cutText(cleanExamText(String(v == null ? '' : v), isCode), max);
+    const text = (v, max, isCode = false) => cutText(cleanExamText(String(v == null ? '' : v), isCode), max, isCode);
     const questions = [];
     // Multiple choice with a required reason only when the past exams ask for one.
     const mcReason = !!(blueprint && Array.isArray(blueprint.questions) && blueprint.questions.some(q => Array.isArray(q.parts) && q.parts.some(x => x && x.type === 'mc' && x.reasonRequired === true)));
@@ -3141,7 +3154,7 @@ function normaliseExam(raw, blueprint) {
 // is no text or no solution.
 function normaliseExamPart(p, { mcReason = false } = {}) {
     const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : d; };
-    const text = (v, max, isCode = false) => cutText(cleanExamText(String(v == null ? '' : v), isCode), max);
+    const text = (v, max, isCode = false) => cutText(cleanExamText(String(v == null ? '' : v), isCode), max, isCode);
     let type = ['mc', 'tf', 'open', 'code'].includes(p.type) ? p.type : 'open';
     const asked = type;
     const options = type === 'mc' ? (Array.isArray(p.options) ? p.options : []).slice(0, 8).map(o => text(o, 1000)).filter(Boolean) : [];
@@ -3637,7 +3650,7 @@ async function solveExamParts(course, question) {
         if (part.type !== 'mc' && part.type !== 'tf') correct = '';
         return {
             index: Number(p.index),
-            answer: cutText(cleanExamText(String(p.answer || ''), isCode), 12000),
+            answer: cutText(cleanExamText(String(p.answer || ''), isCode), 12000, isCode),
             rubric: (Array.isArray(p.rubric) ? p.rubric : []).slice(0, 12)
                 .map(r => ({ criterion: cutText(cleanExamText(String(r.criterion || '')), 400), points: Number(r.points) || 0 })).filter(r => r.criterion),
             correct,

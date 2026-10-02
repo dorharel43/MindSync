@@ -838,12 +838,7 @@ const setMathText = (el, text) => { if (window.MathText) window.MathText.setText
 // escapeHtml(text) for a list built as HTML, with its formulas drawn.
 const mathHtml = (text) => window.MathText ? window.MathText.toHtml(text) : escapeHtml(text);
 // A cut that doesn't end inside a formula (a cut "$\frac{a}{b" shows as source).
-function cutMathText(text, max) {
-    const t = String(text == null ? '' : text);
-    if (t.length <= max) return t;
-    const open = t.slice(0, max).split('$').length - 1;
-    return open % 2 ? t.slice(0, t.lastIndexOf('$', max - 1)).replace(/\s+$/, '') : t.slice(0, max);
-}
+const cutMathText = (text, max) => window.MathText ? window.MathText.cut(text, max) : String(text == null ? '' : text).slice(0, max);
 
 // "2027-01-15" -> "15 Jan" / "15 בינו׳" when it's within the coming year (no
 // doubt which one is meant, and it fits a narrow Planner column), else with

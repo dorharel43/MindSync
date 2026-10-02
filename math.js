@@ -19,7 +19,7 @@
     const segments = () => /\$\$([\s\S]+?)\$\$|\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g;
     // Never given to KaTeX (main.js's TEX_REFUSED): a macro definition (expands
     // for seconds and freezes the page), commands that need trust, Hebrew.
-    const REFUSED = /\\(?:def|gdef|edef|xdef|let|futurelet|newcommand|renewcommand|providecommand|global|href|url|includegraphics|htmlClass|htmlId|htmlStyle|htmlData)(?![a-zA-Z])|[\u0590-\u05FF]/;
+    const REFUSED = /\\(?:def|gdef|edef|xdef|let|futurelet|newcommand|renewcommand|providecommand|global|href|url|includegraphics|htmlClass|htmlId|htmlStyle|htmlData|message|errmessage|show)(?![a-zA-Z])|[\u0590-\u05FF]/;
 
     const escapeHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
@@ -30,7 +30,7 @@
     // A line that looks like code - ends in ; { or }, or is indented like a
     // block - keeps its $ as they are: PHP and shell variables ($x, $HOME)
     // aren't maths.
-    const CODE_LINE = /[;{}]\s*$|^(?: {2,}|\t)\S/;
+    const CODE_LINE = /[;{}]\s*$|^(?: {4}|\t)\S/;
     function inCodeLine(src, index, length) {
         const start = src.lastIndexOf('\n', index - 1) + 1;
         const endAt = src.indexOf('\n', index + length);
@@ -40,7 +40,7 @@
     function render(tex, display) {
         if (!katex || tex.length > 1000 || REFUSED.test(tex)) return null;
         try {
-            return katex.renderToString(tex, { throwOnError: true, displayMode: display, strict: 'ignore', trust: false, output: 'html', maxSize: 20, maxExpand: 100 });
+            return katex.renderToString(tex, { throwOnError: true, displayMode: display, strict: 'ignore', trust: false, output: 'html', maxSize: 20, maxExpand: 1000 });
         } catch (e) {
             return null;
         }
@@ -54,7 +54,8 @@
         for (const m of src.matchAll(segments())) {
             out += escapeHtml(src.slice(last, m.index));
             const display = m[1] !== undefined;
-            if (inCodeLine(src, m.index, display ? 2 : m[0].length)) {
+            // (only an inline one: the first line of a $$ block often ends in "}")
+            if (!display && inCodeLine(src, m.index, m[0].length)) {
                 out += escapeHtml(m[0]);
                 last = m.index + m[0].length;
                 continue;
@@ -77,5 +78,16 @@
         else el.textContent = s;
     }
 
-    window.MathText = { setText, toHtml, hasMath };
+    // Text cut to `max` characters, never inside a formula (back to before it).
+    function cut(text, max) {
+        const t = String(text == null ? '' : text);
+        if (t.length <= max) return t;
+        for (const m of t.matchAll(segments())) {
+            if (m.index >= max) break;
+            if (m.index + m[0].length > max) return t.slice(0, m.index).replace(/\s+$/, '');
+        }
+        return t.slice(0, max);
+    }
+
+    window.MathText = { setText, toHtml, hasMath, cut };
 })();
