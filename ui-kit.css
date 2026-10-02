@@ -128,6 +128,17 @@
 /* Bodies built from markup (forms, lists) - see the note in older versions:
    pre-wrap would turn the template's indentation into giant gaps. */
 .ms-modal__body--structured { white-space: normal; }
+/* One tick box under the message ("Also delete the other classes...") */
+.ms-modal__check {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: 0 var(--space-5) var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+.ms-modal__check input { margin-top: 3px; flex: none; }
 
 .ms-modal__footer {
     display: flex;

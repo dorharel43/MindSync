@@ -1351,6 +1351,12 @@
 
             <!-- Timetable only: ONE end date for every class (1/10). -->
             <div class="syllabus-until" id="syllabus-until-wrap" hidden>
+                <label class="form-label" for="syllabus-from-text">When does the semester start?</label>
+                <div class="syllabus-until__row">
+                    <input id="syllabus-from-text" class="input-field" maxlength="100" dir="auto" placeholder='לדוגמה: 11.10'>
+                    <input id="syllabus-from-date" class="input-field" type="date" aria-label="First day of classes">
+                </div>
+                <p class="settings-hint" id="syllabus-from-hint">Already started? Leave it empty.</p>
                 <label class="form-label" for="syllabus-until-text">When does the semester end?</label>
                 <div class="syllabus-until__row">
                     <input id="syllabus-until-text" class="input-field" maxlength="100" dir="auto" placeholder='לדוגמה: 15.2'>

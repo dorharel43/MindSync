@@ -1121,6 +1121,7 @@ body.auth-pending #auth-screen { background: var(--bg-sidebar); }
 .syllabus-until__row { display: flex; gap: 8px; flex-wrap: wrap; }
 .syllabus-until__row .input-field { margin: 0; flex: 1 1 140px; min-width: 0; }
 .syllabus-until .checkbox-field { margin-top: 6px; }
+.syllabus-until .settings-hint + .form-label { margin-top: 12px; }
 .timetable-row__fields { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
 .timetable-row__fields .input-field { margin: 0; padding: 4px 8px; font-size: var(--text-sm); min-width: 0; width: auto; height: auto; }
 .timetable-row__fields .timetable-row__course { flex: 1 1 100%; width: 100%; font-weight: var(--font-medium); }

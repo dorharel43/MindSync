@@ -82,7 +82,9 @@
     // ---- Modal dialogs ----
     // Returns a Promise so calling code reads almost the same as before:
     //   if (!await confirmDialog(...)) return;
-    function buildDialog({ title, message, confirmText, cancelText, danger }) {
+    // `checkbox` (a label) adds one tick box under the message; confirming then
+    // resolves to { checked } instead of true.
+    function buildDialog({ title, message, confirmText, cancelText, danger, checkbox }) {
         return new Promise((resolve) => {
             const backdrop = document.createElement('div');
             backdrop.className = 'ms-modal-backdrop';
@@ -97,6 +99,7 @@
                         <h3 class="ms-modal__title" dir="auto">${escapeHtml(title)}</h3>
                     </div>
                     ${message ? `<div class="ms-modal__body" dir="auto">${escapeHtml(message)}</div>` : ''}
+                    ${checkbox ? `<label class="ms-modal__check" dir="auto"><input type="checkbox" data-role="check"> <span>${escapeHtml(checkbox)}</span></label>` : ''}
                     <div class="ms-modal__footer">
                         ${cancelText ? `<button class="ms-btn ms-btn--secondary" data-action="cancel">${escapeHtml(cancelText)}</button>` : ''}
                         <button class="ms-btn ${confirmClass}" data-action="confirm">${escapeHtml(confirmText)}</button>
@@ -106,8 +109,9 @@
 
             function close(result) {
                 document.removeEventListener('keydown', onKey);
+                const check = backdrop.querySelector('[data-role="check"]');
                 backdrop.remove();
-                resolve(result);
+                resolve(result && check ? { checked: check.checked } : result);
             }
 
             function onKey(e) {
@@ -115,7 +119,7 @@
                 // Enter on a focused button presses THAT button (30/9: Enter
                 // on a focused "Cancel" used to confirm - e.g. delete).
                 if (e.key === 'Enter') {
-                    if (e.target && e.target.tagName === 'BUTTON') return;
+                    if (e.target && (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT')) return;
                     e.preventDefault();
                     close(true);
                 }
@@ -139,7 +143,8 @@
         message,
         confirmText: options.confirmText || 'Confirm',
         cancelText: options.cancelText || 'Cancel',
-        danger: options.danger === true
+        danger: options.danger === true,
+        checkbox: options.checkbox || null
     });
 
     window.alertDialog = (title, message) => buildDialog({
