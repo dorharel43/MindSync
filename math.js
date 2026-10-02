@@ -84,7 +84,11 @@
         if (t.length <= max) return t;
         for (const m of t.matchAll(segments())) {
             if (m.index >= max) break;
-            if (m.index + m[0].length > max) return t.slice(0, m.index).replace(/\s+$/, '');
+            if (m.index + m[0].length > max) {
+                // (under half left - one long formula: cut plainly, as main.js does)
+                const before = t.slice(0, m.index).replace(/\s+$/, '');
+                return before.length >= max / 2 ? before : t.slice(0, max);
+            }
         }
         return t.slice(0, max);
     }

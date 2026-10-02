@@ -2853,19 +2853,23 @@ const MATH_SEGMENT = /\$\$([\s\S]+?)\$\$|\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g;
 // would eat "\rho"). A form feed or backspace is never real text; a tab, a
 // carriage return or a new line only before a command's name - a new line
 // only inside $...$.
-// A tab before a command's name, anywhere but at the start of a line (there
-// it indents code). A new line only inside a formula: in a single-$ one of a
+// A tab before a command's name: inside a formula anywhere; outside only
+// after a space or a maths sign ("a \times b", "{\theta}") - not in a table
+// row ("R-type:\top\trs") or code indentation. A new line only inside a formula: in a single-$ one of a
 // line or two (not across a blank line, not money); in $$...$$ only before
 // names no real line starts with ("eq", "abla" - not "e" or "u": a step of a
 // computation can start "u = ..."), and never after the closing $$.
 const TEX_N_NAMES = 'eq|abla|ot|otin|eg|mid|exists|subseteq|leq|geq|ewline';
+const TEX_T_NAMES = 'heta|au|imes|ext|extbf|o|an|riangle|op|ilde|frac';
 function repairJsonTex(text) {
     return String(text)
         .replace(/\f/g, '\\f').replace(/\x08/g, '\\b')
         .replace(/\r(?=(?:ho|ightarrow|ight|angle|floor|ceil|vert|Rightarrow)(?![a-zA-Z]))/g, '\\r')
-        .replace(/(?<=[^\n])\t(?=(?:heta|au|imes|ext|extbf|o|an|riangle|op|ilde|frac)(?![a-zA-Z]))/g, '\\t')
-        .replace(/\$\$([\s\S]+?)\$\$/g, (m) => m.replace(new RegExp(`\\n(?=(?:${TEX_N_NAMES})(?![a-zA-Z]))`, 'g'), '\\n'))
+        .replace(new RegExp(`(?<=[ ({$^_=,+*/|&-])\\t(?=(?:${TEX_T_NAMES})(?![a-zA-Z]))`, 'g'), '\\t')
+        .replace(/\$\$([\s\S]+?)\$\$/g, (m) => m.replace(new RegExp(`\\t(?=(?:${TEX_T_NAMES})(?![a-zA-Z]))`, 'g'), '\\t')
+            .replace(new RegExp(`\\n(?=(?:${TEX_N_NAMES})(?![a-zA-Z]))`, 'g'), '\\n'))
         .replace(/(?<!\$)\$(?![ $])([^$]{1,300}?)(?<![ \n])\$(?![\d$])/g, (m) => /\n\s*\n/.test(m) ? m : m
+            .replace(new RegExp(`\\t(?=(?:${TEX_T_NAMES})(?![a-zA-Z]))`, 'g'), '\\t')
             .replace(new RegExp(`\\n(?=(?:${TEX_N_NAMES}|e|u|nu)(?![a-zA-Z]))`, 'g'), '\\n'));
 }
 // What KaTeX is never given: a macro definition (\def\a{..}\a\a.. expands
@@ -2911,8 +2915,10 @@ function keepFormulas(text, flatten) {
         const ok = !!tex && texRenders(tex);
         // A pair that can't be drawn and has no LaTeX command isn't a formula
         // ("$a&&$b" in shell, "$5 ו-$10"): left exactly as written.
-        // (Hebrew inside is the AI breaking the rule - flattened, not left raw.)
-        if (!ok && !/\\[a-zA-Z]/.test(tex) && !/[\u0590-\u05FF]/.test(tex)) { out += m[0]; last = m.index + m[0].length; continue; }
+        // (Hebrew inside is the AI breaking the rule - flattened, not left raw -
+        // unless a digit stands before the first $: "20$, ו-15$" is two prices.)
+        const money = /\d/.test(src[m.index - 1] || '');
+        if (!ok && !/\\[a-zA-Z]/.test(tex) && (money || !/[\u0590-\u05FF]/.test(tex))) { out += m[0]; last = m.index + m[0].length; continue; }
         FORMULA_STATS[ok ? 'kept' : 'flattened'] += 1;
         // (what a broken formula leaves after flattening: its commands without the backslash)
         out += ok ? (display ? `$$${tex}$$` : `$${tex}$`) : flatten(tex).replace(/\\([a-zA-Z]+)/g, '$1');
