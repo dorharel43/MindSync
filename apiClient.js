@@ -222,6 +222,8 @@ module.exports = {
   deleteFullExam: (id) => request('DELETE', `/full-exams/${enc(id)}`),
   saveFullExamRun: (id, run) => request('POST', `/full-exams/${enc(id)}/runs`, run),
   getFullExamRuns: (id) => request('GET', `/full-exams/${enc(id)}/runs`),
+  checkFullExamParts: (id, parts) => request('PATCH', `/full-exams/${enc(id)}/check`, { parts }),
+  regradeFullExamRun: (id, runId, body) => request('POST', `/full-exams/${enc(id)}/runs/${enc(runId)}/regrade`, body),
   updateStudyItem: (id, updates) => request('PUT', `/study/${enc(id)}`, updates).then(withIdAlias),
   deleteStudyItem: (id) => request('DELETE', `/study/${enc(id)}`),
 

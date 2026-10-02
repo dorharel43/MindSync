@@ -185,7 +185,8 @@ async function callOllama(prompt, { model, maxTokens = 800, forceJson = false, s
 }
 
 // ---- Gemini (cloud, multimodal) ---------------------------------------------
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+// MINDSYNC_TEST_GEMINI_URL: only for tests (a fake Gemini server) - a name no other tool sets.
+const GEMINI_BASE = process.env.MINDSYNC_TEST_GEMINI_URL || 'https://generativelanguage.googleapis.com/v1beta/models';
 
 // BUG FIX: this request had no timeout at all, unlike callOllama's watchdog.
 // If Google's endpoint stalls (an outage, a dropped connection) fetch() just
