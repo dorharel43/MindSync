@@ -785,6 +785,8 @@ ipcMain.handle('import-syllabus-items', async (event, items = [], options = {}) 
     const created = { events: [], tasks: [] };
     const errors = [];
     const syncErrors = [];
+    // Every class of this upload shares it - so a wrong upload is deleted in one go.
+    const importId = `imp_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
     for (const item of (Array.isArray(items) ? items : [])) {
         try {
@@ -804,6 +806,9 @@ ipcMain.handle('import-syllabus-items', async (event, items = [], options = {}) 
                     day, date: null,           // null = repeats every week
                     // ...until this date, when known (the semester's end).
                     until: /^\d{4}-\d{2}-\d{2}$/.test(item.until || '') ? item.until : null,
+                    // ...from this date, when it starts later (the semester's first day).
+                    from: /^\d{4}-\d{2}-\d{2}$/.test(item.from || '') ? item.from : null,
+                    importId,
                     time, type: 'lesson',
                     ...(location ? { location } : {}),
                     ...(item.durationMinutes ? { durationMinutes: item.durationMinutes } : {})
@@ -883,7 +888,9 @@ List EVERY class block. For each:
 KNOWN COURSES:
 ${known.length ? known.map(k => `- ${k}`).join('\n') : '(none)'}
 
-Don't invent blocks, and don't merge two blocks into one. Return ONLY JSON: {"classes": [{"course": "...", "type": "...", "weekday": "...", "start": "HH:MM", "end": "HH:MM", "room": "", "lecturer": "", "everyWeek": true, "note": "", "match": ""}]}`;
+Also "semester": the first and last day of classes ONLY when they are printed on the timetable (e.g. "סמסטר א' 11.10.26 - 15.1.27"), each as {"day": number, "month": number, "year": number or null}; null when not printed - never guess them.
+
+Don't invent blocks, and don't merge two blocks into one. Return ONLY JSON: {"classes": [{"course": "...", "type": "...", "weekday": "...", "start": "HH:MM", "end": "HH:MM", "room": "", "lecturer": "", "everyWeek": true, "note": "", "match": ""}], "semester": {"start": null, "end": null}}`;
 }
 
 // A photographed answer, copied as written - never corrected or solved (the
@@ -1049,6 +1056,16 @@ ipcMain.handle('read-timetable', async (event, payload = {}) => {
         // start unticked, so importing the same timetable twice adds nothing.
         // (Not ones that have ended: a year-long course comes back in semester B.)
         const todayIso = toLocalIsoDate(new Date());
+        // The semester's dates, when the timetable prints them (most don't).
+        const sem = parsed && !Array.isArray(parsed) && parsed.semester && typeof parsed.semester === 'object' ? parsed.semester : {};
+        const semDate = (v) => v && typeof v === 'object' ? { day: Number(v.day), month: Number(v.month), year: v.year ? Number(v.year) : null } : null;
+        const semStart = semDate(sem.start), semEnd = semDate(sem.end);
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const printedFrom = semStart ? semesterStartIso(semStart.day, semStart.month, semStart.year, today) : null;
+        let printedUntil = semEnd ? nextOccurrenceIso(semEnd.day, semEnd.month, semEnd.year, today) : null;
+        if (printedUntil && (printedUntil < todayIso || (printedFrom && printedUntil <= printedFrom))) printedUntil = null;
+        // Only a start still ahead: one already passed changes nothing.
+        const suggestedFrom = printedFrom && printedFrom > todayIso ? printedFrom : null;
         const events = await api.getEvents().catch(() => []);
         const weekly = (events || []).filter(e => !e.date && (!e.until || e.until >= todayIso));
         const toMin = (hm) => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
@@ -1077,6 +1094,13 @@ ipcMain.handle('read-timetable', async (event, payload = {}) => {
             if (seen.has(key)) continue;
             seen.add(key);
             const nc = normalizeForMatch(course), np = normalizeForMatch(printed);
+            // The same class already in the Planner: until when it runs
+            // ('9999-12-31' = no end). The window compares it with the new
+            // semester's start - a year-long course from semester A that ends
+            // before semester B starts isn't "already there".
+            const existingUntil = weekly.filter(e => e.day === weekday && e.time === start &&
+                ((nc && normalizeForMatch(e.title).includes(nc)) || (np && normalizeForMatch(e.title).includes(np))))
+                .map(e => e.until || '9999-12-31').sort().pop() || null;
             items.push({
                 kind: 'class', course, printedCourse: printed, matched: !!match, classType: type,
                 weekday, time: start, endTime: end,
@@ -1085,8 +1109,8 @@ ipcMain.handle('read-timetable', async (event, payload = {}) => {
                 lecturer: String(c.lecturer || '').replace(/\s+/g, ' ').trim().slice(0, 120),
                 everyWeek: c.everyWeek !== false,
                 note: String(c.note || '').replace(/\s+/g, ' ').trim().slice(0, 200),
-                alreadyExists: weekly.some(e => e.day === weekday && e.time === start &&
-                    ((nc && normalizeForMatch(e.title).includes(nc)) || (np && normalizeForMatch(e.title).includes(np))))
+                existingUntil,
+                alreadyExists: !!existingUntil && existingUntil >= (suggestedFrom || todayIso)
             });
         }
         const order = (i) => `${WEEKDAYS_EN.indexOf(i.weekday)}|${i.time}`;
@@ -1094,9 +1118,15 @@ ipcMain.handle('read-timetable', async (event, payload = {}) => {
 
         // When the semester ends: the latest end date the student already
         // gave a weekly class that hasn't ended - offered, not imposed.
-        const untils = weekly.map(e => e.until).filter(u => /^\d{4}-\d{2}-\d{2}$/.test(u || '') && u >= todayIso).sort();
-        console.log(`📅 read-timetable: ${items.length} class(es) from ${isPdf ? 'a PDF' : 'a picture'} (${r.model})`);
-        return { items, suggestedUntil: untils.length ? untils[untils.length - 1] : null, model: r.model };
+        // (Not one that ends before the new semester starts - that's the current semester's.)
+        const untils = weekly.map(e => e.until).filter(u => /^\d{4}-\d{2}-\d{2}$/.test(u || '') && u >= todayIso && (!suggestedFrom || u > suggestedFrom)).sort();
+        console.log(`📅 read-timetable: ${items.length} class(es) from ${isPdf ? 'a PDF' : 'a picture'} (${r.model})${printedFrom || printedUntil ? `, semester ${printedFrom || '?'} - ${printedUntil || '?'}` : ''}`);
+        return {
+            items,
+            suggestedUntil: printedUntil || (untils.length ? untils[untils.length - 1] : null),
+            suggestedFrom,
+            model: r.model
+        };
     } catch (error) {
         console.error('❌ read-timetable failed:', error.message);
         return { error: error.message };
@@ -1837,9 +1867,13 @@ ipcMain.handle('generate-weekly-plan', async (event, currentTasks, currentEvents
         }
         (currentEvents || []).forEach(evt => {
             if (evt.date && !horizonDates[evt.date]) return;
-            // A weekly class that has ended (its `until` is before today)
-            // doesn't take up time any more.
-            if (!evt.date && evt.until && evt.until < toLocalIsoDate(today)) return;
+            // A weekly class takes up its day only if it happens on that date
+            // in these 7 days: not after it ends (`until`), not before it
+            // starts (`from`, a semester that hasn't begun).
+            if (!evt.date) {
+                const on = Object.keys(horizonDates).find(iso => horizonDates[iso] === evt.day);
+                if (on && ((evt.until && on > evt.until) || (evt.from && on < evt.from))) return;
+            }
             if (!occupied[evt.day]) return;
             const [h, m] = String(evt.time || '00:00').split(':').map(Number);
             const start = h * 60 + (m || 0);
@@ -2348,8 +2382,25 @@ function nextOccurrenceIso(day, month, year, today) {
     return toLocalIsoDate(d);
 }
 
-ipcMain.handle('parse-exam-dates', async (event, text) => {
+// A semester's first day: unlike an exam, one written without a year may
+// already have passed (it started last month) - this year's date unless that
+// is more than half a year ago.
+function semesterStartIso(day, month, year, today) {
+    let y = year || today.getFullYear();
+    if (y < 100) y += 2000;
+    let d = new Date(y, month - 1, day);
+    if (d.getDate() !== day || d.getMonth() !== month - 1) return null;
+    if (!year && (today - d) / 86400000 > 183) d = new Date(y + 1, month - 1, day);
+    return toLocalIsoDate(d);
+}
+
+// options.start: the date is a semester's first day - one written without a
+// year may have passed already (semesterStartIso), and a passed one is
+// returned, not refused (it means "already started"; the window says so).
+ipcMain.handle('parse-exam-dates', async (event, text, options = {}) => {
     try {
+        const startMode = !!(options && options.start);
+        const resolve = startMode ? semesterStartIso : nextOccurrenceIso;
         const input = String(text || '').trim();
         if (!input) return { error: 'Write when the exam is.' };
         if (input.length > 300) return { error: 'That\'s too long - just the date is enough, e.g. "12.2".' };
@@ -2364,7 +2415,7 @@ ipcMain.handle('parse-exam-dates', async (event, text) => {
         const DATE = /(?<![\d:.\/])(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?(?![\d:])/g;
         const matches = [...input.matchAll(DATE)];
         matches.forEach((m, i) => {
-            const date = nextOccurrenceIso(+m[1], +m[2], m[3] ? +m[3] : null, today);
+            const date = resolve(+m[1], +m[2], m[3] ? +m[3] : null, today);
             if (!date) return;
             const segStart = i === 0 ? 0 : matches[i - 1].index + matches[i - 1][0].length;
             const segEnd = i + 1 < matches.length ? matches[i + 1].index : input.length;
@@ -2404,7 +2455,7 @@ Only dates the student actually gave; if the text gives no usable date, return {
                 const out = JSON.parse(extractJsonFromText(await aiProvider.generateText(prompt, { forceJson: true, maxTokens: 400, noFallback: true })));
                 (out.exams || []).forEach(e => {
                     const d = e && e.date && typeof e.date === 'object'
-                        ? nextOccurrenceIso(Number(e.date.day), Number(e.date.month), e.date.year ? Number(e.date.year) : null, today) : null;
+                        ? resolve(Number(e.date.day), Number(e.date.month), e.date.year ? Number(e.date.year) : null, today) : null;
                     const t = /^([01]\d|2[0-3]):[0-5]\d$/.test(e.time || '') ? e.time : null;
                     if (d) exams.push({ label: String(e.label || '').trim().slice(0, 40), date: d, time: t });
                 });
@@ -2413,8 +2464,12 @@ Only dates the student actually gave; if the text gives no usable date, return {
             }
         }
 
-        const valid = exams.filter(e => e.date >= todayIso && e.date <= toLocalIsoDate(new Date(today.getFullYear() + 1, today.getMonth() + 3, today.getDate())));
-        if (!valid.length) return { error: exams.length ? 'That date has already passed.' : 'Couldn\'t tell the date. Try writing it like "12.2".' };
+        const latest = toLocalIsoDate(new Date(today.getFullYear() + 1, today.getMonth() + 3, today.getDate()));
+        const valid = exams.filter(e => (startMode || e.date >= todayIso) && e.date <= latest);
+        if (!valid.length) {
+            if (!exams.length) return { error: 'Couldn\'t tell the date. Try writing it like "12.2".' };
+            return { error: exams.some(e => e.date > latest) ? 'That date is too far ahead.' : 'That date has already passed.' };
+        }
         valid.sort((a, b) => a.date.localeCompare(b.date));
         return { exams: valid.slice(0, 4) };
     } catch (err) {
@@ -4354,10 +4409,15 @@ async function syncToGoogleCalendar(evtData) {
             if (dateMatch) {
                 startDate = new Date(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3]));
             } else if (targetDayIndex !== -1) {
-                let currentDayIndex = now.getDay();
-                let daysToAdd = targetDayIndex - currentDayIndex;
+                // A class that starts later (the semester's first day): from then.
+                const fromMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(evtData.from || '');
+                if (fromMatch) {
+                    const from = new Date(Number(fromMatch[1]), Number(fromMatch[2]) - 1, Number(fromMatch[3]));
+                    if (from > startDate) startDate = from;
+                }
+                let daysToAdd = targetDayIndex - startDate.getDay();
                 if (daysToAdd < 0) daysToAdd += 7;
-                startDate.setDate(now.getDate() + daysToAdd);
+                startDate.setDate(startDate.getDate() + daysToAdd);
             }
 
             const [hours, minutes] = evtData.time.split(':');
@@ -4497,11 +4557,12 @@ ipcMain.handle('update-event', async (event, id, changes = {}, options = {}) => 
     if (!before) return { error: 'That calendar item no longer exists.' };
 
     const updates = {};
-    for (const key of ['title', 'day', 'date', 'until', 'time', 'type', 'durationMinutes']) {
+    for (const key of ['title', 'day', 'date', 'until', 'from', 'time', 'type', 'durationMinutes']) {
       if (changes[key] !== undefined) updates[key] = changes[key];
     }
     if (updates.date === '') updates.date = null; // '' would fail the server's YYYY-MM-DD check
     if (updates.until === '') updates.until = null;
+    if (updates.from === '') updates.from = null;
     // A block the planner placed becomes YOURS once you edit it - otherwise
     // the next "Plan study time" would sweep your change away. (Undo passes
     // the original value back explicitly.)
@@ -4542,6 +4603,18 @@ ipcMain.handle('delete-event', async (event, id) => {
     await deleteEventEverywhere(id);
     return true;
   } catch (err) { return { error: err.message }; }
+});
+
+// Several at once - every class of one timetable upload. One failing doesn't
+// stop the rest; the count of what was deleted comes back.
+ipcMain.handle('delete-events', async (event, ids) => {
+  const list = (Array.isArray(ids) ? ids : []).map(String).filter(Boolean).slice(0, 100);
+  let deleted = 0;
+  const errors = [];
+  for (const id of list) {
+    try { await deleteEventEverywhere(id); deleted++; } catch (err) { errors.push(err.message); }
+  }
+  return { deleted, errors };
 });
 
 // =====================================
