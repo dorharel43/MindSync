@@ -8044,13 +8044,15 @@ function fullMarksTable(part, marks) {
     const body = document.createElement('tbody');
     const fmt = (n) => Math.round(n * 100) / 100;
     for (const m of marks) {
-        const max = Number(part.rubric[m.c].points) || 0;
+        const now = (part.rubric || [])[m.c] || {};
+        const max = Number(m.criterion ? m.max : now.points) || 0;
+        const criterion = m.criterion || now.criterion || '';
         const tr = document.createElement('tr');
         const crit = document.createElement('td');
         crit.className = 'full-marks__crit';
         crit.setAttribute('translate', 'no');
         crit.dir = 'auto';
-        crit.textContent = part.rubric[m.c].criterion;
+        crit.textContent = criterion === 'A complete and correct answer' ? t(criterion) : criterion;
         if (m.note) {
             const note = document.createElement('div');
             note.className = 'full-marks__note';
@@ -8734,7 +8736,9 @@ function renderFullResult(exam, run) {
                 }
             }
             // Points per criterion of the marking scheme - where the points went.
-            const marks = r.status === 'graded' && Array.isArray(r.marks) && Array.isArray(p.rubric) ? r.marks.filter(m => p.rubric[m.c]) : [];
+            // (Each mark carries its criterion as it was when graded - a late
+            // "corrected" check can replace the part's scheme afterwards.)
+            const marks = r.status === 'graded' && Array.isArray(r.marks) ? r.marks.filter(m => m.criterion || (Array.isArray(p.rubric) && p.rubric[m.c])) : [];
             if (marks.length) part.appendChild(fullMarksTable(p, marks));
             if (r.feedback) {
                 const fb = document.createElement('div');
