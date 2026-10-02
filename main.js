@@ -1056,6 +1056,16 @@ ipcMain.handle('read-timetable', async (event, payload = {}) => {
         // start unticked, so importing the same timetable twice adds nothing.
         // (Not ones that have ended: a year-long course comes back in semester B.)
         const todayIso = toLocalIsoDate(new Date());
+        // The semester's dates, when the timetable prints them (most don't).
+        const sem = parsed && !Array.isArray(parsed) && parsed.semester && typeof parsed.semester === 'object' ? parsed.semester : {};
+        const semDate = (v) => v && typeof v === 'object' ? { day: Number(v.day), month: Number(v.month), year: v.year ? Number(v.year) : null } : null;
+        const semStart = semDate(sem.start), semEnd = semDate(sem.end);
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const printedFrom = semStart ? semesterStartIso(semStart.day, semStart.month, semStart.year, today) : null;
+        let printedUntil = semEnd ? nextOccurrenceIso(semEnd.day, semEnd.month, semEnd.year, today) : null;
+        if (printedUntil && (printedUntil < todayIso || (printedFrom && printedUntil <= printedFrom))) printedUntil = null;
+        // Only a start still ahead: one already passed changes nothing.
+        const suggestedFrom = printedFrom && printedFrom > todayIso ? printedFrom : null;
         const events = await api.getEvents().catch(() => []);
         const weekly = (events || []).filter(e => !e.date && (!e.until || e.until >= todayIso));
         const toMin = (hm) => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
@@ -1084,6 +1094,13 @@ ipcMain.handle('read-timetable', async (event, payload = {}) => {
             if (seen.has(key)) continue;
             seen.add(key);
             const nc = normalizeForMatch(course), np = normalizeForMatch(printed);
+            // The same class already in the Planner: until when it runs
+            // ('9999-12-31' = no end). The window compares it with the new
+            // semester's start - a year-long course from semester A that ends
+            // before semester B starts isn't "already there".
+            const existingUntil = weekly.filter(e => e.day === weekday && e.time === start &&
+                ((nc && normalizeForMatch(e.title).includes(nc)) || (np && normalizeForMatch(e.title).includes(np))))
+                .map(e => e.until || '9999-12-31').sort().pop() || null;
             items.push({
                 kind: 'class', course, printedCourse: printed, matched: !!match, classType: type,
                 weekday, time: start, endTime: end,
@@ -1092,8 +1109,8 @@ ipcMain.handle('read-timetable', async (event, payload = {}) => {
                 lecturer: String(c.lecturer || '').replace(/\s+/g, ' ').trim().slice(0, 120),
                 everyWeek: c.everyWeek !== false,
                 note: String(c.note || '').replace(/\s+/g, ' ').trim().slice(0, 200),
-                alreadyExists: weekly.some(e => e.day === weekday && e.time === start &&
-                    ((nc && normalizeForMatch(e.title).includes(nc)) || (np && normalizeForMatch(e.title).includes(np))))
+                existingUntil,
+                alreadyExists: !!existingUntil && existingUntil >= (suggestedFrom || todayIso)
             });
         }
         const order = (i) => `${WEEKDAYS_EN.indexOf(i.weekday)}|${i.time}`;
@@ -1101,21 +1118,13 @@ ipcMain.handle('read-timetable', async (event, payload = {}) => {
 
         // When the semester ends: the latest end date the student already
         // gave a weekly class that hasn't ended - offered, not imposed.
-        const untils = weekly.map(e => e.until).filter(u => /^\d{4}-\d{2}-\d{2}$/.test(u || '') && u >= todayIso).sort();
-        // The semester's dates, when the timetable prints them (most don't).
-        const sem = parsed && !Array.isArray(parsed) && parsed.semester && typeof parsed.semester === 'object' ? parsed.semester : {};
-        const semDate = (v) => v && typeof v === 'object' ? { day: Number(v.day), month: Number(v.month), year: v.year ? Number(v.year) : null } : null;
-        const start = semDate(sem.start), end = semDate(sem.end);
-        const today = new Date(); today.setHours(0, 0, 0, 0);
-        const printedFrom = start ? semesterStartIso(start.day, start.month, start.year, today) : null;
-        let printedUntil = end ? nextOccurrenceIso(end.day, end.month, end.year, today) : null;
-        if (printedUntil && (printedUntil < todayIso || (printedFrom && printedUntil <= printedFrom))) printedUntil = null;
+        // (Not one that ends before the new semester starts - that's the current semester's.)
+        const untils = weekly.map(e => e.until).filter(u => /^\d{4}-\d{2}-\d{2}$/.test(u || '') && u >= todayIso && (!suggestedFrom || u > suggestedFrom)).sort();
         console.log(`📅 read-timetable: ${items.length} class(es) from ${isPdf ? 'a PDF' : 'a picture'} (${r.model})${printedFrom || printedUntil ? `, semester ${printedFrom || '?'} - ${printedUntil || '?'}` : ''}`);
         return {
             items,
             suggestedUntil: printedUntil || (untils.length ? untils[untils.length - 1] : null),
-            // Only a start still ahead: one already passed changes nothing.
-            suggestedFrom: printedFrom && printedFrom > todayIso ? printedFrom : null,
+            suggestedFrom,
             model: r.model
         };
     } catch (error) {
@@ -2385,8 +2394,13 @@ function semesterStartIso(day, month, year, today) {
     return toLocalIsoDate(d);
 }
 
-ipcMain.handle('parse-exam-dates', async (event, text) => {
+// options.start: the date is a semester's first day - one written without a
+// year may have passed already (semesterStartIso), and a passed one is
+// returned, not refused (it means "already started"; the window says so).
+ipcMain.handle('parse-exam-dates', async (event, text, options = {}) => {
     try {
+        const startMode = !!(options && options.start);
+        const resolve = startMode ? semesterStartIso : nextOccurrenceIso;
         const input = String(text || '').trim();
         if (!input) return { error: 'Write when the exam is.' };
         if (input.length > 300) return { error: 'That\'s too long - just the date is enough, e.g. "12.2".' };
@@ -2401,7 +2415,7 @@ ipcMain.handle('parse-exam-dates', async (event, text) => {
         const DATE = /(?<![\d:.\/])(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?(?![\d:])/g;
         const matches = [...input.matchAll(DATE)];
         matches.forEach((m, i) => {
-            const date = nextOccurrenceIso(+m[1], +m[2], m[3] ? +m[3] : null, today);
+            const date = resolve(+m[1], +m[2], m[3] ? +m[3] : null, today);
             if (!date) return;
             const segStart = i === 0 ? 0 : matches[i - 1].index + matches[i - 1][0].length;
             const segEnd = i + 1 < matches.length ? matches[i + 1].index : input.length;
@@ -2441,7 +2455,7 @@ Only dates the student actually gave; if the text gives no usable date, return {
                 const out = JSON.parse(extractJsonFromText(await aiProvider.generateText(prompt, { forceJson: true, maxTokens: 400, noFallback: true })));
                 (out.exams || []).forEach(e => {
                     const d = e && e.date && typeof e.date === 'object'
-                        ? nextOccurrenceIso(Number(e.date.day), Number(e.date.month), e.date.year ? Number(e.date.year) : null, today) : null;
+                        ? resolve(Number(e.date.day), Number(e.date.month), e.date.year ? Number(e.date.year) : null, today) : null;
                     const t = /^([01]\d|2[0-3]):[0-5]\d$/.test(e.time || '') ? e.time : null;
                     if (d) exams.push({ label: String(e.label || '').trim().slice(0, 40), date: d, time: t });
                 });
@@ -2450,8 +2464,12 @@ Only dates the student actually gave; if the text gives no usable date, return {
             }
         }
 
-        const valid = exams.filter(e => e.date >= todayIso && e.date <= toLocalIsoDate(new Date(today.getFullYear() + 1, today.getMonth() + 3, today.getDate())));
-        if (!valid.length) return { error: exams.length ? 'That date has already passed.' : 'Couldn\'t tell the date. Try writing it like "12.2".' };
+        const latest = toLocalIsoDate(new Date(today.getFullYear() + 1, today.getMonth() + 3, today.getDate()));
+        const valid = exams.filter(e => (startMode || e.date >= todayIso) && e.date <= latest);
+        if (!valid.length) {
+            if (!exams.length) return { error: 'Couldn\'t tell the date. Try writing it like "12.2".' };
+            return { error: exams.some(e => e.date > latest) ? 'That date is too far ahead.' : 'That date has already passed.' };
+        }
         valid.sort((a, b) => a.date.localeCompare(b.date));
         return { exams: valid.slice(0, 4) };
     } catch (err) {

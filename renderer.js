@@ -804,13 +804,18 @@ function localIsoDate(d) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// The other weekly classes added by the same timetable upload. Older ones
-// have no importId: those that end on the same day (one semester's end date
-// is given to the whole upload) - only lessons, and only with an end date.
+// The other weekly classes added by the same timetable upload. Ones added
+// before uploads had an importId (October 2026 - the cut-off leaves time for
+// the change to ship): those that end on the same day
+// (one semester's end date is given to the whole upload) - only lessons with
+// an end date, and only from then: a class added by a sentence has no
+// importId either, and isn't part of any upload.
+const IMPORT_ID_SINCE = '2026-10-15';
 function timetableSiblings(evt, events) {
     if (evt.date || evt.type !== 'lesson') return [];
+    const legacy = (e) => !e.importId && !!e.until && String(e.createdAt || '') < IMPORT_ID_SINCE;
     return (events || []).filter(e => e.id !== evt.id && !e.date && e.type === 'lesson' &&
-        (evt.importId ? e.importId === evt.importId : (!e.importId && !!evt.until && e.until === evt.until)));
+        (evt.importId ? e.importId === evt.importId : (legacy(evt) && legacy(e) && e.until === evt.until)));
 }
 
 function eventOccursOn(evt, date) {
@@ -1128,7 +1133,7 @@ function renderWeeklyBoard() {
                 const siblings = weekly ? timetableSiblings(evt, events) : [];
                 const ok = await confirmDialog(
                     weekly ? t('Delete "{name}" from every week?', { name: evt.title }) : t('Delete "{name}"?', { name: evt.title }),
-                    (evt.googleEventId || siblings.some(e => e.googleEventId)) ? t('It is removed from Google Calendar too.') : '',
+                    evt.googleEventId ? t('It is removed from Google Calendar too.') : '',
                     {
                         confirmText: t('Delete'), danger: true,
                         checkbox: siblings.length ? t(siblings.length === 1 ? 'Also delete the other class from the same timetable' : `Also delete the other ${siblings.length} classes from the same timetable`) : null
@@ -3166,6 +3171,7 @@ function showTimetableReview(file, res, known) {
         // Ticked unless already in the Planner or not every week.
         items: res.items.map(i => ({ ...i, checked: !i.alreadyExists && i.everyWeek !== false })),
         until: res.suggestedUntil || null, noEnd: false, untilError: null, untilTextApplied: '',
+        untilSuggested: !!res.suggestedUntil,   // offered, not chosen - a later start clears it
         // The first day of classes - empty = already started (from today).
         from: res.suggestedFrom || null, fromError: null, fromNote: null, fromTextApplied: ''
     };
@@ -3334,6 +3340,7 @@ async function applyTimetableUntil(text) {
         state.untilError = t('That day has already passed.');
     } else {
         state.until = date;
+        state.untilSuggested = false;
         state.untilError = null;
         if (syllabusUntilDate) syllabusUntilDate.value = date;
     }
@@ -3345,7 +3352,7 @@ async function applyTimetableFrom(text) {
     const state = syllabusState;
     if (!state || state.mode !== 'timetable' || text === state.fromTextApplied) return;
     state.fromTextApplied = text;   // Enter and the field's change both fire - read it once
-    const pending = ipcRenderer.invoke('parse-exam-dates', text).catch(e => ({ error: e.message }));
+    const pending = ipcRenderer.invoke('parse-exam-dates', text, { start: true }).catch(e => ({ error: e.message }));
     state.fromPending = pending;
     const r = await pending;
     if (state.fromPending === pending) state.fromPending = null;
@@ -3353,25 +3360,42 @@ async function applyTimetableFrom(text) {
     const date = r && !r.error && r.exams && r.exams.length ? r.exams[0].date : null;
     setTimetableFrom(state, date, date ? null : ((r && r.error) || t('Couldn\'t tell the date. Try writing it like "11.10".')));
 }
+// (Typed text is read in "start" mode: a date with no year that passed
+// lately - "1.10" on 2/10 - stays this year's, and comes back as passed.)
 function setTimetableFrom(state, date, error) {
     state.from = null; state.fromError = null; state.fromNote = null;
-    const passed = t('That day has passed - the classes start from today.');
-    if (!date) {
-        // A start that has passed isn't a mistake: the semester began already.
-        if (error === 'That date has already passed.') state.fromNote = passed;
-        else state.fromError = error;
-    } else {
-        const [y, m, d] = date.split('-').map(Number);
-        const now = new Date();
-        const yearBefore = (now - new Date(y - 1, m - 1, d)) / 86400000;
-        // A date with no year that already passed is read as next year's
-        // ("1.10" on 2/10 -> 1/10 next year) - for a start, it's this year's,
-        // gone by: the semester began.
-        if (date <= localIsoDate(now) || ((new Date(y, m - 1, d) - now) / 86400000 > 183 && yearBefore >= 0 && yearBefore <= 183)) state.fromNote = passed;
-        else state.from = date;
+    const now = new Date();
+    const latest = localIsoDate(new Date(now.getFullYear() + 1, now.getMonth() + 3, now.getDate()));
+    if (!date) state.fromError = error;
+    // A start that has passed isn't a mistake: the semester began already.
+    else if (date <= localIsoDate(now)) state.fromNote = t('That day has passed - the classes start from today.');
+    else if (date > latest) state.fromError = t('That date is too far ahead.');
+    else state.from = date;
+    // The end offered from the classes already in the Planner is the current
+    // semester's: before a later start, it's not this one's end.
+    if (state.from && state.untilSuggested && state.until && state.until < state.from) {
+        state.until = null;
+        state.untilSuggested = false;
+        if (syllabusUntilDate) syllabusUntilDate.value = '';
     }
     if (syllabusFromDate) syllabusFromDate.value = state.from || '';
+    refreshTimetableExisting(state);
     updateSyllabusConfirm();
+}
+// "Already in your Planner" depends on the start: the same class from
+// semester A, ending before semester B starts, isn't already there. A row
+// whose answer changes gets the matching tick.
+function refreshTimetableExisting(state) {
+    const at = state.from || localIsoDate(new Date());
+    let changed = false;
+    for (const item of state.items) {
+        const exists = !!item.existingUntil && item.existingUntil >= at;
+        if (exists === !!item.alreadyExists) continue;
+        item.alreadyExists = exists;
+        item.checked = !exists && item.everyWeek !== false;
+        changed = true;
+    }
+    if (changed) renderSyllabusList();
 }
 function timetableEndsBeforeStart(state) {
     return !!(state.from && state.until && !state.noEnd && state.until < state.from);
@@ -3381,6 +3405,7 @@ function typedTimetableUntil() {
     if (!syllabusState || syllabusState.mode !== 'timetable') return;
     syllabusState.noEnd = false;
     syllabusState.untilError = null;   // an error about the old text, not this one
+    syllabusState.untilTextApplied = '';   // new text: read it again
     if (syllabusNoEnd) syllabusNoEnd.checked = false;
 }
 if (syllabusUntilText) {
@@ -3395,6 +3420,7 @@ if (syllabusFromText) {
         const state = syllabusState;
         if (!state || state.mode !== 'timetable') return;
         state.fromError = null; state.fromNote = null;   // about the old text, not this one
+        state.fromTextApplied = '';                      // new text: read it again
         // Emptied: no start date - the classes start from today.
         if (!syllabusFromText.value.trim()) {
             state.from = null; state.fromTextApplied = '';
@@ -3428,6 +3454,7 @@ if (syllabusUntilDate) {
             state.untilError = t('That day has already passed.');
         } else {
             state.until = /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+            state.untilSuggested = false;
             state.untilError = null;
             if (state.until) { state.noEnd = false; if (syllabusNoEnd) syllabusNoEnd.checked = false; }
         }
@@ -4215,8 +4242,11 @@ async function loadAndRenderHome() {
     const wkEnd = localIsoDate(wkEndDate);
     // A weekly class counts in a week it happens in - not after the semester
     // ends (`until`), not before it starts (`from`).
-    const inThisWeek = (e) => e.date ? (e.date >= wkStart && e.date <= wkEnd)
-        : (!e.until || e.until >= wkStart) && (!e.from || e.from <= wkEnd);
+    const inThisWeek = (e) => {
+        if (e.date) return e.date >= wkStart && e.date <= wkEnd;
+        const on = weekStartFor(0); on.setDate(on.getDate() + WEEKDAY_NAMES.indexOf(e.day));
+        return eventOccursOn(e, on);
+    };
 
     if (statTasks) statTasks.innerText = tasks.length;
     if (statExams) statExams.innerText = events.filter(e => e.type === 'exam' && (!e.date || e.date >= todayIso)).length;
