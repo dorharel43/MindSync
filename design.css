@@ -2045,3 +2045,11 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
     .full-nav__q { width: auto; flex: 0 0 auto; }
     .full-paper, .full-setup, .full-intro { padding: 18px 16px; }
 }
+
+/* Formulas (math.js): a formula on its own line scrolls sideways on a narrow
+   screen instead of spilling out; one in a line keeps the line tall enough. */
+.math-display { display: block; overflow-x: auto; overflow-y: hidden; text-align: center; margin: 0; padding: 2px 0; }
+.math-display .katex-display { margin: 0.3em 0; }
+.math-inline { unicode-bidi: isolate; }
+.math-inline .katex, .math-display .katex { font-size: 1.06em; }
+.full-part__text, .full-q__stem, .full-rpart__solution, .full-rpart__mine, .full-rpart__feedback, .study-question, #study-question, #exam-question { line-height: 1.75; }
