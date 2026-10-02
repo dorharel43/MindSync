@@ -828,6 +828,10 @@ function eventOccursOn(evt, date) {
     return evt.day === WEEKDAY_NAMES[date.getDay()];
 }
 
+// "20 / 25" kept left to right (LRI...PDI): in a Hebrew line the slash
+// flipped it to "25 / 20".
+const outOfLabel = (got, max) => `\u2066${got} / ${max}\u2069`;
+
 // "2027-01-15" -> "15 Jan" / "15 בינו׳" when it's within the coming year (no
 // doubt which one is meant, and it fits a narrow Planner column), else with
 // the year. The month in words: "15/1" reads as the 1st of month 15 to
@@ -5972,7 +5976,7 @@ function renderStudyCard() {
     document.querySelectorAll('#study-confidence-step .confidence-btn, #study-dont-know-btn').forEach(b => { b.disabled = false; });
 
     const total = studyState.queue.length;
-    document.getElementById('study-position').textContent = `${studyState.index + 1} / ${total}`;
+    document.getElementById('study-position').textContent = outOfLabel(studyState.index + 1, total);
     document.getElementById('study-progress-fill').style.width = `${(studyState.index / total) * 100}%`;
 
     document.getElementById('study-mode-badge').textContent = MODE_LABELS[item.mode] || item.mode;
@@ -6498,7 +6502,7 @@ function renderExamCard() {
     const i = examState.index;
     const item = examState.items[i];
     const n = examState.items.length;
-    document.getElementById('exam-position').textContent = `${i + 1} / ${n}`;
+    document.getElementById('exam-position').textContent = outOfLabel(i + 1, n);
     document.getElementById('exam-progress-fill').style.width = `${(i / n) * 100}%`;
     document.getElementById('exam-course-badge').textContent = examState.label;
     document.getElementById('exam-past-badge').hidden = !item.fromPastExam;
@@ -6728,7 +6732,7 @@ async function makeTwin(item) {
         queue.splice(at, 0, withId);
         saveSessionProgress();
         const pos = document.getElementById('study-position');
-        if (pos) pos.textContent = `${studyState.index + 1} / ${queue.length}`;
+        if (pos) pos.textContent = outOfLabel(studyState.index + 1, queue.length);
         if (session.twins === 1) toast.info(t('A new question on the idea you missed was added - it comes up in a few questions.'), t('Same idea, new question'));
     } else if (!document.getElementById('study-summary').hidden && studyState.session === session) {
         showTwinSummary(session.twins);
@@ -8029,6 +8033,41 @@ const fullKey = (qi, pi) => `${qi}:${pi}`;
 const fullAnswered = (a, p) => !!a && (a.dontKnow === true || (a.photos > 0 && !(p && fullAutoMarked(p))) || !!String(a.choice || '').trim() || !!String(a.text || '').trim());
 // Parts marked by the choice alone - "I don't know" doesn't apply to them.
 const fullAutoMarked = (p) => (p.type === 'mc' || p.type === 'tf') && !p.reasonRequired;
+// "What was checked | points": one row per criterion, with what was missing.
+function fullMarksTable(part, marks) {
+    const table = document.createElement('table');
+    table.className = 'full-marks';
+    const cap = document.createElement('caption');
+    cap.textContent = t('Points by criterion');
+    const head = document.createElement('thead');
+    head.innerHTML = `<tr><th>${escapeHtml(t('What was checked'))}</th><th>${escapeHtml(t('Points'))}</th></tr>`;
+    const body = document.createElement('tbody');
+    const fmt = (n) => Math.round(n * 100) / 100;
+    for (const m of marks) {
+        const max = Number(part.rubric[m.c].points) || 0;
+        const tr = document.createElement('tr');
+        const crit = document.createElement('td');
+        crit.className = 'full-marks__crit';
+        crit.setAttribute('translate', 'no');
+        crit.dir = 'auto';
+        crit.textContent = part.rubric[m.c].criterion;
+        if (m.note) {
+            const note = document.createElement('div');
+            note.className = 'full-marks__note';
+            note.dir = 'auto';
+            note.textContent = m.note;
+            crit.appendChild(note);
+        }
+        const pts = document.createElement('td');
+        pts.className = 'full-marks__pts' + (m.points >= max ? ' is-full' : m.points === 0 ? ' is-zero' : ' is-part');
+        pts.textContent = outOfLabel(fmt(m.points), fmt(max));
+        tr.append(crit, pts);
+        body.appendChild(tr);
+    }
+    table.append(cap, head, body);
+    return table;
+}
+
 function fullBonusBadge() {
     const b = document.createElement('span');
     b.className = 'full-bonus';
@@ -8637,7 +8676,7 @@ function renderFullResult(exam, run) {
         if (q.bonus) h.prepend(fullBonusBadge());
         const sc = document.createElement('span');
         sc.className = 'full-rq__score';
-        sc.textContent = `${Math.round(got * 10) / 10} / ${Math.round(q.points * 10) / 10}`;
+        sc.textContent = outOfLabel(Math.round(got * 10) / 10, Math.round(q.points * 10) / 10);
         head.append(h, sc);
         card.appendChild(head);
         if (q.stem) {
@@ -8669,7 +8708,7 @@ function renderFullResult(exam, run) {
             if (r.status === 'not_chosen') pts.textContent = t('Not chosen');
             else if (r.status === 'unchecked') pts.textContent = t('Not checked');
             else {
-                pts.textContent = `${Math.round(r.points * 100) / 100} / ${Math.round(r.max * 100) / 100}`;
+                pts.textContent = outOfLabel(Math.round(r.points * 100) / 100, Math.round(r.max * 100) / 100);
                 pts.classList.toggle('is-full', r.max > 0 && r.points >= r.max);
                 pts.classList.toggle('is-zero', r.points === 0);
             }
@@ -8694,6 +8733,9 @@ function renderFullResult(exam, run) {
                     part.appendChild(src);
                 }
             }
+            // Points per criterion of the marking scheme - where the points went.
+            const marks = r.status === 'graded' && Array.isArray(r.marks) && Array.isArray(p.rubric) ? r.marks.filter(m => p.rubric[m.c]) : [];
+            if (marks.length) part.appendChild(fullMarksTable(p, marks));
             if (r.feedback) {
                 const fb = document.createElement('div');
                 fb.className = 'full-rpart__feedback';
