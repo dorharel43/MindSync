@@ -95,9 +95,20 @@ function extractJsonFromText(text) {
     }
 
     if (start !== -1 && end !== -1) {
-        return text.substring(start, end + 1);
+        return fixJsonEscapes(text.substring(start, end + 1));
     }
-    return text; 
+    return fixJsonEscapes(text);
+}
+
+// LaTeX in a JSON string with a single backslash ("$\sum_{n=1}^{\infty}$"
+// written as \sum, \infty) is an invalid escape: JSON.parse threw and the
+// whole reply was lost - 3 of 3 exams written by Flash on 3/10 ("didn't
+// return a usable exam"). An escape JSON doesn't know gets its backslash
+// doubled, read left to right in pairs so an already doubled one stays as it
+// is. Valid JSON has no such escape, so it never changes. (\f \b \t \n \r
+// are valid escapes - repairJsonTex puts those back inside formulas.)
+function fixJsonEscapes(json) {
+    return String(json).replace(/\\(u[0-9a-fA-F]{4}|["\\/bfnrt]|[\s\S])/g, (m, c) => c.length > 1 || '"\\/bfnrt'.includes(c) ? m : '\\\\' + c);
 }
 
 // =====================================
@@ -3671,7 +3682,7 @@ async function solveExamParts(course, question) {
 
 // The stages above, for the owner's exam check on the server (exported by
 // tools/port-main.py; unused in the desktop app).
-const EXAM_STAGES = { examBlueprint, verifyBlueprintRules, writeExam, checkExam, replaceBrokenParts, autoMarkPart, reasonedChoicePoints, gradeExamQuestion, marksFromAi, pointsFromAi, solveExamParts, normaliseExam, answerIsBlank, cleanExamText, cleanMathNotation, cutText, FORMULA_STATS };
+const EXAM_STAGES = { examBlueprint, verifyBlueprintRules, writeExam, checkExam, replaceBrokenParts, autoMarkPart, reasonedChoicePoints, gradeExamQuestion, marksFromAi, pointsFromAi, solveExamParts, normaliseExam, answerIsBlank, cleanExamText, cleanMathNotation, cutText, extractJsonFromText, FORMULA_STATS };
 
 // Graded sittings whose save failed: a retry only saves again, it doesn't
 // pay for the AI grading twice.
