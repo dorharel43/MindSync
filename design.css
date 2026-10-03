@@ -2053,3 +2053,14 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 .math-inline { unicode-bidi: isolate; }
 .math-inline .katex, .math-display .katex { font-size: 1.06em; }
 .full-part__text, .full-q__stem, .full-rpart__solution, .full-rpart__mine, .full-rpart__feedback, .study-question, #study-question, #exam-question { line-height: 1.75; }
+
+/* Every sitting of a full exam, to open an earlier one */
+.full-attempts { display: flex; flex-direction: column; gap: 8px; margin: 14px 0 4px; }
+.full-attempts[hidden] { display: none; }
+.full-attempts__label { font-size: var(--text-sm); font-weight: var(--font-semibold); color: var(--text-secondary); }
+.full-attempts__list { display: flex; flex-wrap: wrap; gap: 8px; }
+.full-attempt { display: inline-flex; align-items: baseline; gap: 8px; padding: 6px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-primary); font: inherit; font-size: var(--text-sm); cursor: pointer; }
+.full-attempt:hover { border-color: var(--accent-purple); }
+.full-attempt[aria-pressed="true"] { border-color: var(--accent-purple); background: var(--accent-subtle); cursor: default; }
+.full-attempt__meta { color: var(--text-secondary); font-variant-numeric: tabular-nums; unicode-bidi: isolate; }
+.full-attempt__grade { font-weight: var(--font-semibold); font-variant-numeric: tabular-nums; }
