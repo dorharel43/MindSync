@@ -95,6 +95,8 @@ function readConfig() {
 function writeConfig(updates) {
     const next = { ...readConfig(), ...updates };
     cachedConfig = next;
+    // (a new key may have its own budget - try it now)
+    if (updates && 'geminiKey' in updates) spendingCapUntil = 0;
     try {
         fs.writeFileSync(configPath, JSON.stringify(next, null, 2));
     } catch (e) {
@@ -200,6 +202,7 @@ const GEMINI_TIMEOUT_MS = 90000;
 function geminiError(message, fields = {}) {
     return Object.assign(new Error(message), fields);
 }
+const SPENDING_CAP_MESSAGE = "Your Gemini key's monthly spending cap is reached. Raise it in Google AI Studio, or switch to the local model in Settings.";
 
 // When a free key's DAILY quota resets: midnight US Pacific time, whatever
 // the user's own time zone. Returned as a timestamp.
@@ -340,6 +343,13 @@ async function callGemini({ apiKey, model, parts, maxTokens = 2048, forceJson = 
             // seconds of waiting on every action, all day, for a quota that
             // only comes back at midnight Pacific time. Daily = no retry, and
             // the model is skipped until the reset (see callGeminiResilient).
+            // The key's monthly spending cap (a budget set in AI Studio) -
+            // also a 429, but nothing comes back in a minute: every model
+            // runs on the same project and budget, so retrying or switching
+            // model only adds failed calls.
+            if (/spending cap/i.test(msg)) {
+                throw geminiError(SPENDING_CAP_MESSAGE, { status: 429, spendingCap: true, retryable: false });
+            }
             const quota = parseQuotaFailure(data, msg);
             if (quota.daily) {
                 const resetAt = nextPacificMidnight();
@@ -437,8 +447,20 @@ async function callGeminiWithRetry(opts, delays = RETRY_DELAYS_MS) {
 // Models whose daily quota ran out -> when it comes back. Skipped until
 // then, instead of asking Google (and waiting) again on every action.
 const dailyQuotaUntil = {};
+// The monthly spending cap: one budget for the whole project, so no Gemini
+// model is asked until this time (a few minutes - the cap may be raised)
+// instead of every action failing at Google again.
+const SPENDING_CAP_PAUSE_MS = 10 * 60 * 1000;
+let spendingCapUntil = 0;
+function checkSpendingCapPause() {
+    if (spendingCapUntil > Date.now()) throw geminiError(SPENDING_CAP_MESSAGE, { status: 429, spendingCap: true, retryable: false });
+}
+function noteSpendingCap(err) {
+    if (err && err.spendingCap) spendingCapUntil = Date.now() + SPENDING_CAP_PAUSE_MS;
+}
 
 async function callGeminiResilient(opts) {
+    checkSpendingCapPause();
     const chain = [opts.model];
     if (opts.model !== DEFAULT_GEMINI_MODEL) chain.push(DEFAULT_GEMINI_MODEL);
     if (!chain.includes(FALLBACK_GEMINI_MODEL)) chain.push(FALLBACK_GEMINI_MODEL);
@@ -462,6 +484,8 @@ async function callGeminiResilient(opts) {
             if (i > 0) console.warn(`↪️ Answered by fallback ${model} (${chain[0]} unavailable)`);
             return { text, model };
         } catch (err) {
+            // The budget is the project's, not the model's: no model can answer.
+            if (err.spendingCap) { noteSpendingCap(err); throw err; }
             if (!firstErr) firstErr = err;
             lastErr = err;
             if (err.dailyQuota) dailyQuotaUntil[model] = err.resetAt;
@@ -662,6 +686,8 @@ async function testGeminiKey(apiKey, model = DEFAULT_GEMINI_MODEL) {
             maxTokens: 512,
             thinkingLevel: 'low'
         });
+        // The key in use answers again (the spending cap was raised): no pause.
+        if (key === readConfig().geminiKey) spendingCapUntil = 0;
         return { ok: true, reply: text.slice(0, 40) };
     } catch (err) {
         console.error('🔑 Key test failed:', err.message);

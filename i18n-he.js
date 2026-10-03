@@ -41,6 +41,9 @@
         'Up next': 'הבא בתור', 'Loading…': 'טוען…', 'Loading...': 'טוען…', 'Guest': 'אורח', 'Student': 'סטודנט',
         'Open the menu': 'פתיחת התפריט', 'Toggle dark mode': 'מצב כהה', 'Open settings': 'פתיחת ההגדרות',
         'Escape': 'Escape', 'Enter': 'Enter',
+        // The AI budget (the key's monthly spending cap, 3/10)
+        "The AI isn't available right now: this month's AI budget is used up. Try again later.": 'ה-AI לא זמין כרגע: התקציב החודשי של ה-AI נוצל. אפשר לנסות שוב מאוחר יותר.',
+        "Your Gemini key's monthly spending cap is reached. Raise it in Google AI Studio, or switch to the local model in Settings.": 'הגעת למגבלת ההוצאה החודשית של מפתח ה-Gemini. אפשר להעלות אותה ב-Google AI Studio, או לעבור למודל המקומי בהגדרות.',
 
         // ---- login ----
         'Checking your session…': 'בודקים את החיבור…',
