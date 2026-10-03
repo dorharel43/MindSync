@@ -8603,6 +8603,10 @@ async function submitFullExam(timeUp) {
     }));
     fullPhotosStore('delete', clientRunId);   // the photos aren't kept after grading
     if (fullState.clientRunId === clientRunId) fullPhotos.clear();
+    // A new sitting: the list of sittings comes fresh from the server (it
+    // keeps the newest 20 - an older copy here could show one already gone).
+    fullState.runs = null;
+    fullState.runsExamId = null;
     if (fullState.token === token && !document.getElementById('study-full').hidden) renderFullResult(exam, run);
     if (feedback.length) fullPhotoFeedback(exam, run, feedback);
 }
@@ -8653,10 +8657,12 @@ function renderFullAttempts(exam, run) {
         b.setAttribute('aria-pressed', String(id === runId));
         const name = document.createElement('span');
         name.className = 'full-attempt__name';
-        name.textContent = t('Attempt {n}', { n: runs.length - k });
+        // (numbered while all are here: past 20 the server keeps only the newest)
+        name.textContent = runs.length < 20 ? t('Attempt {n}', { n: runs.length - k }) : '';
         const meta = document.createElement('span');
         meta.className = 'full-attempt__meta';
-        meta.textContent = `${when.getDate()}/${when.getMonth() + 1} · ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`;
+        const thisYear = when.getFullYear() === new Date().getFullYear();
+        meta.textContent = `${when.toLocaleDateString(I18N.lang === 'he' ? 'he-IL' : 'en-GB', thisYear ? { day: 'numeric', month: 'numeric' } : { day: 'numeric', month: 'numeric', year: '2-digit' })} · ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`;
         const grade = document.createElement('span');
         grade.className = 'full-attempt__grade';
         grade.textContent = String(r.percent);
@@ -8700,6 +8706,11 @@ function renderFullResult(exam, run) {
             toast.error(out.error, t('Not checked'));
             if (here) { regrade.disabled = false; regrade.textContent = t('Check them again'); }
             return;
+        }
+        // The list keeps the re-checked copy even when another sitting is open now.
+        if (fullState.runsExamId === String(exam.id) && Array.isArray(fullState.runs)) {
+            const at = fullState.runs.findIndex(r => String(r.id || r._id) === runId);
+            if (at >= 0) fullState.runs[at] = out.result.run;
         }
         if (here) renderFullResult(fullState.exam, out.result.run);
         if (out.result.left) toast.info(t('{n} parts still couldn\'t be checked. Try again in a few minutes.').replace('{n}', out.result.left));
