@@ -3237,7 +3237,7 @@ async function examBlueprint(course, past) {
         if (f.buffer && bytes + f.buffer.length <= 18 * 1024 * 1024) { buffers.push(f.buffer); bytes += f.buffer.length; } else if (String(f.text || '').trim()) asText.push(`=== ${f.name} ===\n${String(f.text).slice(0, 25000)}`);
     }
     const texts = asText.join('\n\n');
-    const opts = { forceJson: true, maxTokens: 12000, thinkingLevel: 'medium', timeoutMs: 240000, noFallback: true };
+    const opts = { forceJson: true, maxTokens: 24000, thinkingLevel: 'medium', timeoutMs: 240000, noFallback: true };
     let raw;
     try {
         raw = buffers.length ? await aiProvider.generateFromPdf(buffers, buildExamBlueprintPrompt(course, texts), opts)
@@ -3298,9 +3298,13 @@ function near(src, anchor, others, span = 70) {
 
 // 2. The exam itself, with answers and marking schemes. `blueprint` is a
 // usable blueprint (with questions) or null.
+// Token limits of the exam stages: the model's reply budget INCLUDES its
+// thinking. At 30000 the writer spent 21749 thinking on a calculus exam and
+// was cut off (3/10, the paid-key measure) - the whole call lost. The limits
+// are ceilings (only what is used is paid); 65536 is the model's maximum.
 async function writeExam(course, blueprint, materialText) {
     const rawExam = await aiProvider.generateText(buildExamWritePrompt(course, blueprint, materialText), {
-        forceJson: true, maxTokens: 30000, thinkingLevel: 'high', timeoutMs: 360000, noFallback: true
+        forceJson: true, maxTokens: 65536, thinkingLevel: 'high', timeoutMs: 360000, noFallback: true
     });
     let exam;
     try { exam = normaliseExam(JSON.parse(extractJsonFromText(String(rawExam))), blueprint); } catch (e) { exam = null; }
@@ -3317,7 +3321,7 @@ async function checkExam(exam, { keepParts = false } = {}) {
     const stats = { parts: exam.questions.reduce((n, q) => n + q.parts.length, 0), checked: 0, corrected: 0, dropped: 0, doubtful: 0, failed: false, error: '', verdicts: [] };
     try {
         const rawCheck = await aiProvider.generateText(buildExamCheckPrompt(exam), {
-            forceJson: true, maxTokens: 20000, thinkingLevel: 'high', timeoutMs: 300000, noFallback: true, allowance: 'light'
+            forceJson: true, maxTokens: 40000, thinkingLevel: 'high', timeoutMs: 300000, noFallback: true, allowance: 'light'
         });
         const verdicts = JSON.parse(extractJsonFromText(String(rawCheck))).parts || [];
         stats.verdicts = verdicts;
@@ -3414,7 +3418,7 @@ async function replaceBrokenParts(course, exam, material) {
     let fresh = [];
     try {
         const raw = await aiProvider.generateText(buildExamReplacePrompt(course, exam, bad, material), {
-            forceJson: true, maxTokens: 16000, thinkingLevel: 'high', timeoutMs: 300000, noFallback: true, allowance: 'light'
+            forceJson: true, maxTokens: 32000, thinkingLevel: 'high', timeoutMs: 300000, noFallback: true, allowance: 'light'
         });
         fresh = JSON.parse(extractJsonFromText(String(raw))).parts || [];
     } catch (err) {
@@ -3635,7 +3639,7 @@ function pointsFromAi(part, g, marks) {
 
 async function gradeExamQuestion(question, items) {
     const raw = await aiProvider.generateText(buildExamGradePrompt(question, items), {
-        forceJson: true, maxTokens: 6000, thinkingLevel: 'medium', timeoutMs: 120000, noFallback: true, allowance: 'light'
+        forceJson: true, maxTokens: 12000, thinkingLevel: 'medium', timeoutMs: 120000, noFallback: true, allowance: 'light'
     });
     return JSON.parse(extractJsonFromText(String(raw))).parts || [];
 }
@@ -3644,7 +3648,7 @@ async function gradeExamQuestion(question, items) {
 // [{ index, answer, rubric, correct, topic }], cleaned like the writer's.
 async function solveExamParts(course, question) {
     const raw = await aiProvider.generateText(buildExamSolvePrompt(course, question), {
-        forceJson: true, maxTokens: 16000, thinkingLevel: 'high', timeoutMs: 300000, noFallback: true, allowance: 'light'
+        forceJson: true, maxTokens: 32000, thinkingLevel: 'high', timeoutMs: 300000, noFallback: true, allowance: 'light'
     });
     const parts = JSON.parse(extractJsonFromText(String(raw))).parts || [];
     return parts.map(p => {
