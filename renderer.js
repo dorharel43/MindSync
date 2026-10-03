@@ -4561,7 +4561,8 @@ function renderHomeStudy(status) {
     box.hidden = !onboardingEl.hidden;
     if (box.hidden) return;
     // The daily goal only once there are questions to answer.
-    if (status.questions) loadDailyGoal();
+    homeGoalAllowed = !!status.questions;
+    if (homeGoalAllowed) loadDailyGoal();
     else { const g = document.getElementById('home-goal'); if (g) g.hidden = true; }
     const title = document.getElementById('home-study-title');
     const sub = document.getElementById('home-study-sub');
@@ -5394,12 +5395,15 @@ const ANSWER_PROMPTS = {
 // streak and no penalty: tomorrow starts again from 0. When it can't be
 // loaded the line just isn't shown.
 let dailyGoalState = null;   // { answered, goal }
+let homeGoalAllowed = false; // Home shows it only with the guide gone and questions to answer (renderHomeStudy)
+let studyGoalAllowed = false; // Study: only with questions to answer (loadStudyHome)
+let dailyGoalSeq = 0;        // only the latest load is drawn
 
 function renderDailyGoal(prefix) {
     const box = document.getElementById(`${prefix}-goal`);
     if (!box) return;
     const g = dailyGoalState;
-    box.hidden = !g || !g.goal;
+    box.hidden = !g || !g.goal || (prefix === 'home' ? !homeGoalAllowed : !studyGoalAllowed);
     if (box.hidden) return;
     const done = g.answered >= g.goal;
     box.classList.toggle('daily-goal--done', done);
@@ -5414,8 +5418,11 @@ function renderDailyGoal(prefix) {
 }
 
 async function loadDailyGoal() {
+    const seq = ++dailyGoalSeq;
     const res = await ipcRenderer.invoke('get-study-today').catch(() => null);
-    dailyGoalState = res && Number.isFinite(res.answered) && res.goal ? { answered: res.answered, goal: res.goal } : null;
+    if (seq !== dailyGoalSeq) return dailyGoalState;   // a newer load is on its way
+    // (a failed load keeps what was shown - it is never a reason to hide a goal just saved)
+    if (res && Number.isFinite(res.answered) && res.goal) dailyGoalState = { answered: res.answered, goal: res.goal };
     renderDailyGoal('study');
     renderDailyGoal('home');
     renderGoalPicker();
@@ -5444,6 +5451,8 @@ document.querySelectorAll('#daily-goal-picker [data-goal]').forEach((btn) => {
         if (dailyGoalState && dailyGoalState.goal === goal) return;
         const res = await ipcRenderer.invoke('save-profile', { dailyGoal: goal }).catch(e => ({ error: e.message }));
         if (res && res.error) { toast.error(res.error, t('The goal wasn\'t saved')); return; }
+        if (dailyGoalState) dailyGoalState = { ...dailyGoalState, goal };
+        else renderGoalPicker(goal);
         await loadDailyGoal();
         toast.success(t('Daily goal: {n} questions', { n: goal }));
     });
@@ -5460,6 +5469,8 @@ async function loadStudyHome() {
     ]);
     if (Array.isArray(items)) studyItemsCache = items;
     if (!stats) return;
+    studyGoalAllowed = stats.totalItems > 0;
+    renderDailyGoal('study');
     // Today's due questions get their new versions written now, while the
     // student looks at this screen (1/10).
     if (stats.dueCount > 0) prepareVersions('today');
@@ -6314,6 +6325,9 @@ function revealAnswer(check = null) {
 // One answer is saved at a time (30/9): a double click on "Next" or an
 // outcome used to save the answer twice and skip the next question.
 let reviewInFlight = false;
+async function waitForReviewSaved(maxMs = 5000) {
+    for (let waited = 0; reviewInFlight && waited < maxMs; waited += 100) await new Promise(r => setTimeout(r, 100));
+}
 function setOutcomeButtonsDisabled(disabled) {
     document.querySelectorAll('#study-outcome-row .outcome-btn, #study-next-btn').forEach(b => { b.disabled = disabled; });
 }
@@ -6860,7 +6874,8 @@ function endStudySession() {
     const goalEl = document.getElementById('summary-goal');
     if (goalEl) {
         goalEl.hidden = true;
-        loadDailyGoal().then((g) => {
+        // (an answer still being saved counts - wait for it, up to 5 seconds)
+        waitForReviewSaved().then(loadDailyGoal).then((g) => {
             if (!g || document.getElementById('study-summary').hidden) return;
             goalEl.hidden = false;
             goalEl.textContent = g.answered >= g.goal
