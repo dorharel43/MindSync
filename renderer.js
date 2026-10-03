@@ -5398,6 +5398,7 @@ let dailyGoalState = null;   // { answered, goal }
 let homeGoalAllowed = false; // Home shows it only with the guide gone and questions to answer (renderHomeStudy)
 let studyGoalAllowed = false; // Study: only with questions to answer (loadStudyHome)
 let dailyGoalSeq = 0;        // only the latest load is drawn
+let lastKnownGoal = null;    // the goal last saved or loaded - Settings' picker keeps it when a load fails
 
 function renderDailyGoal(prefix) {
     const box = document.getElementById(`${prefix}-goal`);
@@ -5422,7 +5423,7 @@ async function loadDailyGoal() {
     const res = await ipcRenderer.invoke('get-study-today').catch(() => null);
     if (seq !== dailyGoalSeq) return dailyGoalState;   // a newer load is on its way
     // (a failed load keeps what was shown - it is never a reason to hide a goal just saved)
-    if (res && Number.isFinite(res.answered) && res.goal) dailyGoalState = { answered: res.answered, goal: res.goal };
+    if (res && Number.isFinite(res.answered) && res.goal) { dailyGoalState = { answered: res.answered, goal: res.goal }; lastKnownGoal = res.goal; }
     renderDailyGoal('study');
     renderDailyGoal('home');
     renderGoalPicker();
@@ -5439,7 +5440,8 @@ function smartPracticeLimit() {
 }
 
 function renderGoalPicker(fallback = null) {
-    const goal = dailyGoalState ? dailyGoalState.goal : fallback;
+    if (fallback) lastKnownGoal = fallback;
+    const goal = dailyGoalState ? dailyGoalState.goal : lastKnownGoal;
     document.querySelectorAll('#daily-goal-picker [data-goal]').forEach((btn) => {
         btn.classList.toggle('active', Number(btn.dataset.goal) === goal);
         btn.setAttribute('aria-pressed', String(Number(btn.dataset.goal) === goal));
@@ -5451,8 +5453,9 @@ document.querySelectorAll('#daily-goal-picker [data-goal]').forEach((btn) => {
         if (dailyGoalState && dailyGoalState.goal === goal) return;
         const res = await ipcRenderer.invoke('save-profile', { dailyGoal: goal }).catch(e => ({ error: e.message }));
         if (res && res.error) { toast.error(res.error, t('The goal wasn\'t saved')); return; }
+        lastKnownGoal = goal;
         if (dailyGoalState) dailyGoalState = { ...dailyGoalState, goal };
-        else renderGoalPicker(goal);
+        renderGoalPicker(goal);
         await loadDailyGoal();
         toast.success(t('Daily goal: {n} questions', { n: goal }));
     });
