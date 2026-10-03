@@ -230,6 +230,12 @@
                     <div class="home-hero__label">Practice</div>
                     <div class="home-hero__title" id="home-study-title"></div>
                     <div class="home-hero__text" id="home-study-sub"></div>
+                    <!-- The daily goal (3/10): questions answered today, out of the
+                         goal set in Settings. No streak - tomorrow starts from 0. -->
+                    <div class="daily-goal" id="home-goal" hidden>
+                        <div class="daily-goal__text" id="home-goal-text"></div>
+                        <div class="daily-goal__bar" id="home-goal-bar" role="progressbar" aria-valuemin="0"><span class="daily-goal__fill" id="home-goal-fill"></span></div>
+                    </div>
                     <button class="btn-primary home-hero__btn" id="home-study-btn"></button>
                 </div>
                 <div class="home-hero__next">
@@ -438,6 +444,12 @@
                         <div class="home-hero__label">Smart practice</div>
                         <div class="home-hero__title"><span class="ms-tabular" id="study-due-count">0</span> <span>ready to practice</span></div>
                         <div class="home-hero__text">Picked for you from all your courses - what you're about to forget, and what's closest to an exam.</div>
+                        <!-- The daily goal (3/10): questions answered today, out of the
+                             goal set in Settings. No streak - tomorrow starts from 0. -->
+                        <div class="daily-goal" id="study-goal" hidden>
+                            <div class="daily-goal__text" id="study-goal-text"></div>
+                            <div class="daily-goal__bar" id="study-goal-bar" role="progressbar" aria-valuemin="0"><span class="daily-goal__fill" id="study-goal-fill"></span></div>
+                        </div>
                         <button class="btn-primary home-hero__btn" id="start-study-btn">Start smart practice</button>
                     </div>
                     <div class="home-hero__next study-hero__side">
@@ -664,6 +676,7 @@
                         </div>
                     </div>
                     <div id="summary-message" class="settings-hint"></div>
+                    <div id="summary-goal" class="settings-hint summary-goal" hidden></div>
                     <div id="summary-lucky" class="settings-hint" hidden></div>
                     <div id="summary-twins" class="settings-hint summary-twins" hidden></div>
                     <div class="summary-surewrong" id="summary-surewrong" hidden>
@@ -1050,6 +1063,22 @@
                         <div class="settings-hint settings-hint--inline">Changing it logs you out on every other device.</div>
                     </div>
                     <button id="auth-change-password-btn" class="btn-secondary btn-sm">Change password</button>
+                </div>
+            </div>
+
+            <h3 class="settings-group-title">Practice</h3>
+            <div class="card settings-card">
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-row__title">Daily goal</div>
+                        <div class="settings-hint settings-hint--inline">Questions a day - in practice, mock exams and full exams. Shown on Home and Study.</div>
+                    </div>
+                    <div class="filter-group" id="daily-goal-picker" role="group" aria-label="Daily goal">
+                        <button class="filter-chip ms-tabular" data-goal="10">10</button>
+                        <button class="filter-chip ms-tabular" data-goal="15">15</button>
+                        <button class="filter-chip ms-tabular" data-goal="20">20</button>
+                        <button class="filter-chip ms-tabular" data-goal="30">30</button>
+                    </div>
                 </div>
             </div>
 

@@ -2518,6 +2518,12 @@ ipcMain.handle('get-study-stats', async () => {
     try { return await api.getStudyStats(); } catch (err) { console.error('study stats failed:', err.message); return null; }
 });
 
+// The daily goal (3/10): { answered, goal }, or null when it can't be loaded
+// (then the goal line just isn't shown - it's never a reason for an error).
+ipcMain.handle('get-study-today', async () => {
+    try { return await api.getStudyToday(); } catch (err) { console.error('study today failed:', err.message); return null; }
+});
+
 ipcMain.handle('save-study-items', async (event, items) => {
     try { return await api.createStudyItemsBulk(items); } catch (err) { return { error: err.message }; }
 });

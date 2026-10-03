@@ -41,6 +41,14 @@
         'Up next': 'הבא בתור', 'Loading…': 'טוען…', 'Loading...': 'טוען…', 'Guest': 'אורח', 'Student': 'סטודנט',
         'Open the menu': 'פתיחת התפריט', 'Toggle dark mode': 'מצב כהה', 'Open settings': 'פתיחת ההגדרות',
         'Escape': 'Escape', 'Enter': 'Enter',
+        // The daily goal (3/10)
+        'Today: {n} of {g} questions': 'היום: {n} מתוך {g} שאלות',
+        "Today's goal is done: {n} questions": 'היעד של היום הושג: {n} שאלות',
+        "Today's goal is done: {n} questions. Anything more is a bonus.": 'היעד של היום הושג: {n} שאלות. כל מה שמעבר זה בונוס.',
+        'Today: {n} of {g} questions - {left} to go.': 'היום: {n} מתוך {g} שאלות - נשארו עוד {left}.',
+        'Daily goal': 'יעד יומי', 'Daily goal: {n} questions': 'יעד יומי: {n} שאלות', "The goal wasn't saved": 'היעד לא נשמר',
+        'Questions a day - in practice, mock exams and full exams. Shown on Home and Study.': 'שאלות ביום - בתרגול, במבחני דמה ובמבחנים מלאים. מוצג בבית ובתרגול.',
+        'The daily goal is 10, 15, 20 or 30 questions.': 'היעד היומי הוא 10, 15, 20 או 30 שאלות.',
         // The AI budget (the key's monthly spending cap, 3/10)
         "The AI isn't available right now: this month's AI budget is used up. Try again later.": 'ה-AI לא זמין כרגע: התקציב החודשי של ה-AI נוצל. אפשר לנסות שוב מאוחר יותר.',
         "Your Gemini key's monthly spending cap is reached. Raise it in Google AI Studio, or switch to the local model in Settings.": 'הגעת למגבלת ההוצאה החודשית של מפתח ה-Gemini. אפשר להעלות אותה ב-Google AI Studio, או לעבור למודל המקומי בהגדרות.',

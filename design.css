@@ -1703,6 +1703,16 @@ html[dir="rtl"] .home-hero__title { letter-spacing: 0; }
 .home-hero__exam-name { font-weight: 600; color: var(--hero-ink); }
 .home-hero :focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
+/* The daily goal (3/10): a line and a thin bar inside the hero. */
+.daily-goal { width: 100%; max-width: 46ch; margin-top: 14px; }
+.daily-goal[hidden] { display: none; }
+.daily-goal__text { font-size: var(--text-sm); font-weight: 600; color: var(--hero-ink); font-variant-numeric: tabular-nums; }
+.daily-goal__bar { margin-top: 6px; height: 6px; border-radius: 999px; background: var(--hero-line); overflow: hidden; }
+.daily-goal__fill { display: block; height: 100%; width: 0; border-radius: inherit; background: #fff; transition: width .3s ease; }
+.daily-goal--done .daily-goal__fill { background: #8be3b0; }
+@media (prefers-reduced-motion: reduce) { .daily-goal__fill { transition: none; } }
+.summary-goal { margin-top: 6px; font-weight: 600; }
+
 #view-home .dashboard-grid { grid-template-columns: 3fr 2fr; max-width: none; margin-top: 0; gap: 20px; align-items: start; }
 .home-card { padding: 20px 22px; }
 .home-card__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
