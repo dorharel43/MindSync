@@ -8615,11 +8615,64 @@ async function showLastFullResult(examId) {
     if (!exam || exam.error || !Array.isArray(runs) || !runs.length) { toast.error(t('Couldn\'t open the result.')); return; }
     exam.id = exam.id || exam._id;
     fullState.exam = exam;
+    fullState.runs = runs;
+    fullState.runsExamId = String(exam.id);
     renderFullResult(exam, runs[0]);
+}
+
+// Every sitting of this exam (the server keeps the last 20), newest first:
+// one button each - which attempt, when, the grade - to open it. Hidden with
+// one. A sitting just graded or checked again replaces its copy in the list.
+function renderFullAttempts(exam, run) {
+    const box = document.getElementById('full-attempts');
+    const list = document.getElementById('full-attempts-list');
+    if (!box || !list) return;
+    const runId = String(run.id || run._id || '');
+    const runs = fullState.runsExamId === String(exam.id) && Array.isArray(fullState.runs) ? fullState.runs : null;
+    if (!runs) {
+        // Just graded: the list comes from the server, then this is drawn again.
+        box.hidden = true;
+        ipcRenderer.invoke('full-exam-runs', exam.id).then((all) => {
+            if (!Array.isArray(all) || fullState.resultRunId !== runId || String(fullState.exam && fullState.exam.id) !== String(exam.id)) return;
+            fullState.runs = all;
+            fullState.runsExamId = String(exam.id);
+            renderFullAttempts(exam, run);
+        }).catch(() => {});
+        return;
+    }
+    const at = runs.findIndex(r => String(r.id || r._id) === runId);
+    if (at >= 0) runs[at] = run; else runs.unshift(run);
+    box.hidden = runs.length < 2;
+    list.textContent = '';
+    runs.forEach((r, k) => {
+        const id = String(r.id || r._id || '');
+        const when = new Date(r.finishedAt || r.startedAt || Date.now());
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'full-attempt';
+        b.setAttribute('aria-pressed', String(id === runId));
+        const name = document.createElement('span');
+        name.className = 'full-attempt__name';
+        name.textContent = t('Attempt {n}', { n: runs.length - k });
+        const meta = document.createElement('span');
+        meta.className = 'full-attempt__meta';
+        meta.textContent = `${when.getDate()}/${when.getMonth() + 1} · ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`;
+        const grade = document.createElement('span');
+        grade.className = 'full-attempt__grade';
+        grade.textContent = String(r.percent);
+        b.append(name, meta, grade);
+        b.onclick = () => {
+            if (id === fullState.resultRunId) return;
+            renderFullResult(exam, r);
+            document.getElementById('full-result').scrollIntoView({ block: 'start' });
+        };
+        list.appendChild(b);
+    });
 }
 
 function renderFullResult(exam, run) {
     fullState.resultRunId = String(run.id || run._id || '');
+    renderFullAttempts(exam, run);
     document.getElementById('full-score').textContent = String(run.percent);
     const usedMin = Math.round((run.usedSec || 0) / 60);
     const unchecked = (run.answers || []).filter(a => a.status === 'unchecked').length;
