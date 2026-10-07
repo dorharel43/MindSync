@@ -5871,7 +5871,8 @@ async function renderExamMap() {
             if (course === examMapCourse && !examMapBusy) renderExamMap();
         });
     }
-    const n = (m.profile.pastExams || []).length || (m.profile.recurring[0] && m.profile.recurring[0].of) || 0;
+    // (the exams the analysis counted - it leaves out one of another course, so not always the files read)
+    const n = Math.max(0, ...m.profile.recurring.map(r => r.of || 0)) || (m.profile.pastExams || []).length;
     text.textContent = m.needsLink && examMapLinking.get(course) === 'running'
         ? t('Matching the topics with your questions…')
         : t('From {n} past exams - where an hour of practice pays most comes first.', { n });

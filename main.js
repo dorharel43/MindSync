@@ -3006,7 +3006,7 @@ Rules:
 - "bonus": true ONLY on a question the exam itself calls a bonus (בונוס / bonus); copy those words into "bonusQuote". Its points are on top of "totalPoints". No such words = no bonus.
 - "maxGrade": only when the exam says the grade is capped below the points (e.g. "the questions add up to 108 points, the top grade is 100" = 100); copy the words into "maxGradeQuote". Otherwise null.
 - "dontKnowShare": only when the exam says that answering "I don't know" (לא יודע/ת) gets part of the points - as a fraction (25% = 0.25); copy the words into "dontKnowQuote". Otherwise null.
-- "recurring": only what appears in 2 or more of the exams, most frequent first, up to 12. One exam = [].
+- "recurring": only what appears in 2 or more of the exams, most frequent first, up to 12. One exam = []. Include the routine kinds too (computing a derivative, an integral, a limit) - the points a student can count on are often there. A topic counts in an exam only when a question or part there asks it directly; "count" is in how many exams it does. An exam that isn't of this course (another course's, another syllabus) is left out of "of".
 - "pool": up to 25 past questions or parts, spread over the topics and kinds. ${MATH_AS_LATEX}
 - Don't invent: what the exams don't show is null or ''.`;
 }
@@ -3656,13 +3656,15 @@ function linkExamMap(course) {
     return run;
 }
 
-// The past exams one analysis reads: the course's, by name (newest year
-// first, as names usually go), up to 8. The screen compares these names with
-// the ones the saved analysis read.
+// The past exams one analysis reads: the course's, the newest year in the
+// name first (a name with no year last - not first, as a plain name sort
+// put "other-sample" before 2025), up to 8. The screen compares these names
+// with the ones the saved analysis read.
 const EXAM_MAP_FILES = 8;
+const yearOf = (name) => Math.max(0, ...(String(name).match(/(?:19|20)\d\d/g) || []).map(Number));
 const examMapFiles = (files, course) => (Array.isArray(files) ? files : [])
     .filter(f => (f.folder || '') === course && PAST_EXAM_FILE.test(f.name || ''))
-    .sort((a, b) => String(b.name).localeCompare(String(a.name)))
+    .sort((a, b) => yearOf(b.name) - yearOf(a.name) || String(b.name).localeCompare(String(a.name)))
     .slice(0, EXAM_MAP_FILES);
 
 async function analyzeExamMap(course, stage) {
