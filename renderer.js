@@ -4285,6 +4285,8 @@ async function loadAndRenderHome() {
             .filter(e => e.type === 'exam' && e.date && e.date >= todayIso)
             .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')))[0];
         examBox.hidden = !nextExam;
+        examBox.dataset.exam = nextExam ? `${nextExam.title}|${nextExam.date}` : '';
+        hideRepeatedNextExam();
         if (nextExam) {
             const [y, m, d] = nextExam.date.split('-').map(Number);
             const today0 = new Date(); today0.setHours(0, 0, 0, 0);
@@ -4555,11 +4557,157 @@ async function refreshOnboarding() {
 
 // The Study line on Home - only when the guide is gone (while it's there,
 // its own steps already say "make questions" / "start practicing").
+// ---- Home: the upcoming exam (3/10) ----
+// "An exam coach, not another chat": the first thing on Home is how ready
+// you are for the next exam and what to do today. A main number only from
+// real evidence - a mock or full exam in the last 7 days; otherwise the
+// status in words and two plain numbers (routes/study.js readinessOf).
+const EVIDENCE_DAYS = 7;
+const daysAgo = (at) => Math.floor((Date.now() - new Date(at).getTime()) / 86400000);
+
+function examWhen(course, exam) {
+    return exam.daysLeft === 0 ? t('{c} - exam today', { c: course })
+        : exam.daysLeft === 1 ? t('{c} - exam tomorrow', { c: course })
+            : t('{c} - exam in {n} days', { c: course, n: exam.daysLeft });
+}
+
+function resetHomeReadiness() {
+    ['home-ready-score', 'home-ready-status', 'home-ready-today', 'home-ready-tip', 'home-ready-others'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.hidden = true;
+    });
+    const label = document.getElementById('home-study-label');
+    if (label) label.textContent = t('Practice');
+    homeReadinessExam = '';
+    hideRepeatedNextExam();
+}
+
+// The Today panel's "Next exam" says again what the readiness panel says,
+// when it's the same exam - hidden then (whichever of the two is drawn last).
+let homeReadinessExam = '';
+function hideRepeatedNextExam() {
+    const box = document.getElementById('home-next-exam');
+    if (box && box.dataset.exam && box.dataset.exam === homeReadinessExam) box.hidden = true;
+    else if (box && box.dataset.exam) box.hidden = false;
+}
+
+// The newest real evidence of the last week: a mock exam (score ± margin) or a full exam.
+function readinessEvidence(s) {
+    const fresh = (e) => e && e.at && daysAgo(e.at) <= EVIDENCE_DAYS;
+    const mock = fresh(s.lastMock) ? { kind: 'mock', value: s.lastMock.score, margin: s.lastMock.margin, at: s.lastMock.at } : null;
+    const full = fresh(s.lastFull) ? { kind: 'full', value: s.lastFull.percent, at: s.lastFull.at } : null;
+    if (mock && full) return new Date(mock.at) >= new Date(full.at) ? mock : full;
+    return mock || full;
+}
+
+// Fills the practice half with the nearest exam that has questions. Returns
+// false when there is no such exam (the panel shows practice as before).
+function renderHomeReadiness(status) {
+    const subjects = (status.subjects || []).filter(s => s.readiness && s.readiness.total > 0);
+    const withExam = subjects.filter(s => s.exam).sort((a, b) => a.exam.daysLeft - b.exam.daysLeft);
+    const s = withExam[0];
+    if (!s) {
+        // No exam date: say what it would give, once there are questions.
+        if (subjects.length) {
+            const tip = document.getElementById('home-ready-tip');
+            tip.hidden = false;
+            document.getElementById('home-ready-tip-text').textContent = t('No exam dates yet - add them and practice is timed to each exam.');
+            const tipBtn = document.getElementById('home-ready-tip-btn');
+            tipBtn.textContent = t('Add exam dates');
+            tipBtn.onclick = () => document.getElementById('nav-weekly').click();
+        }
+        return false;
+    }
+    const r = s.readiness;
+    const name = s.category === 'Uncategorized' ? t('No course') : s.category;
+    homeReadinessExam = `${s.exam.title}|${s.exam.date}`;
+    hideRepeatedNextExam();
+    document.getElementById('home-study-label').textContent = t('Upcoming exam');
+    const title = document.getElementById('home-study-title');
+    title.textContent = examWhen(name, s.exam);
+
+    // The number - only from a real exam of the last week.
+    const ev = readinessEvidence(s);
+    const score = document.getElementById('home-ready-score');
+    score.hidden = !ev;
+    if (ev) {
+        document.getElementById('home-ready-num').textContent = String(Math.round(ev.value));
+        const ago = daysAgo(ev.at);
+        const when = ago === 0 ? t('today') : ago === 1 ? t('yesterday') : t('{n} days ago', { n: ago });
+        document.getElementById('home-ready-of').textContent = ev.kind === 'mock'
+            ? (ev.margin ? t('If the exam were today (±{m}) - mock exam, {w}', { m: ev.margin, w: when }) : t('If the exam were today - mock exam, {w}', { w: when }))
+            : t('Out of 100 - full exam, {w}', { w: when });
+    }
+
+    // The status in words.
+    const st = document.getElementById('home-ready-status');
+    st.hidden = false;
+    st.textContent = '';
+    const statusKey = readinessStatus(r);
+    const why = document.createElement('span');
+    why.textContent = statusKey === 'at_risk' && r.reason === 'knowledge' ? t('Much of what you practiced isn\'t known yet.')
+        : statusKey === 'at_risk' ? t('Too much of the course is left for the time left.')
+            : statusKey === 'too_early' ? t('{n} more answers and you\'ll see where you stand.', { n: r.toKnow || 1 })
+                : t(READINESS_STATUS[statusKey].tip);
+    st.append(readinessPill(r), why);
+
+    // Two plain numbers.
+    const sub = document.getElementById('home-study-sub');
+    // (no percentage before there's enough to judge by - "too early" means too early)
+    sub.textContent = !r.practiced ? t('{n} questions are waiting - none answered yet.', { n: r.total })
+        : !r.enoughData ? t('Answered {p} of {n} questions so far.', { p: r.practiced, n: r.total })
+            : t('You know {k}% of what you practiced · covered {c}% of the questions.', { k: r.knowPercent == null ? 0 : r.knowPercent, c: r.coverage });
+
+    // Today.
+    const today = document.getElementById('home-ready-today');
+    today.hidden = false;
+    // (when today's plan is below the pace the exam needs, it says so - not "fine")
+    const behind = r.perDay > 1 && r.unseen && r.perDay > s.due;
+    today.textContent = behind
+        ? t('Today: {n} questions are planned - but covering the course in time takes about {p} new a day.', { n: s.due, p: r.perDay })
+        : s.due > 0 ? t('Today: {n} questions in this course.', { n: s.due })
+            : t('Nothing due in this course today - you\'re up to date.');
+
+    // The truest picture: a mock exam, when the exam is near and there is none from this week.
+    const tip = document.getElementById('home-ready-tip');
+    // (only once there's a verdict - a mock exam after 3 answers measures nothing)
+    tip.hidden = !(!ev && s.exam.daysLeft <= 21 && r.enoughData);
+    if (!tip.hidden) {
+        document.getElementById('home-ready-tip-text').textContent = t('A mock exam this week gives the truest picture.');
+        const tipBtn = document.getElementById('home-ready-tip-btn');
+        tipBtn.textContent = t('Take a mock exam');
+        tipBtn.onclick = () => { document.getElementById('nav-study').click(); setTimeout(() => openExamSetup(s.category, name, r.total), 60); };
+    }
+
+    const btn = document.getElementById('home-study-btn');
+    btn.className = 'btn-primary home-hero__btn';
+    btn.textContent = s.due > 0 ? t('Practice {c}', { c: name }) : t('Open Study');
+    btn.onclick = () => (s.due > 0 ? practiceCourse(s.category, name) : document.getElementById('nav-study').click());
+
+    // The other exams, briefly.
+    const others = document.getElementById('home-ready-others');
+    others.textContent = '';
+    for (const o of withExam.slice(1, 4)) {
+        const li = document.createElement('li');
+        const b = document.createElement('button');
+        const oname = o.category === 'Uncategorized' ? t('No course') : o.category;
+        const n = document.createElement('span'); n.className = 'home-ready__oname'; n.dir = 'auto'; n.textContent = oname;
+        const meta = document.createElement('span'); meta.className = 'home-ready__ometa';
+        meta.textContent = `${o.exam.daysLeft === 0 ? t('today') : o.exam.daysLeft === 1 ? t('tomorrow') : t('in {n} days', { n: o.exam.daysLeft })} · ${t(READINESS_STATUS[readinessStatus(o.readiness)].label)}`;
+        b.append(n, meta);
+        b.onclick = () => practiceCourse(o.category, oname);
+        li.appendChild(b);
+        others.appendChild(li);
+    }
+    others.hidden = !others.children.length;
+    return true;
+}
+
 function renderHomeStudy(status) {
     const box = document.getElementById('home-study');
     if (!box) return;
     box.hidden = !onboardingEl.hidden;
     if (box.hidden) return;
+    resetHomeReadiness();
     // The daily goal only once there are questions to answer.
     homeGoalAllowed = !!status.questions;
     if (homeGoalAllowed) loadDailyGoal();
@@ -4579,6 +4727,8 @@ function renderHomeStudy(status) {
             btn.textContent = 'Make questions';
             btn.onclick = () => goAndClick('nav-study', 'generate-study-btn');
         }
+    } else if (renderHomeReadiness(status)) {
+        // the upcoming exam's readiness took the panel (3/10)
     } else if (status.dueCount > 0) {
         title.textContent = `${status.dueCount} question${status.dueCount === 1 ? '' : 's'} ready to practice`;
         sub.textContent = 'Smart practice picks what\'s due and what\'s closest to an exam.';

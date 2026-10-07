@@ -4972,7 +4972,12 @@ ipcMain.handle('get-onboarding-status', async () => {
     files: (files || []).length,
     questions: stats ? stats.totalItems || 0 : 0,
     reviews: stats ? stats.reviewsAllTime || 0 : 0,
-    calendarItems: (events || []).length + (tasks || []).length
+    calendarItems: (events || []).length + (tasks || []).length,
+    // Home's "upcoming exam" (readiness per course, 3/10): the same stats, no extra call
+    subjects: stats && Array.isArray(stats.subjects) ? stats.subjects.map(s => ({
+      category: s.category, items: s.items, due: s.due, exam: s.exam || null,
+      readiness: s.readiness || null, lastMock: s.lastMock || null, lastFull: s.lastFull || null
+    })) : []
   };
 });
 

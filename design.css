@@ -1723,6 +1723,23 @@ html[dir="rtl"] .home-hero__title { letter-spacing: 0; }
 .home-hero__exam-name { font-weight: 600; color: var(--hero-ink); }
 .home-hero :focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
+/* Home: the upcoming exam's readiness (3/10). */
+.home-ready__score { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin-top: 10px; }
+.home-ready__score[hidden], .home-ready__status[hidden], .home-ready__today[hidden], .home-ready__tip[hidden], .home-ready__others[hidden] { display: none; }
+.home-ready__num { font-size: clamp(34px, 4vw, 44px); font-weight: 750; line-height: 1; color: var(--hero-ink); }
+.home-ready__of { font-size: var(--text-sm); color: var(--hero-muted); }
+.home-ready__status { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-top: 10px; font-size: var(--text-sm); color: var(--hero-ink); }
+.home-ready__status .rd-status { margin: 0; background: rgba(255, 255, 255, 0.14); color: #fff; border-color: transparent; }
+.home-ready__status .rd-status--at_risk { background: #ffd8a8; color: #5c2c00; }
+.home-ready__status .rd-status--ready { background: #b7ecc9; color: #0f3d22; }
+.home-ready__today { margin-top: 4px; color: var(--hero-ink); }
+.home-ready__tip { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-top: 10px; font-size: var(--text-sm); color: var(--hero-muted); max-width: 46ch; }
+.home-ready__others { list-style: none; margin: 18px 0 0; padding: 12px 0 0; width: 100%; border-top: 1px solid var(--hero-line); display: flex; flex-direction: column; gap: 6px; }
+.home-ready__others button { background: none; border: 0; padding: 2px 0; cursor: pointer; font: inherit; font-size: var(--text-sm); color: var(--hero-ink); text-align: start; display: flex; flex-wrap: wrap; gap: 2px 8px; }
+.home-ready__others button:hover .home-ready__oname { text-decoration: underline; }
+.home-ready__oname { font-weight: 600; }
+.home-ready__ometa { color: var(--hero-muted); }
+
 /* The daily goal (3/10): a line and a thin bar inside the hero. */
 .daily-goal { width: 100%; max-width: 46ch; margin-top: 14px; }
 .daily-goal[hidden] { display: none; }
