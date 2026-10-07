@@ -3080,6 +3080,29 @@ Return ONLY JSON:
 {"title": "a short title naming the topic", "durationMin": number, "questions": [{"n": 1, "title": "...", "points": 20, "stem": "", "choosePartsCount": 0, "bonus": false, "parts": [{"label": "א", "type": "open|code|tf|mc", "text": "...", "options": [], "correct": "", "reasonRequired": false, "points": number, "answer": "...", "rubric": [{"criterion": "...", "points": number}], "topic": "...", "handwritten": false}]}]}`;
 }
 
+// "What repeats in the exam" (3/10): which of the student's practice skills
+// each repeating topic of the past exams covers. Names only - light.
+function buildExamLinkPrompt(course, topics, skills) {
+    return `The university course "${course}". Its past exams keep asking these TOPICS:
+${topics.map((tp, i) => `${i + 1}. ${tp}`).join('\n')}
+
+The student's practice questions are tagged with these SKILLS:
+${skills.map(sk => `- ${sk}`).join('\n')}
+
+For each topic, list the skills whose questions practise it - what a student must know to answer that topic in the exam. A skill may serve more than one topic; a topic may have none. Copy topic and skill names EXACTLY as written above.
+
+Return ONLY JSON: {"links": [{"topic": "...", "skills": ["...", "..."]}]}`;
+}
+
+async function linkExamTopics(course, topics, skills) {
+    const raw = await aiProvider.generateText(buildExamLinkPrompt(course, topics, skills), {
+        forceJson: true, maxTokens: 4000, thinkingLevel: 'low', timeoutMs: 60000, noFallback: true, allowance: 'light'
+    });
+    const links = JSON.parse(extractJsonFromText(String(raw))).links;
+    if (!Array.isArray(links)) throw new Error('The AI didn\'t return the topics. Try again.');
+    return links;
+}
+
 // An answer key for a question that already exists (a real past exam's) -
 // the same rules as the writer's. The owner's exam check uses it to measure
 // how often the writer's solutions are right, on questions with known answers.
@@ -3537,6 +3560,11 @@ async function buildFullExam({ course, pastIds, durationMin }, stage) {
             pastFiles.push({ name: f.name, buffer, text: f.content || '' });
         }
         blueprint = await examBlueprint(course, pastFiles);
+        // What repeats goes to the course's exam profile too (3/10) - no extra call.
+        if (blueprint && Array.isArray(blueprint.recurring) && blueprint.recurring.length) {
+            await api.saveExamProfile({ course, recurring: blueprint.recurring, pastExams: past.map(f => f.name) })
+                .catch(err => console.warn('exam profile not saved:', err.message));
+        }
     }
 
     // 2. The exam itself, with answers and marking schemes.
@@ -3607,6 +3635,40 @@ async function buildDailyQuestion(stage) {
     return { examId: String(saved.id || saved._id), course };
 }
 
+// "What repeats in the exam" (3/10): the course's past exams analysed (the
+// same call a full exam starts with), then linked to the practice skills.
+async function linkExamMap(course) {
+    const map = await api.getExamMap(course);
+    if (!map.needsLink || !map.profile || !map.skills.length) return map;
+    const links = await linkExamTopics(course, map.profile.recurring.map(r => r.topic), map.skills);
+    await api.saveExamLinks({ course, links, skills: map.skills });
+    return api.getExamMap(course);
+}
+
+async function analyzeExamMap(course, stage) {
+    stage('reading');
+    const files = await api.getFiles();
+    const past = (Array.isArray(files) ? files : []).filter(f => (f.folder || '') === course && PAST_EXAM_FILE.test(f.name || '')).slice(0, 8);
+    if (past.length < 2) throw new Error('Upload at least 2 past exams of this course (a file name with "מבחן" or "exam") to see what repeats.');
+    stage('blueprint');
+    const pastFiles = [];
+    for (const f of past) {
+        const buffer = isPdfFile(f) ? await readOriginalFile(f.sourcePath).catch(() => null) : null;
+        pastFiles.push({ name: f.name, buffer, text: f.content || '' });
+    }
+    const blueprint = await examBlueprint(course, pastFiles);
+    const recurring = blueprint && Array.isArray(blueprint.recurring) ? blueprint.recurring : [];
+    if (!recurring.length) throw new Error('No topic repeats in these past exams - nothing to map yet.');
+    stage('saving');
+    await api.saveExamProfile({ course, recurring, pastExams: past.map(f => f.name) });
+    stage('linking');
+    // (the analysis is saved; a link that fails now is tried again from the screen)
+    try { return await linkExamMap(course); } catch (err) {
+        console.warn('exam map: linking failed, it will be tried again:', err.message);
+        return api.getExamMap(course);
+    }
+}
+
 // The check that didn't run (or missed parts) when the exam was written, run
 // on the saved exam: only the parts still unchecked change.
 async function recheckFullExam(examId, stage) {
@@ -3643,6 +3705,33 @@ ipcMain.handle('daily-question', async () => {
     // cloud: it can be written (and graded) here - the local model can't
     try { return { ...(await api.getDailyQuestion()), cloud: aiProvider.resolveProvider() === 'gemini' }; } catch (err) { return { error: err.message }; }
 });
+// "What repeats in the exam" (3/10). pastExams: the course's files that are
+// past exams (the analysis needs 2). cloud: the AI parts can run here.
+ipcMain.handle('exam-map', async (event, course) => {
+    try {
+        const c = String(course || '').trim();
+        if (!c) return { error: 'Choose a course first.' };
+        const [map, files] = await Promise.all([api.getExamMap(c), api.getFilesLight().catch(() => [])]);
+        const pastExams = (Array.isArray(files) ? files : []).filter(f => (f.folder || '') === c && PAST_EXAM_FILE.test(f.name || '')).length;
+        return { ...map, pastExams, cloud: aiProvider.resolveProvider() === 'gemini' };
+    } catch (err) { return { error: err.message }; }
+});
+// Links new skills to the topics (one light call) - only when the server says it's due.
+ipcMain.handle('exam-map-link', async (event, course) => {
+    try {
+        if (aiProvider.resolveProvider() !== 'gemini') return { error: 'This needs the cloud AI (a Gemini key in Settings).' };
+        return await linkExamMap(String(course || '').trim());
+    } catch (err) { return { error: err.message }; }
+});
+ipcMain.handle('exam-map-analyze', async (event, course) => {
+    try {
+        const c = String(course || '').trim();
+        if (!c) return { error: 'Choose a course first.' };
+        if (aiProvider.resolveProvider() !== 'gemini') return { error: 'This needs the cloud AI (a Gemini key in Settings).' };
+        return { jobId: startFullExamJob((stage) => analyzeExamMap(c, stage)) };
+    } catch (err) { return { error: err.message }; }
+});
+
 const DAILY_JOBS = new Map();   // owner -> job id
 ipcMain.handle('daily-question-build', async () => {
     try {
@@ -3788,7 +3877,7 @@ async function solveExamParts(course, question) {
 
 // The stages above, for the owner's exam check on the server (exported by
 // tools/port-main.py; unused in the desktop app).
-const EXAM_STAGES = { examBlueprint, verifyBlueprintRules, writeExam, writeDailyQuestion, checkExam, replaceBrokenParts, autoMarkPart, reasonedChoicePoints, gradeExamQuestion, marksFromAi, pointsFromAi, solveExamParts, normaliseExam, answerIsBlank, cleanExamText, cleanMathNotation, cutText, extractJsonFromText, FORMULA_STATS };
+const EXAM_STAGES = { examBlueprint, verifyBlueprintRules, writeExam, writeDailyQuestion, linkExamTopics, checkExam, replaceBrokenParts, autoMarkPart, reasonedChoicePoints, gradeExamQuestion, marksFromAi, pointsFromAi, solveExamParts, normaliseExam, answerIsBlank, cleanExamText, cleanMathNotation, cutText, extractJsonFromText, FORMULA_STATS };
 
 // Graded sittings whose save failed: a retry only saves again, it doesn't
 // pay for the AI grading twice.
@@ -4978,7 +5067,7 @@ ipcMain.handle('get-onboarding-status', async () => {
     // Home's "upcoming exam" (readiness per course, 3/10): the same stats, no extra call
     subjects: stats && Array.isArray(stats.subjects) ? stats.subjects.map(s => ({
       category: s.category, items: s.items, due: s.due, exam: s.exam || null,
-      readiness: s.readiness || null, lastMock: s.lastMock || null, lastFull: s.lastFull || null
+      readiness: s.readiness || null, lastMock: s.lastMock || null, lastFull: s.lastFull || null, topTopic: s.topTopic || null
     })) : []
   };
 });

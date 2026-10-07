@@ -4581,7 +4581,7 @@ function examWhen(course, exam) {
 }
 
 function resetHomeReadiness() {
-    ['home-ready-score', 'home-ready-status', 'home-ready-today', 'home-ready-tip', 'home-ready-others'].forEach(id => {
+    ['home-ready-score', 'home-ready-status', 'home-ready-today', 'home-ready-topic', 'home-ready-tip', 'home-ready-others'].forEach(id => {
         const el = document.getElementById(id); if (el) el.hidden = true;
     });
     const label = document.getElementById('home-study-label');
@@ -4688,6 +4688,19 @@ function renderHomeReadiness(status) {
     today.textContent = s.due === 1 ? t('Today: 1 question in this course.')
         : s.due > 0 ? t('Today: {n} questions in this course.', { n: s.due })
             : t('Nothing due in this course today - you\'re up to date.');
+
+    // Where an hour pays most today: a topic the past exams keep asking (3/10).
+    const topicBox = document.getElementById('home-ready-topic');
+    const tt = s.topTopic;
+    topicBox.hidden = !tt;
+    if (tt) {
+        document.getElementById('home-ready-topic-text').textContent = tt.accuracy != null
+            ? t('Worth most today: {t} - in {n} of {m} past exams, you know {a}%.', { t: tt.topic, n: tt.count, m: tt.of, a: tt.accuracy })
+            : t('Worth most today: {t} - in {n} of {m} past exams, not practiced enough yet.', { t: tt.topic, n: tt.count, m: tt.of });
+        const tb = document.getElementById('home-ready-topic-btn');
+        tb.textContent = t('Practice this topic');
+        tb.onclick = () => practiceTopic(s.category, tt.skills, tt.topic);
+    }
 
     // The truest picture: a mock exam, when the exam is near and there is none from this week.
     const tip = document.getElementById('home-ready-tip');
@@ -5697,6 +5710,7 @@ async function renderDailyQuestion() {
         title.textContent = target.topic || target.course;
         text.textContent = [
             dailyQWhy(target),
+            target.repeats ? t('It comes up in {n} of {m} past exams.', { n: target.repeats.count, m: target.repeats.of }) : '',
             target.topic && target.accuracy != null ? t('This topic: {p}% right lately.', { p: target.accuracy }) : '',
             t('Writing it takes about a minute.')
         ].filter(Boolean).join(' ');
@@ -5767,6 +5781,188 @@ async function buildDailyQuestionNow(course) {
     }
 }
 
+// ---- "What repeats in the exam" vs "what you know" (3/10) ----
+// A course's past exams analysed once (the same call a full exam starts
+// with), each repeating topic joined with the student's answers on it -
+// sorted by where an hour of practice pays most. Linking new practice skills
+// to the topics is one light AI call, only when the server says it's due.
+let examMapCourse = null;
+let examMapCourses = [];
+let examMapBusy = false;
+let examMapShowAll = false;
+const examMapLinking = new Set();
+const EXAM_MAP_STAGE_TEXT = {
+    reading: 'Reading the past exams…',
+    blueprint: 'Reading the past exams - how they are built and what repeats…',
+    saving: 'Saving…',
+    linking: 'Matching the topics with your questions…'
+};
+const knowClass = (acc) => (acc >= 75 ? 'high' : acc >= 50 ? 'mid' : 'low');
+const courseName = (c) => (c === 'Uncategorized' ? t('No course') : c);
+
+// A session of the questions on one topic: never answered or due first.
+async function practiceTopic(course, skills, label) {
+    const all = await ipcRenderer.invoke('get-study-items', { light: true }).catch(() => null);
+    if (!Array.isArray(all)) { toast.error(t('Couldn\'t load your questions right now. Check the connection and try again.')); return; }
+    const set = new Set(skills || []);
+    const ids = all.filter(i => ((i.category || '').trim() || 'Uncategorized') === course && set.has(String(i.skillTag || '').trim()))
+        .sort((a, b) => new Date(a.dueDate || 0) - new Date(b.dueDate || 0))
+        .slice(0, 20).map(i => i.id || i._id);
+    if (!ids.length) { toast.info(t('There are no questions on this topic yet.')); return; }
+    const studyView = document.getElementById('view-study');
+    if (!studyView || getComputedStyle(studyView).display === 'none') document.getElementById('nav-study').click();
+    setTimeout(() => startStudySession(null, { category: course, label, ids }), 60);
+}
+
+async function renderExamMap() {
+    const card = document.getElementById('exam-map');
+    if (!card || examMapBusy) return;
+    if (!examMapCourses.length) { card.hidden = true; return; }
+    if (!examMapCourses.includes(examMapCourse)) examMapCourse = examMapCourses[0];
+    const course = examMapCourse;
+    const m = await ipcRenderer.invoke('exam-map', course).catch(() => null);
+    if (examMapBusy || course !== examMapCourse) return;
+    if (!m || m.error) { card.hidden = true; return; }
+    const pick = document.getElementById('exam-map-pick');
+    pick.hidden = examMapCourses.length < 2;
+    if (!pick.hidden) {
+        pick.textContent = '';
+        for (const c of examMapCourses) { const o = document.createElement('option'); o.value = c; o.textContent = courseName(c); pick.appendChild(o); }
+        pick.value = course;
+    }
+    document.getElementById('exam-map-course').textContent = courseName(course);
+    const text = document.getElementById('exam-map-text');
+    const list = document.getElementById('exam-map-list');
+    const btn = document.getElementById('exam-map-btn');
+    const more = document.getElementById('exam-map-more');
+    list.textContent = '';
+    btn.hidden = true; btn.disabled = false;
+    more.hidden = true;
+    card.hidden = false;
+
+    if (!m.profile) {
+        if (m.pastExams >= 2 && m.cloud) {
+            text.textContent = t('{n} past exams of this course are uploaded. One analysis shows what they keep asking - and how much of it you know.', { n: m.pastExams });
+            btn.hidden = false;
+            btn.textContent = t('Analyze the past exams');
+            btn.onclick = () => analyzeExamMapNow(course);
+        } else if (m.pastExams >= 2) {
+            text.textContent = t('This needs the cloud AI (a Gemini key in Settings).');
+        } else {
+            text.textContent = m.pastExams === 1
+                ? t('One past exam is uploaded - with 2 or more, this shows what every exam asks and how much of it you know.')
+                : t('Upload 2 or more past exams of this course, and this shows what every exam asks - and how much of it you know.');
+            btn.hidden = false;
+            btn.textContent = t('Upload past exams');
+            btn.onclick = () => { document.getElementById('nav-materials').click(); setTimeout(() => openUploadPicker('files'), 60); };
+        }
+        return;
+    }
+
+    // New skills to link: one light call in the background (not again for a minute if it fails).
+    if (m.needsLink && m.cloud && !examMapLinking.has(course)) {
+        examMapLinking.add(course);
+        ipcRenderer.invoke('exam-map-link', course).catch(() => null).finally(() => {
+            setTimeout(() => examMapLinking.delete(course), 60000);
+            if (course === examMapCourse && !examMapBusy) renderExamMap();
+        });
+    }
+    const n = (m.profile.pastExams || []).length || (m.profile.recurring[0] && m.profile.recurring[0].of) || 0;
+    text.textContent = m.needsLink && examMapLinking.has(course)
+        ? t('Matching the topics with your questions…')
+        : t('From {n} past exams - where an hour of practice pays most comes first.', { n });
+
+    const topics = examMapShowAll ? m.topics : m.topics.slice(0, 6);
+    for (const tp of topics) {
+        const li = document.createElement('li');
+        li.className = 'exam-map__row';
+        const b = document.createElement('button');
+        b.className = 'exam-map__topic';
+        b.setAttribute('aria-expanded', 'false');
+        const nameEl = document.createElement('div');
+        nameEl.className = 'exam-map__name';
+        nameEl.dir = 'auto';
+        nameEl.setAttribute('translate', 'no');
+        nameEl.textContent = tp.topic;
+        const meta = document.createElement('div');
+        meta.className = 'exam-map__meta';
+        const freq = document.createElement('span');
+        freq.className = 'exam-map__freq';
+        const bar = document.createElement('span');
+        bar.className = 'exam-map__freqbar';
+        bar.setAttribute('aria-hidden', 'true');
+        const fill = document.createElement('span');
+        fill.style.width = `${tp.of ? Math.round((tp.count / tp.of) * 100) : 0}%`;
+        bar.appendChild(fill);
+        const freqText = document.createElement('span');
+        freqText.textContent = t('in {n} of {m} exams').replace('{n}', tp.count).replace('{m}', tp.of);
+        freq.append(bar, freqText);
+        const know = document.createElement('span');
+        if (!tp.items) know.textContent = t('No questions on this yet');
+        else if (tp.accuracy != null) {
+            know.className = `exam-map__know--${knowClass(tp.accuracy)}`;
+            know.textContent = t('You know {a}% ({n} answers)', { a: tp.accuracy, n: tp.answered });
+        } else if (!tp.answered) know.textContent = tp.items === 1 ? t('Not practiced yet (1 question)') : t('Not practiced yet ({n} questions)', { n: tp.items });
+        else know.textContent = t('Too few answers to tell ({n})', { n: tp.answered });
+        meta.append(freq, know);
+        b.append(nameEl, meta);
+        li.appendChild(b);
+        if (tp.items) {
+            const go = document.createElement('button');
+            go.className = 'btn-secondary btn-sm';
+            go.textContent = t('Practice it');
+            go.onclick = () => practiceTopic(course, tp.skills, tp.topic);
+            li.appendChild(go);
+        } else li.appendChild(document.createElement('span'));
+        // Which of the student's questions count for it - the link is the AI's, so it's shown.
+        const skillsLine = document.createElement('div');
+        skillsLine.className = 'exam-map__skills';
+        skillsLine.hidden = true;
+        skillsLine.textContent = tp.skills.length ? t('Counted: your questions on {s}.', { s: tp.skills.join(', ') }) : t('None of your questions matches this topic yet.');
+        li.appendChild(skillsLine);
+        b.onclick = () => { skillsLine.hidden = !skillsLine.hidden; b.setAttribute('aria-expanded', String(!skillsLine.hidden)); };
+        list.appendChild(li);
+    }
+    if (m.topics.length > 6) {
+        more.hidden = false;
+        more.textContent = examMapShowAll ? t('Show fewer') : t('Show all {n}', { n: m.topics.length });
+        more.onclick = () => { examMapShowAll = !examMapShowAll; renderExamMap(); };
+    }
+    // More past exams than the analysis saw: offer it again.
+    if (m.cloud && m.pastExams > (m.profile.pastExams || []).length && m.pastExams >= 2) {
+        btn.hidden = false;
+        btn.className = 'btn-secondary btn-sm';
+        btn.textContent = t('Analyze again ({n} past exams now)', { n: m.pastExams });
+        btn.onclick = () => analyzeExamMapNow(course);
+    } else btn.className = 'btn-primary btn-sm';
+}
+
+async function analyzeExamMapNow(course) {
+    if (examMapBusy) return;
+    const btn = document.getElementById('exam-map-btn');
+    const text = document.getElementById('exam-map-text');
+    examMapBusy = true;
+    btn.disabled = true;
+    btn.textContent = t('Analyzing…');
+    text.textContent = t(EXAM_MAP_STAGE_TEXT.reading);
+    let out;
+    try {
+        const start = await ipcRenderer.invoke('exam-map-analyze', course).catch(err => ({ error: err.message }));
+        out = !start || start.error || !start.jobId
+            ? { error: (start && start.error) || t('Couldn\'t start the analysis. Try again.') }
+            : await waitForFullJob(start.jobId, (stage) => {
+                const key = String(stage).split(' ')[0];
+                if (EXAM_MAP_STAGE_TEXT[key]) text.textContent = t(EXAM_MAP_STAGE_TEXT[key]);
+            });
+    } finally {
+        examMapBusy = false;
+    }
+    if (out.error) toast.error(out.error, t('The past exams weren\'t analyzed'));
+    examMapCourse = course;
+    renderExamMap();
+}
+document.getElementById('exam-map-pick').addEventListener('change', (e) => { examMapCourse = e.target.value; examMapShowAll = false; renderExamMap(); });
+
 async function loadStudyHome() {
     // The question list (light: no review history) comes with the stats, for
     // the per-file rows under each course. Kept for "My questions" too, so
@@ -5782,6 +5978,9 @@ async function loadStudyHome() {
     renderDailyGoal('study');
     dailyQAllowed = stats.totalItems > 0;
     renderDailyQuestion();
+    // The exam map: courses with questions, the nearest exam first (the stats' order).
+    examMapCourses = (stats.subjects || []).filter(x => x.items > 0).map(x => x.category);
+    renderExamMap();
     // Today's due questions get their new versions written now, while the
     // student looks at this screen (1/10).
     if (stats.dueCount > 0) prepareVersions('today');

@@ -207,6 +207,10 @@ module.exports = {
   getStudyToday: () => request('GET', '/study/today'),
   // The daily exam question (3/10): { state, answered, unlockAt, target, exam, run }
   getDailyQuestion: () => request('GET', '/study/daily-question'),
+  // "What repeats in the exam" (3/10)
+  getExamMap: (course) => request('GET', `/exam-map?course=${encodeURIComponent(course)}`),
+  saveExamProfile: (body) => request('PUT', '/exam-map/profile', body),
+  saveExamLinks: (body) => request('PUT', '/exam-map/links', body),
   deleteStudyItemsBulk: (ids) => request('POST', '/study/bulk-delete', { ids }),
   deleteAllStudyItems: () => request('DELETE', '/study/all/everything'),
   getStudyCategories: () => request('GET', '/study/categories'),

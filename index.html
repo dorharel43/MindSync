@@ -238,6 +238,11 @@
                     <div class="home-ready__status" id="home-ready-status" hidden></div>
                     <div class="home-hero__text" id="home-study-sub"></div>
                     <div class="home-hero__text home-ready__today" id="home-ready-today" hidden></div>
+                    <!-- (3/10) the repeating topic where practice pays most today -->
+                    <div class="home-ready__topic" id="home-ready-topic" hidden>
+                        <span id="home-ready-topic-text"></span>
+                        <button class="home-hero__link" id="home-ready-topic-btn"></button>
+                    </div>
                     <div class="home-ready__tip" id="home-ready-tip" hidden>
                         <span id="home-ready-tip-text"></span>
                         <button class="home-hero__link" id="home-ready-tip-btn"></button>
@@ -494,6 +499,26 @@
                     </div>
                     <div class="daily-q__actions">
                         <button class="btn-primary btn-sm" id="daily-q-btn" hidden></button>
+                    </div>
+                </div>
+
+                <!-- "What repeats in the exam" vs "what you know" (3/10): the course's
+                     past exams analysed, each repeating topic joined with the
+                     student's answers - where an hour of practice pays most.
+                     renderExamMap() in renderer.js. -->
+                <div class="card exam-map" id="exam-map" hidden>
+                    <div class="exam-map__head">
+                        <div>
+                            <div class="exam-map__label">What repeats in the exam</div>
+                            <div class="exam-map__course" id="exam-map-course" dir="auto" translate="no"></div>
+                        </div>
+                        <select class="input-field exam-map__pick" id="exam-map-pick" aria-label="Course" hidden></select>
+                    </div>
+                    <p class="exam-map__text" id="exam-map-text"></p>
+                    <ul class="exam-map__list" id="exam-map-list"></ul>
+                    <div class="exam-map__actions">
+                        <button class="btn-primary btn-sm" id="exam-map-btn" hidden></button>
+                        <button class="btn-link" id="exam-map-more" hidden></button>
                     </div>
                 </div>
 
