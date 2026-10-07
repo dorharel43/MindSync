@@ -465,6 +465,25 @@
                     </div>
                 </section>
 
+                <!-- The daily exam question (3/10): one exam-level question a day
+                     on the weakest topic, after a few answers. Written only when
+                     asked for; solved and graded as a one-question full exam.
+                     renderDailyQuestion() in renderer.js. -->
+                <div class="card daily-q" id="daily-q" hidden>
+                    <div class="daily-q__body">
+                        <div class="daily-q__label">Today's exam question</div>
+                        <div class="daily-q__title" id="daily-q-title" dir="auto" translate="no"></div>
+                        <div class="daily-q__text" id="daily-q-text"></div>
+                        <div class="daily-q__meter" id="daily-q-meter" hidden>
+                            <div class="daily-q__count ms-tabular" id="daily-q-count" aria-hidden="true"></div>
+                            <div class="daily-q__bar" id="daily-q-bar" role="progressbar" aria-valuemin="0"><span class="daily-q__fill" id="daily-q-fill"></span></div>
+                        </div>
+                    </div>
+                    <div class="daily-q__actions">
+                        <button class="btn-primary btn-sm" id="daily-q-btn" hidden></button>
+                    </div>
+                </div>
+
                 <!-- Courses with an exam in the Planner: reviews are timed so
                      nothing lands after the exam (server: utils/examSchedule.js).
                      Filled by renderStudyExams() in renderer.js. -->

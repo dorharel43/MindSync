@@ -5461,6 +5461,134 @@ document.querySelectorAll('#daily-goal-picker [data-goal]').forEach((btn) => {
     });
 });
 
+// ---- The daily exam question (3/10) ----
+// One exam-level question a day on the weakest topic, after a few answers
+// (the server picks the course and topic - utils/dailyQuestion.js - and
+// enforces once a day). Written only when the student asks: 2 AI calls, then
+// one for the grading. Solved and graded as a one-question full exam.
+const DAILY_STAGE_TEXT = {
+    reading: 'Reading your course files…',
+    writing: 'Writing the question and its full solution…',
+    checking: 'Solving it a second time to check the solution…',
+    replacing: 'Writing a new part in place of one that turned out wrong…',
+    saving: 'Saving the question…'
+};
+let dailyQBuilding = false;
+let dailyQAllowed = false;   // there are questions to practise (loadStudyHome)
+
+function dailyQWhy(target) {
+    if (target.why === 'exam_soon' && target.exam) {
+        const d = target.exam.daysLeft;
+        return d === 0 ? t('Your exam in {c} is today.', { c: target.course })
+            : d === 1 ? t('Your exam in {c} is tomorrow.', { c: target.course })
+                : t('Your exam in {c} is in {d} days.', { c: target.course, d });
+    }
+    if (target.why === 'weakest') return t('In {c} - your weakest course lately.', { c: target.course });
+    return t('From {c}.', { c: target.course });
+}
+
+async function renderDailyQuestion() {
+    const card = document.getElementById('daily-q');
+    if (!card || dailyQBuilding) return;
+    const s = dailyQAllowed ? await ipcRenderer.invoke('daily-question').catch(() => null) : null;
+    if (dailyQBuilding) return;   // a build started while this was loading
+    if (!s || s.error || s.state === 'none') { card.hidden = true; return; }
+    card.hidden = false;
+    const title = document.getElementById('daily-q-title');
+    const text = document.getElementById('daily-q-text');
+    const meter = document.getElementById('daily-q-meter');
+    const btn = document.getElementById('daily-q-btn');
+    meter.hidden = true;
+    btn.hidden = false;
+    btn.disabled = false;
+    btn.className = 'btn-primary btn-sm';
+    const target = s.target || {};
+    if (s.state === 'locked') {
+        title.textContent = '';
+        text.textContent = t('One exam-level question a day, on the topic you find hardest - graded like a lecturer would, with points per criterion. It opens after {n} answers today.', { n: s.unlockAt });
+        meter.hidden = false;
+        const bar = document.getElementById('daily-q-bar');
+        bar.setAttribute('aria-valuemax', String(s.unlockAt));
+        bar.setAttribute('aria-valuenow', String(Math.min(s.answered, s.unlockAt)));
+        bar.setAttribute('aria-label', t('{n} of {m} answers today', { n: Math.min(s.answered, s.unlockAt), m: s.unlockAt }));
+        document.getElementById('daily-q-count').textContent = t('{n} of {m} answers today', { n: Math.min(s.answered, s.unlockAt), m: s.unlockAt });
+        document.getElementById('daily-q-fill').style.width = `${Math.min(100, Math.round((s.answered / s.unlockAt) * 100))}%`;
+        btn.hidden = true;
+    } else if (s.state === 'ready') {
+        // The topic (the student's own skill name) as the title; why it, and the course, below.
+        title.textContent = target.topic || target.course;
+        text.textContent = [
+            dailyQWhy(target),
+            target.topic && target.accuracy != null ? t('This topic: {p}% right lately.', { p: target.accuracy }) : '',
+            t('Writing it takes about a minute.')
+        ].filter(Boolean).join(' ');
+        btn.textContent = t('Write today\'s question');
+        btn.onclick = () => buildDailyQuestionNow(target.course);
+        if (s.cloud === false) {   // the local model can't write it
+            text.textContent = t('The daily question needs the cloud AI (a Gemini key in Settings).');
+            btn.hidden = true;
+        }
+    } else if (s.state === 'written') {
+        title.textContent = s.exam.title || s.exam.topic || s.exam.course;
+        text.textContent = t('Ready in {c}. Answering it counts toward today\'s goal.', { c: s.exam.course });
+        btn.textContent = openFullDraft(s.exam.id) ? t('Continue') : t('Solve it');
+        btn.onclick = () => openDailyExam(s.exam.course, s.exam.id);
+    } else if (s.state === 'done') {
+        title.textContent = s.exam.title || s.exam.topic || s.exam.course;
+        text.textContent = s.run && s.run.outOf
+            ? t('{s} of {o} points ({p}%). A new question tomorrow.', { s: s.run.score, o: s.run.outOf, p: s.run.percent })
+            : t('Done. A new question tomorrow.');
+        btn.className = 'btn-secondary btn-sm';
+        btn.textContent = t('See the solution');
+        btn.onclick = () => openDailyExam(s.exam.course, s.exam.id, true);
+    }
+}
+
+async function openDailyExam(course, examId, result = false) {
+    const ok = await openFullExam(course);
+    if (!ok) return;
+    if (result) await showLastFullResult(examId);
+    else await openFullIntro(examId);
+}
+
+async function buildDailyQuestionNow(course) {
+    if (dailyQBuilding) return;
+    const btn = document.getElementById('daily-q-btn');
+    const text = document.getElementById('daily-q-text');
+    dailyQBuilding = true;
+    btn.disabled = true;
+    btn.textContent = t('Writing…');
+    text.textContent = t(DAILY_STAGE_TEXT.reading);
+    let out;
+    try {
+        const start = await ipcRenderer.invoke('daily-question-build').catch(err => ({ error: err.message }));
+        if (!start || start.error || !start.jobId) {
+            out = { error: (start && start.error) || t('Couldn\'t start writing the question. Try again.') };
+        } else {
+            out = await waitForFullJob(start.jobId, (stage) => {
+                const key = String(stage).split(' ')[0];
+                if (DAILY_STAGE_TEXT[key]) text.textContent = t(DAILY_STAGE_TEXT[key]);
+            });
+        }
+    } finally {
+        dailyQBuilding = false;
+    }
+    const studyView = document.getElementById('view-study');
+    const onScreen = !document.getElementById('study-home').hidden && !!studyView && getComputedStyle(studyView).display !== 'none';
+    if (out.error) {
+        toast.error(out.error, t('The question wasn\'t written'));
+        renderDailyQuestion();
+        return;
+    }
+    const examId = out.result.examId;
+    const examCourse = out.result.course || course;
+    if (onScreen) openDailyExam(examCourse, examId);
+    else {
+        renderDailyQuestion();
+        showActionToast(t('Today\'s exam question is ready.'), t('Open it'), () => openDailyExam(examCourse, examId), { duration: 60000 });
+    }
+}
+
 async function loadStudyHome() {
     // The question list (light: no review history) comes with the stats, for
     // the per-file rows under each course. Kept for "My questions" too, so
@@ -5474,6 +5602,8 @@ async function loadStudyHome() {
     if (!stats) return;
     studyGoalAllowed = stats.totalItems > 0;
     renderDailyGoal('study');
+    dailyQAllowed = stats.totalItems > 0;
+    renderDailyQuestion();
     // Today's due questions get their new versions written now, while the
     // student looks at this screen (1/10).
     if (stats.dueCount > 0) prepareVersions('today');
@@ -7981,12 +8111,17 @@ async function openFullIntro(examId) {
     facts.textContent = '';
     const partsCount = exam.questions.reduce((n, q) => n + q.parts.length, 0);
     const fact = (txt) => { const li = document.createElement('li'); li.textContent = txt; facts.appendChild(li); };
-    fact(t('{q} questions, {p} parts · {pts} points').replace('{q}', exam.questions.length).replace('{p}', partsCount).replace('{pts}', Math.round(exam.totalPoints)));
+    if (exam.daily) {
+        // Today's exam question (3/10): one question on the weakest topic.
+        fact(t('Today\'s exam question: one question, {p} parts · {pts} points.', { p: partsCount, pts: Math.round(exam.totalPoints) }));
+        if (exam.topic) fact(`${t('Topic:')} ${exam.topic}`);
+    } else fact(t('{q} questions, {p} parts · {pts} points').replace('{q}', exam.questions.length).replace('{p}', partsCount).replace('{pts}', Math.round(exam.totalPoints)));
     if (exam.bonusPoints > 0) fact(t('Plus a bonus question of {b} points - harder than the rest, as in the past exams.').replace('{b}', Math.round(exam.bonusPoints * 100) / 100));
     if (exam.maxGrade > 0) fact(t('The questions add up to {t} points and the grade is at most {m}, as in the past exams.').replace('{t}', Math.round(exam.totalPoints * 100) / 100).replace('{m}', exam.maxGrade));
     else if (exam.bonusPoints > 0) fact(t('The grade is at most 100.'));
     if (exam.dontKnowShare > 0) fact(t('Writing "I don\'t know" on a part gets {p}% of its points, as in the past exams.').replace('{p}', Math.round(exam.dontKnowShare * 100)));
-    fact(exam.basis === 'past_exams'
+    if (exam.daily) fact(exam.basis === 'past_exams' ? t('Written in the style of the course\'s past exams.') : t('Written from the course material.'));
+    else fact(exam.basis === 'past_exams'
         ? t('Built on the structure of {n} past exams of the course.').replace('{n}', (exam.pastExamFiles || []).length)
         : t('Built from the course material - no past exams were given, so the structure is a general one.'));
     if (exam.materials) fact(`${t('Allowed material:')} ${exam.materials}`);
@@ -8025,7 +8160,8 @@ async function openFullIntro(examId) {
     // The clock: the real exam's time first.
     const group = document.getElementById('full-time');
     group.textContent = '';
-    const lengths = [...new Set([exam.durationMin, 60, 90, 120, 150, 180])].filter(m => m >= 5).sort((a, b) => a - b);
+    // (the daily question: one question - short lengths)
+    const lengths = [...new Set([exam.durationMin, ...(exam.daily ? [15, 30, 45] : [60, 90, 120, 150, 180])])].filter(m => m >= 5).sort((a, b) => a - b);
     const chips = lengths.map(m => ({ pick: String(m), minutes: m, label: m === exam.durationMin ? `${fmtMinutes(m)} (${t('as in the exam')})` : fmtMinutes(m) }));
     chips.push({ pick: 'own', label: t('Set my own') }, { pick: 'none', label: t('No limit') });
     for (const c of chips) {

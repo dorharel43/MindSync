@@ -1175,6 +1175,26 @@ body.auth-pending #auth-screen { background: var(--bg-sidebar); }
 .syllabus-modal .settings-hint { margin-top: 4px; font-size: var(--text-xs); color: var(--text-tertiary); }
 .syllabus-modal #syllabus-google-row[hidden] { display: none; }
 
+/* ---------- Study: the daily exam question (3/10) ---------- */
+.daily-q { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.daily-q[hidden] { display: none; }
+.daily-q__body { min-width: 0; flex: 1; }
+.daily-q__label { font-size: var(--text-sm); color: var(--text-secondary); margin-bottom: 4px; }
+.daily-q__title { font-size: var(--text-base); font-weight: 650; color: var(--text-primary); overflow-wrap: anywhere; }
+.daily-q__title:empty { display: none; }
+.daily-q__text { margin-top: 4px; font-size: var(--text-sm); line-height: 1.5; color: var(--text-secondary); max-width: 60ch; }
+.daily-q__meter { margin-top: 10px; max-width: 260px; }
+.daily-q__meter[hidden] { display: none; }
+.daily-q__count { font-size: var(--text-sm); font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
+.daily-q__bar { height: 6px; border-radius: 999px; background: var(--border-color); overflow: hidden; }
+.daily-q__fill { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--accent-purple); transition: width .3s ease; }
+@media (prefers-reduced-motion: reduce) { .daily-q__fill { transition: none; } }
+.daily-q__actions { flex-shrink: 0; }
+@media (max-width: 600px) {
+    .daily-q { flex-direction: column; align-items: stretch; }
+    .daily-q__actions .btn-primary { width: 100%; }
+}
+
 /* ---------- Study: exams + "when is the exam?" ---------- */
 .study-exams { margin-bottom: 16px; padding-top: 6px; padding-bottom: 6px; }
 .study-exams__list { display: flex; flex-direction: column; }
