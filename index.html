@@ -227,9 +227,21 @@
                  guide is open; the "next" half then takes the whole width. -->
             <section class="home-hero">
                 <div class="home-hero__practice" id="home-study" hidden>
-                    <div class="home-hero__label">Practice</div>
-                    <div class="home-hero__title" id="home-study-title"></div>
+                    <div class="home-hero__label" id="home-study-label">Practice</div>
+                    <div class="home-hero__title" id="home-study-title" dir="auto"></div>
+                    <!-- The upcoming exam's readiness (3/10). A number only from a
+                         real mock or full exam in the last 7 days - never made up. -->
+                    <div class="home-ready__score" id="home-ready-score" hidden>
+                        <span class="home-ready__num ms-tabular" id="home-ready-num"></span>
+                        <span class="home-ready__of" id="home-ready-of"></span>
+                    </div>
+                    <div class="home-ready__status" id="home-ready-status" hidden></div>
                     <div class="home-hero__text" id="home-study-sub"></div>
+                    <div class="home-hero__text home-ready__today" id="home-ready-today" hidden></div>
+                    <div class="home-ready__tip" id="home-ready-tip" hidden>
+                        <span id="home-ready-tip-text"></span>
+                        <button class="home-hero__link" id="home-ready-tip-btn"></button>
+                    </div>
                     <!-- The daily goal (3/10): questions answered today, out of the
                          goal set in Settings. No streak - tomorrow starts from 0. -->
                     <div class="daily-goal" id="home-goal" hidden>
@@ -237,6 +249,7 @@
                         <div class="daily-goal__bar" id="home-goal-bar" role="progressbar" aria-valuemin="0"><span class="daily-goal__fill" id="home-goal-fill"></span></div>
                     </div>
                     <button class="btn-primary home-hero__btn" id="home-study-btn"></button>
+                    <ul class="home-ready__others" id="home-ready-others" hidden></ul>
                 </div>
                 <div class="home-hero__next">
                     <div class="home-hero__label">Up Next Today</div>
