@@ -205,6 +205,8 @@ module.exports = {
   getStudyStats: () => request('GET', '/study/stats'),
   // { answered, goal } - questions answered today (3/10, the daily goal)
   getStudyToday: () => request('GET', '/study/today'),
+  // The daily exam question (3/10): { state, answered, unlockAt, target, exam, run }
+  getDailyQuestion: () => request('GET', '/study/daily-question'),
   deleteStudyItemsBulk: (ids) => request('POST', '/study/bulk-delete', { ids }),
   deleteAllStudyItems: () => request('DELETE', '/study/all/everything'),
   getStudyCategories: () => request('GET', '/study/categories'),

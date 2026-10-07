@@ -3057,6 +3057,29 @@ Return ONLY JSON:
 {"title": "...", "durationMin": number, "materials": "...", "instructions": "...", "questions": [{"n": 1, "title": "...", "points": number, "stem": "", "choosePartsCount": 0, "bonus": false, "parts": [{"label": "א", "type": "mc|tf|open|code", "text": "...", "options": [], "correct": "", "reasonRequired": false, "points": number, "answer": "...", "rubric": [{"criterion": "...", "points": number}], "topic": "...", "handwritten": false}]}]}`;
 }
 
+// The daily exam question (3/10): ONE question, exam level, on the student's
+// weakest topic - in the style of the course's past exams when there are any.
+function buildDailyQuestionPrompt(course, topic, material, past) {
+    return `Write ONE exam question for the university course "${course}" - the student's daily exam-level question, practised alone at home.
+${topic ? `It must test this topic - the student's weakest one right now: "${topic}". Stay inside it.` : 'Pick one central topic of the material.'}
+The LEVEL of a real exam question of this course - what the lecturer would put in the exam, not a drill and not easier.
+${past ? `\nPAST EXAMS of this course, for the style and the level only. Write a NEW question like theirs - other numbers, functions, data or claims - never a copy:\n${past}\n` : ''}
+COURSE MATERIAL (text taken from the student's files - formulas and right-to-left order may be damaged; skip what you can't read with confidence):
+${material || '(none - rely on the past exams)'}
+
+Rules:
+- One question with 1 to 3 parts, 20 points in total. Written answers - "open" (a computation, a proof, an explanation) or "code". At most one "tf" or "mc" part, and only with reasonRequired: true.
+- The same language as the past exams (or the material). Only what the material or the past exams cover.
+- The question stands alone: include all the data, code, tables and functions it needs. A text shared by the parts goes in "stem".
+- ${MATH_AS_LATEX}
+${EXAM_PART_RULES}
+- SOLVE EVERY PART YOURSELF AND CHECK IT: substitute back, compute a second way, test the counterexample. A part you can't solve with certainty: replace it with one you can.
+- "durationMin": the minutes it takes in an exam (10-40).
+
+Return ONLY JSON:
+{"title": "a short title naming the topic", "durationMin": number, "questions": [{"n": 1, "title": "...", "points": 20, "stem": "", "choosePartsCount": 0, "bonus": false, "parts": [{"label": "א", "type": "open|code|tf|mc", "text": "...", "options": [], "correct": "", "reasonRequired": false, "points": number, "answer": "...", "rubric": [{"criterion": "...", "points": number}], "topic": "...", "handwritten": false}]}]}`;
+}
+
 // An answer key for a question that already exists (a real past exam's) -
 // the same rules as the writer's. The owner's exam check uses it to measure
 // how often the writer's solutions are right, on questions with known answers.
@@ -3239,6 +3262,8 @@ function courseMaterialText(files, budget = 90000) {
 }
 
 const isPdfFile = (f) => /\.pdf$/i.test(f.name || '') || /\.pdf$/i.test(f.sourcePath || '');
+// A file that IS a past exam, by its name (the same rule as the Study screen's).
+const PAST_EXAM_FILE = /מבחן|בחינה|מועד|בוחן|\bexams?\b|midterm|quiz|final exam/i;
 
 // ---- The stages of a full exam. Each one takes its inputs directly, so the
 // owner's exam check (the server's tools/exam-check.js) can run the SAME code
@@ -3326,6 +3351,21 @@ async function writeExam(course, blueprint, materialText) {
     let exam;
     try { exam = normaliseExam(JSON.parse(extractJsonFromText(String(rawExam))), blueprint); } catch (e) { exam = null; }
     if (!exam) throw new Error('The AI didn\'t return a usable exam. Try again.');
+    return exam;
+}
+
+// The daily question's writing stage (one call). Returns an exam of one
+// question, cleaned like the full exam's; throws when nothing usable came back.
+async function writeDailyQuestion(course, topic, materialText, pastText) {
+    const raw = await aiProvider.generateText(buildDailyQuestionPrompt(course, topic, materialText, pastText), {
+        forceJson: true, maxTokens: 32000, thinkingLevel: 'high', timeoutMs: 240000, noFallback: true
+    });
+    let exam;
+    try { exam = normaliseExam(JSON.parse(extractJsonFromText(String(raw))), { durationMin: 20 }); } catch (e) { exam = null; }
+    if (!exam || !exam.questions.length) throw new Error('The AI didn\'t return a usable question. Try again.');
+    exam.questions = exam.questions.slice(0, 1);
+    exam.questions[0].bonus = false;
+    exam.questions[0].n = 1;
     return exam;
 }
 
@@ -3528,6 +3568,45 @@ async function buildFullExam({ course, pastIds, durationMin }, stage) {
     return { examId: String(saved.id || saved._id) };
 }
 
+// The daily question (3/10): asked for from the Study screen. The server says
+// which course and topic (and whether one may be written today - once a day,
+// after a few answers; it checks again when saving). Material and past exams
+// are cut short: one question doesn't need the whole course.
+async function buildDailyQuestion(stage) {
+    stage('reading');
+    const status = await api.getDailyQuestion();
+    if (status.exam) return { examId: status.exam.id, course: status.exam.course };
+    if (status.state === 'locked') throw new Error(`Today's question opens after ${status.unlockAt} answers today.`);
+    if (status.state !== 'ready' || !status.target) throw new Error('There is no course material to write a question from yet. Upload your course files under Materials.');
+    const { course, topic } = status.target;
+    const files = await api.getFiles();
+    const mine = (Array.isArray(files) ? files : []).filter(f => (f.folder || '') === course);
+    const isPast = (f) => PAST_EXAM_FILE.test(f.name || '');
+    const materialText = courseMaterialText(mine.filter(f => !isPast(f)), 30000);
+    const pastText = mine.filter(isPast).filter(f => String(f.content || '').trim()).slice(0, 3)
+        .map(f => `=== ${f.name} ===\n${String(f.content).slice(0, 6000)}`).join('\n\n');
+    if (!materialText && !pastText) throw new Error('There is no course material to write a question from yet. Upload your course files under Materials.');
+
+    stage('writing');
+    const exam = await writeDailyQuestion(course, topic, materialText, pastText);
+    stage('checking');
+    await checkExam(exam, { keepParts: true });
+    if (exam.questions.some(q => q.parts.some(p => p.check === 'doubtful' || p.replace))) {
+        stage('replacing');
+        await replaceBrokenParts(course, exam, materialText || pastText);
+    }
+    stage('saving');
+    const saved = await api.saveFullExam({
+        ...exam,
+        course,
+        daily: true,
+        topic,
+        basis: pastText ? 'past_exams' : 'material',
+        pastExamFiles: mine.filter(isPast).slice(0, 3).map(f => f.name)
+    });
+    return { examId: String(saved.id || saved._id), course };
+}
+
 // The check that didn't run (or missed parts) when the exam was written, run
 // on the saved exam: only the parts still unchecked change.
 async function recheckFullExam(examId, stage) {
@@ -3553,6 +3632,26 @@ ipcMain.handle('full-exam-recheck', async (event, examId) => {
         if (!/^[a-f0-9]{24}$/i.test(id)) return { error: 'No exam to check.' };
         if (aiProvider.resolveProvider() !== 'gemini') return { error: 'A full exam needs the cloud AI (a Gemini key in Settings).' };
         return { jobId: startFullExamJob((stage) => recheckFullExam(id, stage)) };
+    } catch (err) {
+        return { error: err.message };
+    }
+});
+
+// The daily question (3/10): where today stands, and writing it (a job, like a
+// full exam's; one at a time - a second click gets the same job).
+ipcMain.handle('daily-question', async () => {
+    try { return await api.getDailyQuestion(); } catch (err) { return { error: err.message }; }
+});
+const DAILY_JOBS = new Map();   // owner -> job id
+ipcMain.handle('daily-question-build', async () => {
+    try {
+        if (aiProvider.resolveProvider() !== 'gemini') return { error: 'The daily question needs the cloud AI (a Gemini key in Settings).' };
+        const owner = fullExamJobOwner();
+        const running = DAILY_JOBS.get(owner);
+        if (running && FULL_EXAM_JOBS.has(running) && FULL_EXAM_JOBS.get(running).status === 'running') return { jobId: running };
+        const jobId = startFullExamJob((stage) => buildDailyQuestion(stage));
+        DAILY_JOBS.set(owner, jobId);
+        return { jobId };
     } catch (err) {
         return { error: err.message };
     }
@@ -3688,7 +3787,7 @@ async function solveExamParts(course, question) {
 
 // The stages above, for the owner's exam check on the server (exported by
 // tools/port-main.py; unused in the desktop app).
-const EXAM_STAGES = { examBlueprint, verifyBlueprintRules, writeExam, checkExam, replaceBrokenParts, autoMarkPart, reasonedChoicePoints, gradeExamQuestion, marksFromAi, pointsFromAi, solveExamParts, normaliseExam, answerIsBlank, cleanExamText, cleanMathNotation, cutText, extractJsonFromText, FORMULA_STATS };
+const EXAM_STAGES = { examBlueprint, verifyBlueprintRules, writeExam, writeDailyQuestion, checkExam, replaceBrokenParts, autoMarkPart, reasonedChoicePoints, gradeExamQuestion, marksFromAi, pointsFromAi, solveExamParts, normaliseExam, answerIsBlank, cleanExamText, cleanMathNotation, cutText, extractJsonFromText, FORMULA_STATS };
 
 // Graded sittings whose save failed: a retry only saves again, it doesn't
 // pay for the AI grading twice.
