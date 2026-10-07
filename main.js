@@ -4974,7 +4974,7 @@ ipcMain.handle('get-onboarding-status', async () => {
     reviews: stats ? stats.reviewsAllTime || 0 : 0,
     calendarItems: (events || []).length + (tasks || []).length,
     // Exams on the calendar from today on - Home's "no exam dates" tip only when there are none
-    upcomingExams: (events || []).filter(e => e.type === 'exam' && e.date && e.date >= new Date().toISOString().slice(0, 10)).length,
+    upcomingExams: (events || []).filter(e => e.type === 'exam' && e.date && e.date >= toLocalIsoDate(new Date())).length,
     // Home's "upcoming exam" (readiness per course, 3/10): the same stats, no extra call
     subjects: stats && Array.isArray(stats.subjects) ? stats.subjects.map(s => ({
       category: s.category, items: s.items, due: s.due, exam: s.exam || null,

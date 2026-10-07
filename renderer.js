@@ -4563,7 +4563,11 @@ async function refreshOnboarding() {
 // real evidence - a mock or full exam in the last 7 days; otherwise the
 // status in words and two plain numbers (routes/study.js readinessOf).
 const EVIDENCE_DAYS = 7;
-const MOCK_MIN_CHECKED = 15;
+// A mock exam tells something with 15 checked answers - or, in a course with
+// fewer than 15 questions, the 10 the setup offers (all of them, under 10);
+// under 8, nothing.
+const mockMinChecked = (total) => ((total || 0) >= 15 ? 15 : Math.min(10, total || 0));
+const MOCK_MIN_USEFUL = 8;
 // Calendar days on this device's clock (yesterday 22:00 is "yesterday" at 09:00), never below 0.
 const daysAgo = (at) => {
     const day0 = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x.getTime(); };
@@ -4604,7 +4608,8 @@ function readinessEvidence(s) {
     const fresh = (e) => e && e.at && daysAgo(e.at) <= EVIDENCE_DAYS;
     // A mock exam measures something only with enough checked answers (the
     // server only keeps full exams that were mostly graded).
-    const mock = fresh(s.lastMock) && (s.lastMock.checked || 0) >= MOCK_MIN_CHECKED
+    const need = mockMinChecked(s.readiness && s.readiness.total);
+    const mock = fresh(s.lastMock) && need >= MOCK_MIN_USEFUL && (s.lastMock.checked || 0) >= need
         ? { kind: 'mock', value: s.lastMock.score, margin: s.lastMock.margin || 0, at: s.lastMock.at } : null;
     const full = fresh(s.lastFull) ? { kind: 'full', value: s.lastFull.percent, at: s.lastFull.at } : null;
     if (mock && full) return new Date(mock.at) >= new Date(full.at) ? mock : full;
@@ -4624,7 +4629,7 @@ function renderHomeReadiness(status) {
             tip.hidden = false;
             // (exams on the calendar that no course matched: say that, not "no dates")
             document.getElementById('home-ready-tip-text').textContent = status.upcomingExams
-                ? t('Your exams aren\'t linked to a course yet - put the course name in the exam\'s title.')
+                ? t('None of the exams on your calendar is for a course you have questions in - check the course name in each exam\'s title.')
                 : t('No exam dates yet - add them and practice is timed to each exam.');
             const tipBtn = document.getElementById('home-ready-tip-btn');
             tipBtn.textContent = status.upcomingExams ? t('Open Planner') : t('Add exam dates');
@@ -4686,10 +4691,16 @@ function renderHomeReadiness(status) {
 
     // The truest picture: a mock exam, when the exam is near and there is none from this week.
     const tip = document.getElementById('home-ready-tip');
-    // (only once there's a verdict - a mock exam after 3 answers measures nothing)
-    tip.hidden = !(!ev && s.exam.daysLeft <= 21 && r.enoughData);
+    // (only once there's a verdict - a mock exam after 3 answers measures nothing -
+    // and only where a mock exam can tell something)
+    const need = mockMinChecked(r.total);
+    const shortMock = !ev && s.lastMock && s.lastMock.at && daysAgo(s.lastMock.at) <= EVIDENCE_DAYS && need >= MOCK_MIN_USEFUL;
+    tip.hidden = !(!ev && s.exam.daysLeft <= 21 && r.enoughData && need >= MOCK_MIN_USEFUL);
     if (!tip.hidden) {
-        document.getElementById('home-ready-tip-text').textContent = t('A mock exam this week gives the truest picture.');
+        // A mock exam this week too short to tell (fewer checked answers): say how long one has to be.
+        document.getElementById('home-ready-tip-text').textContent = shortMock
+            ? t('Your last mock exam was too short to tell - {n} questions give a picture.', { n: need })
+            : t('A mock exam this week gives the truest picture.');
         const tipBtn = document.getElementById('home-ready-tip-btn');
         tipBtn.textContent = t('Take a mock exam');
         tipBtn.onclick = () => { document.getElementById('nav-study').click(); setTimeout(() => openExamSetup(s.category, name, r.total), 60); };
