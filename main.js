@@ -3096,7 +3096,7 @@ Return ONLY JSON: {"links": [{"topic": "...", "skills": ["...", "..."]}]}`;
 
 async function linkExamTopics(course, topics, skills) {
     const raw = await aiProvider.generateText(buildExamLinkPrompt(course, topics, skills), {
-        forceJson: true, maxTokens: 4000, thinkingLevel: 'low', timeoutMs: 60000, noFallback: true, allowance: 'light'
+        forceJson: true, maxTokens: 8000, thinkingLevel: 'low', timeoutMs: 60000, noFallback: true, allowance: 'light'
     });
     const links = JSON.parse(extractJsonFromText(String(raw))).links;
     if (!Array.isArray(links)) throw new Error('The AI didn\'t return the topics. Try again.');
@@ -3637,12 +3637,21 @@ async function buildDailyQuestion(stage) {
 
 // "What repeats in the exam" (3/10): the course's past exams analysed (the
 // same call a full exam starts with), then linked to the practice skills.
-async function linkExamMap(course) {
-    const map = await api.getExamMap(course);
-    if (!map.needsLink || !map.profile || !map.skills.length) return map;
-    const links = await linkExamTopics(course, map.profile.recurring.map(r => r.topic), map.skills);
-    await api.saveExamLinks({ course, links, skills: map.skills });
-    return api.getExamMap(course);
+// One link at a time per user and course: a second tab (or click) waits for
+// the same call instead of paying for its own.
+const EXAM_LINKS = new Map();   // owner + course -> promise
+function linkExamMap(course) {
+    const key = `${fullExamJobOwner()}\n${course}`;
+    if (EXAM_LINKS.has(key)) return EXAM_LINKS.get(key);
+    const run = (async () => {
+        const map = await api.getExamMap(course);
+        if (!map.needsLink || !map.profile || !map.skills.length) return map;
+        const links = await linkExamTopics(course, map.profile.recurring.map(r => r.topic), map.skills);
+        await api.saveExamLinks({ course, links, skills: map.skills });
+        return api.getExamMap(course);
+    })().finally(() => EXAM_LINKS.delete(key));
+    EXAM_LINKS.set(key, run);
+    return run;
 }
 
 async function analyzeExamMap(course, stage) {
@@ -3660,7 +3669,9 @@ async function analyzeExamMap(course, stage) {
     const recurring = blueprint && Array.isArray(blueprint.recurring) ? blueprint.recurring : [];
     if (!recurring.length) throw new Error('No topic repeats in these past exams - nothing to map yet.');
     stage('saving');
-    await api.saveExamProfile({ course, recurring, pastExams: past.map(f => f.name) });
+    // (replace: this is the analysis itself - a full exam's partial one never replaces it)
+    const saved = await api.saveExamProfile({ course, recurring, pastExams: past.map(f => f.name), replace: true });
+    if (!saved || saved.success === false) throw new Error('No topic repeats in these past exams - nothing to map yet.');
     stage('linking');
     // (the analysis is saved; a link that fails now is tried again from the screen)
     try { return await linkExamMap(course); } catch (err) {

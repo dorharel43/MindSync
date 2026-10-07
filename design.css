@@ -1197,7 +1197,13 @@ body.auth-pending #auth-screen { background: var(--bg-sidebar); }
 .exam-map__know--low { color: var(--status-danger); font-weight: 600; }
 .exam-map__know--mid { color: var(--status-warning); font-weight: 600; }
 .exam-map__know--high { color: var(--status-success); font-weight: 600; }
-.exam-map__skills { grid-column: 1 / -1; font-size: var(--text-sm); color: var(--text-secondary); }
+.exam-map__topic { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 6px; }
+.exam-map__topic > .exam-map__name, .exam-map__topic > .exam-map__meta { grid-column: 1; }
+.exam-map__chev { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-size: var(--text-sm); color: var(--text-secondary); transition: transform 0.15s; }
+.exam-map__topic[aria-expanded="true"] .exam-map__chev { transform: rotate(180deg); }
+.exam-map__skills { grid-column: 1 / -1; font-size: var(--text-sm); line-height: 1.5; color: var(--text-secondary); }
+.exam-map__example { margin-bottom: 4px; color: var(--text-primary); overflow-wrap: anywhere; }
+.exam-map__example > span:first-child { color: var(--text-secondary); }
 .exam-map__skills[hidden] { display: none; }
 .exam-map__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 12px; }
 .exam-map__actions:has(> [hidden] + [hidden]) { display: none; }
