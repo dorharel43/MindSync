@@ -5524,6 +5524,10 @@ async function renderDailyQuestion() {
         ].filter(Boolean).join(' ');
         btn.textContent = t('Write today\'s question');
         btn.onclick = () => buildDailyQuestionNow(target.course);
+        if (s.cloud === false) {   // the local model can't write it
+            text.textContent = t('The daily question needs the cloud AI (a Gemini key in Settings).');
+            btn.hidden = true;
+        }
     } else if (s.state === 'written') {
         title.textContent = s.exam.title || s.exam.topic || s.exam.course;
         text.textContent = t('Ready in {c}. Answering it counts toward today\'s goal.', { c: s.exam.course });

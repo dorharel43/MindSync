@@ -3640,7 +3640,8 @@ ipcMain.handle('full-exam-recheck', async (event, examId) => {
 // The daily question (3/10): where today stands, and writing it (a job, like a
 // full exam's; one at a time - a second click gets the same job).
 ipcMain.handle('daily-question', async () => {
-    try { return await api.getDailyQuestion(); } catch (err) { return { error: err.message }; }
+    // cloud: it can be written (and graded) here - the local model can't
+    try { return { ...(await api.getDailyQuestion()), cloud: aiProvider.resolveProvider() === 'gemini' }; } catch (err) { return { error: err.message }; }
 });
 const DAILY_JOBS = new Map();   // owner -> job id
 ipcMain.handle('daily-question-build', async () => {
