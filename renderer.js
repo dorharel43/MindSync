@@ -5791,7 +5791,6 @@ let examMapCourses = [];
 let examMapBusy = false;
 let examMapShowAll = false;
 const examMapLinking = new Map();   // course -> 'running', or when the last link failed
-const EXAM_MAP_FILES = 8;   // the past exams one analysis reads (main.js: analyzeExamMap)
 const EXAM_MAP_STAGE_TEXT = {
     reading: 'Reading the past exams…',
     blueprint: 'Reading the past exams - how they are built and what repeats…',
@@ -5954,11 +5953,13 @@ async function renderExamMap() {
         more.textContent = examMapShowAll ? t('Show fewer') : t('Show all {n}', { n: m.topics.length });
         more.onclick = () => { examMapShowAll = !examMapShowAll; renderExamMap(); };
     }
-    // More past exams than the analysis saw (it reads up to 8): offer it again.
-    if (m.cloud && Math.min(m.pastExams, EXAM_MAP_FILES) > (m.profile.pastExams || []).length && m.pastExams >= 2) {
+    // The past exams changed since the analysis (main.js says which it would read now): offer it again.
+    if (m.cloud && m.changed) {
         btn.hidden = false;
         btn.className = 'btn-secondary btn-sm';
-        btn.textContent = t('Analyze again ({n} past exams now)', { n: m.pastExams });
+        btn.textContent = m.pastExams > (m.profile.pastExams || []).length
+            ? t('Analyze again ({n} past exams now)', { n: m.pastExams })
+            : t('Analyze again (the past exams changed)');
         btn.onclick = () => analyzeExamMapNow(course);
     }
 }

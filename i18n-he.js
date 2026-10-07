@@ -63,6 +63,7 @@
         'Counted: your questions on {s}.': 'נספרות השאלות שלך על: {s}.', 'None of your questions matches this topic yet.': 'אף שאלה שלך עוד לא מתאימה לנושא הזה.',
         'Show fewer': 'להציג פחות', 'Show all {n}': 'להציג את כל ה-{n}',
         'Analyze again ({n} past exams now)': 'לנתח שוב (עכשיו יש {n} מבחנים קודמים)',
+        'Analyze again (the past exams changed)': 'לנתח שוב (המבחנים הקודמים השתנו)',
         'Saving…': 'שומרים…', "Couldn't start the analysis. Try again.": 'לא הצלחנו להתחיל את הניתוח. כדאי לנסות שוב.', "The past exams weren't analyzed": 'המבחנים הקודמים לא נותחו',
         'There are no questions on this topic yet.': 'עוד אין שאלות על הנושא הזה.',
         'Worth most today: {t} - in {n} of {m} past exams, {a}% right in practice.': 'הכי משתלם היום: {t} - מופיע ב-{n} מתוך {m} מבחנים קודמים, {a}% נכונות בתרגול.',

@@ -3646,18 +3646,28 @@ function linkExamMap(course) {
     const run = (async () => {
         const map = await api.getExamMap(course);
         if (!map.needsLink || !map.profile || !map.skills.length) return map;
-        const links = await linkExamTopics(course, map.profile.recurring.map(r => r.topic), map.skills);
-        await api.saveExamLinks({ course, links, skills: map.skills });
+        const topics = map.profile.recurring.map(r => r.topic);
+        const links = await linkExamTopics(course, topics, map.skills);
+        // (409: a new analysis came in meanwhile - its topics are linked next time)
+        await api.saveExamLinks({ course, topics, links, skills: map.skills }).catch(err => { if (err.status !== 409) throw err; });
         return api.getExamMap(course);
     })().finally(() => EXAM_LINKS.delete(key));
     EXAM_LINKS.set(key, run);
     return run;
 }
 
+// The past exams one analysis reads: the course's, by name (newest year
+// first, as names usually go), up to 8. The screen compares these names with
+// the ones the saved analysis read.
+const EXAM_MAP_FILES = 8;
+const examMapFiles = (files, course) => (Array.isArray(files) ? files : [])
+    .filter(f => (f.folder || '') === course && PAST_EXAM_FILE.test(f.name || ''))
+    .sort((a, b) => String(b.name).localeCompare(String(a.name)))
+    .slice(0, EXAM_MAP_FILES);
+
 async function analyzeExamMap(course, stage) {
     stage('reading');
-    const files = await api.getFiles();
-    const past = (Array.isArray(files) ? files : []).filter(f => (f.folder || '') === course && PAST_EXAM_FILE.test(f.name || '')).slice(0, 8);
+    const past = examMapFiles(await api.getFiles(), course);
     if (past.length < 2) throw new Error('Upload at least 2 past exams of this course (a file name with "מבחן" or "exam") to see what repeats.');
     stage('blueprint');
     const pastFiles = [];
@@ -3724,7 +3734,12 @@ ipcMain.handle('exam-map', async (event, course) => {
         if (!c) return { error: 'Choose a course first.' };
         const [map, files] = await Promise.all([api.getExamMap(c), api.getFilesLight().catch(() => [])]);
         const pastExams = (Array.isArray(files) ? files : []).filter(f => (f.folder || '') === c && PAST_EXAM_FILE.test(f.name || '')).length;
-        return { ...map, pastExams, cloud: aiProvider.resolveProvider() === 'gemini' };
+        // An analysis now would read other files than the saved one did (new,
+        // deleted or swapped past exams, or a full exam's own choice of files).
+        const now = examMapFiles(files, c).map(f => f.name);
+        const read = new Set((map.profile && map.profile.pastExams) || []);
+        const changed = !!map.profile && now.length >= 2 && (now.length !== read.size || now.some(n => !read.has(n)));
+        return { ...map, pastExams, changed, cloud: aiProvider.resolveProvider() === 'gemini' };
     } catch (err) { return { error: err.message }; }
 });
 // Links new skills to the topics (one light call) - only when the server says it's due.
