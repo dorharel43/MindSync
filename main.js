@@ -3736,9 +3736,10 @@ ipcMain.handle('exam-map', async (event, course) => {
         const pastExams = (Array.isArray(files) ? files : []).filter(f => (f.folder || '') === c && PAST_EXAM_FILE.test(f.name || '')).length;
         // An analysis now would read other files than the saved one did (new,
         // deleted or swapped past exams, or a full exam's own choice of files).
-        const now = examMapFiles(files, c).map(f => f.name);
+        // (as sets - the same exam uploaded twice is one name)
+        const now = new Set(examMapFiles(files, c).map(f => f.name));
         const read = new Set((map.profile && map.profile.pastExams) || []);
-        const changed = !!map.profile && now.length >= 2 && (now.length !== read.size || now.some(n => !read.has(n)));
+        const changed = !!map.profile && now.size >= 2 && (now.size !== read.size || [...now].some(n => !read.has(n)));
         return { ...map, pastExams, changed, cloud: aiProvider.resolveProvider() === 'gemini' };
     } catch (err) { return { error: err.message }; }
 });
