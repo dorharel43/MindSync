@@ -4563,7 +4563,12 @@ async function refreshOnboarding() {
 // real evidence - a mock or full exam in the last 7 days; otherwise the
 // status in words and two plain numbers (routes/study.js readinessOf).
 const EVIDENCE_DAYS = 7;
-const daysAgo = (at) => Math.floor((Date.now() - new Date(at).getTime()) / 86400000);
+const MOCK_MIN_CHECKED = 15;
+// Calendar days on this device's clock (yesterday 22:00 is "yesterday" at 09:00), never below 0.
+const daysAgo = (at) => {
+    const day0 = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x.getTime(); };
+    return Math.max(0, Math.round((day0(Date.now()) - day0(at)) / 86400000));
+};
 
 function examWhen(course, exam) {
     return exam.daysLeft === 0 ? t('{c} - exam today', { c: course })
@@ -4588,12 +4593,19 @@ function hideRepeatedNextExam() {
     const box = document.getElementById('home-next-exam');
     if (box && box.dataset.exam && box.dataset.exam === homeReadinessExam) box.hidden = true;
     else if (box && box.dataset.exam) box.hidden = false;
+    // An earlier exam (of a course with no questions) is the Today panel's - here it's
+    // the next one being practised for, said so.
+    const label = document.getElementById('home-study-label');
+    if (label && homeReadinessExam) label.textContent = box && box.dataset.exam && box.dataset.exam !== homeReadinessExam ? t('Next exam you\'re practicing for') : t('Upcoming exam');
 }
 
 // The newest real evidence of the last week: a mock exam (score ± margin) or a full exam.
 function readinessEvidence(s) {
     const fresh = (e) => e && e.at && daysAgo(e.at) <= EVIDENCE_DAYS;
-    const mock = fresh(s.lastMock) ? { kind: 'mock', value: s.lastMock.score, margin: s.lastMock.margin, at: s.lastMock.at } : null;
+    // A mock exam measures something only with enough checked answers (the
+    // server only keeps full exams that were mostly graded).
+    const mock = fresh(s.lastMock) && (s.lastMock.checked || 0) >= MOCK_MIN_CHECKED
+        ? { kind: 'mock', value: s.lastMock.score, margin: s.lastMock.margin || 0, at: s.lastMock.at } : null;
     const full = fresh(s.lastFull) ? { kind: 'full', value: s.lastFull.percent, at: s.lastFull.at } : null;
     if (mock && full) return new Date(mock.at) >= new Date(full.at) ? mock : full;
     return mock || full;
@@ -4610,9 +4622,12 @@ function renderHomeReadiness(status) {
         if (subjects.length) {
             const tip = document.getElementById('home-ready-tip');
             tip.hidden = false;
-            document.getElementById('home-ready-tip-text').textContent = t('No exam dates yet - add them and practice is timed to each exam.');
+            // (exams on the calendar that no course matched: say that, not "no dates")
+            document.getElementById('home-ready-tip-text').textContent = status.upcomingExams
+                ? t('Your exams aren\'t linked to a course yet - put the course name in the exam\'s title.')
+                : t('No exam dates yet - add them and practice is timed to each exam.');
             const tipBtn = document.getElementById('home-ready-tip-btn');
-            tipBtn.textContent = t('Add exam dates');
+            tipBtn.textContent = status.upcomingExams ? t('Open Planner') : t('Add exam dates');
             tipBtn.onclick = () => document.getElementById('nav-weekly').click();
         }
         return false;
@@ -4620,8 +4635,7 @@ function renderHomeReadiness(status) {
     const r = s.readiness;
     const name = s.category === 'Uncategorized' ? t('No course') : s.category;
     homeReadinessExam = `${s.exam.title}|${s.exam.date}`;
-    hideRepeatedNextExam();
-    document.getElementById('home-study-label').textContent = t('Upcoming exam');
+    hideRepeatedNextExam();   // (also sets the label - an earlier exam elsewhere changes it)
     const title = document.getElementById('home-study-title');
     title.textContent = examWhen(name, s.exam);
 
@@ -4633,8 +4647,10 @@ function renderHomeReadiness(status) {
         document.getElementById('home-ready-num').textContent = String(Math.round(ev.value));
         const ago = daysAgo(ev.at);
         const when = ago === 0 ? t('today') : ago === 1 ? t('yesterday') : t('{n} days ago', { n: ago });
+        // (a mock exam is a sample: its honest range, not only the middle)
+        const lo = Math.max(0, Math.round(ev.value - (ev.margin || 0))), hi = Math.min(100, Math.round(ev.value + (ev.margin || 0)));
         document.getElementById('home-ready-of').textContent = ev.kind === 'mock'
-            ? (ev.margin ? t('If the exam were today (±{m}) - mock exam, {w}', { m: ev.margin, w: when }) : t('If the exam were today - mock exam, {w}', { w: when }))
+            ? (ev.margin ? t('If the exam were today: between {lo} and {hi} - mock exam, {w}', { lo, hi, w: when }) : t('If the exam were today - mock exam, {w}', { w: when }))
             : t('Out of 100 - full exam, {w}', { w: when });
     }
 
@@ -4646,24 +4662,25 @@ function renderHomeReadiness(status) {
     const why = document.createElement('span');
     why.textContent = statusKey === 'at_risk' && r.reason === 'knowledge' ? t('Much of what you practiced isn\'t known yet.')
         : statusKey === 'at_risk' ? t('Too much of the course is left for the time left.')
-            : statusKey === 'too_early' ? t('{n} more answers and you\'ll see where you stand.', { n: r.toKnow || 1 })
+            : statusKey === 'too_early' ? ((r.toKnow || 1) === 1 ? t('One more new question and you\'ll see where you stand.') : t('{n} more new questions and you\'ll see where you stand.', { n: r.toKnow }))
                 : t(READINESS_STATUS[statusKey].tip);
+    // The last exam and the practice disagree: say so, the exam is the truer one.
+    if (ev && ev.value < 60 && (statusKey === 'ready' || statusKey === 'on_track')) why.textContent = t('But the last exam went less well - go over its mistakes.');
     st.append(readinessPill(r), why);
 
     // Two plain numbers.
     const sub = document.getElementById('home-study-sub');
     // (no percentage before there's enough to judge by - "too early" means too early)
-    sub.textContent = !r.practiced ? t('{n} questions are waiting - none answered yet.', { n: r.total })
+    sub.textContent = !r.practiced ? (r.total === 1 ? t('1 question is waiting - not answered yet.') : t('{n} questions are waiting - none answered yet.', { n: r.total }))
         : !r.enoughData ? t('Answered {p} of {n} questions so far.', { p: r.practiced, n: r.total })
             : t('You know {k}% of what you practiced · covered {c}% of the questions.', { k: r.knowPercent == null ? 0 : r.knowPercent, c: r.coverage });
 
     // Today.
     const today = document.getElementById('home-ready-today');
     today.hidden = false;
-    // (when today's plan is below the pace the exam needs, it says so - not "fine")
-    const behind = r.perDay > 1 && r.unseen && r.perDay > s.due;
-    today.textContent = behind
-        ? t('Today: {n} questions are planned - but covering the course in time takes about {p} new a day.', { n: s.due, p: r.perDay })
+    // (a "behind" line was tried and dropped: it fired after today's plan was done,
+    // with no way to act on it - the plan to the exam is the place for the pace)
+    today.textContent = s.due === 1 ? t('Today: 1 question in this course.')
         : s.due > 0 ? t('Today: {n} questions in this course.', { n: s.due })
             : t('Nothing due in this course today - you\'re up to date.');
 
@@ -4694,7 +4711,7 @@ function renderHomeReadiness(status) {
         const meta = document.createElement('span'); meta.className = 'home-ready__ometa';
         meta.textContent = `${o.exam.daysLeft === 0 ? t('today') : o.exam.daysLeft === 1 ? t('tomorrow') : t('in {n} days', { n: o.exam.daysLeft })} · ${t(READINESS_STATUS[readinessStatus(o.readiness)].label)}`;
         b.append(n, meta);
-        b.onclick = () => practiceCourse(o.category, oname);
+        b.onclick = () => (o.due > 0 ? practiceCourse(o.category, oname) : document.getElementById('nav-study').click());
         li.appendChild(b);
         others.appendChild(li);
     }
@@ -4706,8 +4723,8 @@ function renderHomeStudy(status) {
     const box = document.getElementById('home-study');
     if (!box) return;
     box.hidden = !onboardingEl.hidden;
-    if (box.hidden) return;
     resetHomeReadiness();
+    if (box.hidden) return;
     // The daily goal only once there are questions to answer.
     homeGoalAllowed = !!status.questions;
     if (homeGoalAllowed) loadDailyGoal();
