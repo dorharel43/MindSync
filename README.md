@@ -1,10 +1,11 @@
 # MindSync
 
-> An AI study assistant that tells you what you actually know — not what you think you know.
+> An exam coach for university students: it tells you what you actually know — not what you think you know.
 
-MindSync is a desktop application for students. It reads your course material,
-turns it into tasks and study sessions, and quizzes you in a way that measures
-the gap between how confident you feel and how much you actually recall.
+MindSync learns what a course's past exams keep asking, turns your course
+material into practice timed for the exam date, and measures the gap between
+how confident you feel and what you actually know. Start in week one and add
+each lecture as it comes, or upload the whole course in the exam period.
 
 This repository contains the **Electron desktop client**.
 The API lives in a separate repository: [MindSync-Server](https://github.com/dorharel43/MindSync-Server).

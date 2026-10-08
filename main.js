@@ -1,6 +1,5 @@
 require('dotenv').config();
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
-const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const PDFParser = require('pdf2json'); // kept as a fallback only
@@ -3291,7 +3290,7 @@ function courseMaterialText(files, budget = 90000) {
 
 const isPdfFile = (f) => /\.pdf$/i.test(f.name || '') || /\.pdf$/i.test(f.sourcePath || '');
 // A file that IS a past exam, by its name (the same rule as the Study screen's).
-const PAST_EXAM_FILE = /מבחן|בחינה|מועד|בוחן|\bexams?\b|midterm|quiz|final exam/i;
+const PAST_EXAM_FILE = /מבחן|בחינה|מועד|בוחן|(?:^|[^a-z])exams?(?![a-z])|(?:^|[^a-z])moed(?![a-z])|midterm|quiz|final exam/i;   // (8/10: also exam_2023, moed_a)
 
 // ---- The stages of a full exam. Each one takes its inputs directly, so the
 // owner's exam check (the server's tools/exam-check.js) can run the SAME code
@@ -5132,11 +5131,15 @@ ipcMain.handle('get-onboarding-status', async () => {
     dueCount: stats ? stats.dueCount || 0 : 0,
     hasKey: Boolean(aiProvider.readConfig().geminiKey),
     files: (files || []).length,
+    // the guide's "past exams" step (8/10)
+    pastExams: (files || []).filter(f => PAST_EXAM_FILE.test(f.name || '')).length,
     questions: stats ? stats.totalItems || 0 : 0,
     reviews: stats ? stats.reviewsAllTime || 0 : 0,
     calendarItems: (events || []).length + (tasks || []).length,
     // Exams on the calendar from today on - Home's "no exam dates" tip only when there are none
     upcomingExams: (events || []).filter(e => e.type === 'exam' && e.date && e.date >= toLocalIsoDate(new Date())).length,
+    // the guide's "when is your exam" step: any exam ever (a passed one doesn't reopen it)
+    examsEver: (events || []).filter(e => e.type === 'exam').length,
     // Home's "upcoming exam" (readiness per course, 3/10): the same stats, no extra call
     subjects: stats && Array.isArray(stats.subjects) ? stats.subjects.map(s => ({
       category: s.category, items: s.items, due: s.due, exam: s.exam || null,
@@ -5165,87 +5168,6 @@ ipcMain.handle('delete-file', async (event, id) => {
 });
 
 // =====================================
-// App Blocker 
-// =====================================
-let isBlockingEnabled = false;
-ipcMain.on('toggle-blocking', (event, status) => { isBlockingEnabled = status; });
-
-
-// Lets the user pick an actual executable instead of typing its filename.
-// Typing "chrome.exe" from memory is error-prone - the wrong name simply
-// never matches anything and the block silently does nothing, with no
-// feedback that it was wrong.
-ipcMain.handle('pick-application', async () => {
-  const isWindows = process.platform === 'win32';
-  const result = await dialog.showOpenDialog({
-    title: 'Choose an application to block',
-    properties: ['openFile'],
-    defaultPath: isWindows ? 'C:\\Program Files' : '/Applications',
-    filters: isWindows
-      ? [{ name: 'Applications', extensions: ['exe'] }]
-      : [{ name: 'Applications', extensions: ['app'] }]
-  });
-
-  if (result.canceled || result.filePaths.length === 0) return null;
-
-  // The blocker matches against the process name, which is the file name.
-  return { name: path.basename(result.filePaths[0]), fullPath: result.filePaths[0] };
-});
-
-// Common distractions, offered as one-tap presets so the usual cases need no
-// typing or file browsing at all.
-ipcMain.handle('get-suggested-apps', async () => {
-  const isWindows = process.platform === 'win32';
-  if (isWindows) {
-    return [
-      { label: 'Steam', value: 'steam.exe' },
-      { label: 'Discord', value: 'Discord.exe' },
-      { label: 'Epic Games', value: 'EpicGamesLauncher.exe' },
-      { label: 'Battle.net', value: 'Battle.net.exe' },
-      { label: 'League of Legends', value: 'LeagueClient.exe' },
-      { label: 'Riot Client', value: 'RiotClientServices.exe' },
-      { label: 'Telegram', value: 'Telegram.exe' },
-      { label: 'WhatsApp', value: 'WhatsApp.exe' },
-      { label: 'Spotify', value: 'Spotify.exe' },
-      { label: 'Roblox', value: 'RobloxPlayerBeta.exe' },
-      { label: 'Minecraft', value: 'Minecraft.exe' },
-      { label: 'GOG Galaxy', value: 'GalaxyClient.exe' }
-    ];
-  }
-  return [
-    { label: 'Steam', value: 'Steam' },
-    { label: 'Discord', value: 'Discord' },
-    { label: 'Telegram', value: 'Telegram' },
-    { label: 'WhatsApp', value: 'WhatsApp' },
-    { label: 'Spotify', value: 'Spotify' }
-  ];
-});
-
-ipcMain.handle('get-blocked-apps', async () => {
-  try { return await api.getBlockedApps(); } catch (err) { return []; }
-});
-ipcMain.handle('add-blocked-app', async (event, appName) => {
-  try { return await api.addBlockedApp(appName); } catch (err) { return { error: err.message }; }
-});
-ipcMain.handle('remove-blocked-app', async (event, appName) => {
-  try { return await api.removeBlockedApp(appName); } catch (err) { return { error: err.message }; }
-});
-
-async function checkAndBlockApps() {
-  if (!isBlockingEnabled) return;
-  let currentBlockedApps;
-  try {
-    currentBlockedApps = await api.getBlockedApps();
-  } catch (err) { return; }
-  exec('tasklist', (err, stdout) => {
-    if (err) return;
-    currentBlockedApps.forEach(appName => {
-      if (stdout.toLowerCase().includes(appName.toLowerCase())) exec(`taskkill /IM ${appName} /F`);
-    });
-  });
-}
-
-// =====================================
 // System Core
 // =====================================
 ipcMain.handle('hard-reset', async () => {
@@ -5270,7 +5192,6 @@ ipcMain.handle('hard-reset', async () => {
 function createWindow () {
   const mainWindow = new BrowserWindow({ width: 1280, height: 800, webPreferences: { nodeIntegration: true, contextIsolation: false } });
   mainWindow.loadFile('index.html');
-  setInterval(checkAndBlockApps, 3000);
 }
 
 app.whenReady().then(() => {

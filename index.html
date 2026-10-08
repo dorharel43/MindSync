@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MindSync AI - Home</title>
+    <title>MindSync - exam coach</title>
     <link rel="stylesheet" href="tokens.css">
     <link rel="stylesheet" href="themes.css">
     <link rel="stylesheet" href="ui-kit.css">
@@ -36,7 +36,7 @@
             <div class="auth-logo auth-logo--brand"><span class="logo-mark" aria-hidden="true">M</span> <span dir="ltr">MindSync</span></div>
             <div class="auth-brand__body">
                 <h1 class="auth-brand__title">Know what you really know - before the exam.</h1>
-                <p class="auth-brand__text">Practice questions from your course files. Before each answer you say how sure you are - and see where that feeling is wrong.</p>
+                <p class="auth-brand__text">Your exam coach. It learns what your course's past exams keep asking and checks how ready you really are. Before each answer you say how sure you are - and see where that feeling is wrong.</p>
                 <div class="auth-demo" aria-hidden="true">
                     <div class="auth-demo__top"><span class="auth-demo__course">Statistics</span><span class="auth-demo__mode">Recall</span></div>
                     <div class="auth-demo__q">What's the difference between variance and standard deviation?</div>
@@ -212,7 +212,7 @@
                 <div class="onboarding__head">
                     <div>
                         <h3 class="onboarding__title">Getting started</h3>
-                        <p class="onboarding__intro">MindSync turns your course files into practice questions, and shows you what you really know. A few steps to get going:</p>
+                        <p class="onboarding__intro">MindSync is your exam coach: it learns what your course's exams keep asking, checks what you really know, and tells you what to practice. A few steps to get going:</p>
                     </div>
                     <button class="onboarding__hide" id="onboarding-hide" title="Hide this - you can bring it back from Settings">Hide</button>
                 </div>
@@ -267,9 +267,6 @@
                     </div>
                     <div class="home-focus-actions">
                         <button class="home-hero__link" data-go="nav-weekly">See my week</button>
-                        <button id="focus-btn" class="home-hero__link desktop-only">
-                            <span data-icon="checkCircle"></span> Start Focus Mode
-                        </button>
                     </div>
                 </div>
             </section>
@@ -1087,8 +1084,7 @@
                  crowded it took me a while to find where to log out"):
                  1 Account - who you are + Log out right there, password,
                    the email-confirm notice;  2 Appearance;  3 Connections
-                   (Google Calendar on the web, the AI key on desktop, Focus
-                   mode);  4 Help & feedback (guide, feedback, shortcuts);
+                   (Google Calendar on the web, the AI key on desktop);  4 Help & feedback (guide, feedback, shortcuts);
                  5 Delete data - reset + delete account, last, on their own.
                  Ids are unchanged; renderer.js finds everything by id. -->
             <h3 class="settings-group-title">Account</h3>
@@ -1255,32 +1251,6 @@
                         <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (needs billing)</option>
                     </select>
                 </div>
-            </div>
-
-            <div class="card settings-card desktop-only">
-                <h3 class="settings-title">Focus mode</h3>
-                <p class="settings-hint">
-                    While focus mode is on, the apps below are closed automatically so you can't get distracted.
-                </p>
-                <div class="blocker-actions">
-                    <button class="btn-primary" id="browse-app-btn">
-                        <span data-icon="folder" data-icon-size="16"></span> Browse for an app
-                    </button>
-                    <button class="btn-secondary" id="suggest-app-btn">
-                        <span data-icon="list" data-icon-size="16"></span> Pick from common apps
-                    </button>
-                </div>
-
-                <details class="blocker-manual">
-                    <summary>Or type the app's file name (e.g. discord.exe)</summary>
-                    <div class="input-with-action">
-                        <input type="text" id="blocked-app-input" placeholder="e.g. chrome.exe" class="input-field">
-                        <button class="btn-secondary" id="blocked-app-add-btn">Add</button>
-                    </div>
-                </details>
-
-                <div class="blocked-apps-label">Currently blocked</div>
-                <div id="blocked-apps-list" class="blocked-apps-list"></div>
             </div>
 
             <h3 class="settings-group-title">Help &amp; feedback</h3>

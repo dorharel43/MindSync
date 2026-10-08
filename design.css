@@ -364,14 +364,6 @@ a { color: var(--accent-text); }
     color: var(--status-danger);
 }
 
-/* Focus mode "on" */
-#focus-btn.is-focus-on {
-    background: var(--status-danger-bg);
-    color: var(--status-danger);
-    border-color: color-mix(in srgb, var(--status-danger) 40%, transparent);
-}
-#focus-btn.is-focus-on:hover { background: var(--status-danger); color: #fff; }
-
 .link-text { color: var(--accent-text); }
 
 /* ---------- Inputs ---------- */
@@ -1050,8 +1042,6 @@ kbd.kbd, .kbd {
     font-size: 11px;
     box-shadow: 0 1px 0 var(--border-strong);
 }
-.blocked-app { border-radius: var(--radius-md); padding-block: 2px 2px; padding-inline: 8px 4px; }
-.blocked-apps-label { font-size: 11px; letter-spacing: 0.04em; margin: 18px 0 8px; }
 .checkbox-field { padding: 8px 10px; background: transparent; border-color: var(--border-color); }
 
 /* ---------- Dialogs (the in-page ones in index.html) ---------- */
@@ -1271,7 +1261,7 @@ body.auth-pending #auth-screen { background: var(--bg-sidebar); }
 
 /* ---------- Desktop app vs web version ----------
    html.is-web is set by the web version (web/web-shim.js in the server repo).
-   Focus mode, the AI key and the log file only exist in the desktop app;
+   The AI key and the log file only exist in the desktop app;
    the feedback box only in the web version. */
 .is-web .desktop-only { display: none !important; }
 html:not(.is-web) .web-only { display: none !important; }
