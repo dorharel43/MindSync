@@ -5942,6 +5942,19 @@ async function renderExamMap() {
             ex.append(exLabel, exText);
             skillsLine.appendChild(ex);
         }
+        // Where: the past exams that ask it - the count can be checked, not taken on trust.
+        if (tp.exams && tp.exams.length) {
+            const where = document.createElement('div');
+            where.className = 'exam-map__where';
+            const whereLabel = document.createElement('span');
+            whereLabel.textContent = t('Asked in:') + ' ';
+            const whereList = document.createElement('span');
+            whereList.dir = 'auto';
+            whereList.setAttribute('translate', 'no');
+            whereList.textContent = tp.exams.map(n => String(n).replace(/\.[a-z0-9]{2,5}$/i, '')).join(' · ');
+            where.append(whereLabel, whereList);
+            skillsLine.appendChild(where);
+        }
         const counted = document.createElement('div');
         counted.textContent = tp.skills.length ? t('Counted: your questions on {s}.', { s: tp.skills.join(', ') }) : t('None of your questions matches this topic yet.');
         skillsLine.appendChild(counted);

@@ -67,7 +67,7 @@
         'Saving…': 'שומרים…', "Couldn't start the analysis. Try again.": 'לא הצלחנו להתחיל את הניתוח. כדאי לנסות שוב.', "The past exams weren't analyzed": 'המבחנים הקודמים לא נותחו',
         'There are no questions on this topic yet.': 'עוד אין שאלות על הנושא הזה.',
         'Worth most today: {t} - in {n} of {m} past exams, {a}% right in practice.': 'הכי משתלם היום: {t} - מופיע ב-{n} מתוך {m} מבחנים קודמים, {a}% נכונות בתרגול.',
-        'In the exams, for example:': 'במבחנים, למשל:',
+        'In the exams, for example:': 'במבחנים, למשל:', 'Asked in:': 'מופיע ב:',
         'Your newest questions are counted once the cloud AI matches them (a Gemini key in Settings).': 'השאלות החדשות ביותר ייספרו כשה-AI בענן יתאים אותן (מפתח Gemini בהגדרות).',
         'Worth most today: {t} - in {n} of {m} past exams, not practiced enough yet.': 'הכי משתלם היום: {t} - מופיע ב-{n} מתוך {m} מבחנים קודמים, ועוד לא תורגל מספיק.',
         'Practice this topic': 'לתרגל את הנושא', 'Practice it': 'לתרגל', 'It comes up in {n} of {m} past exams.': 'הנושא מופיע ב-{n} מתוך {m} מבחנים קודמים.',

@@ -1204,6 +1204,7 @@ body.auth-pending #auth-screen { background: var(--bg-sidebar); }
 .exam-map__skills { grid-column: 1 / -1; font-size: var(--text-sm); line-height: 1.5; color: var(--text-secondary); }
 .exam-map__example { margin-bottom: 4px; color: var(--text-primary); overflow-wrap: anywhere; }
 .exam-map__example > span:first-child { color: var(--text-secondary); }
+.exam-map__where { margin-bottom: 4px; overflow-wrap: anywhere; }
 .exam-map__skills[hidden] { display: none; }
 .exam-map__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 12px; }
 .exam-map__actions:has(> [hidden] + [hidden]) { display: none; }
