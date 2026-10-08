@@ -2974,11 +2974,12 @@ const MATH_AS_TEXT = 'Maths as readable text, not LaTeX: x^2, x_1, √, ∫, Σ,
 // Everything the app writes: LaTeX, drawn by the screens (math.js).
 const MATH_AS_LATEX = 'Maths in LaTeX: inline between single dollar signs ($\\frac{a}{b}$, $x^2$, $\\sum_{n=1}^{\\infty} a_n$, $\\lim_{x \\to 0}$), a long formula or a step of a computation on its own line between double dollar signs ($$...$$). Only the formula goes inside the dollar signs: words - and anything in Hebrew - stay outside them, never inside \\text{}. Never write $ for money (write ₪ or the word). Code on its own lines with its indentation - never LaTeX in code.';
 
-// names: the files in the order the AI gets them (the PDFs, then the texts) -
-// numbered, so it can say WHICH exams ask a topic and the code counts them.
-function buildExamBlueprintPrompt(course, texts, names = []) {
+// names: the files numbered - the attached PDFs first, then the texts below
+// (pdfCount says how many are PDFs, each line says which it is) - so the AI can
+// say WHICH exams ask a topic and the code counts them.
+function buildExamBlueprintPrompt(course, texts, names = [], pdfCount = 0) {
     return `You are given past exams of the university course "${course}"${texts ? ' (the PDFs and/or their text below)' : ''}. Describe how this course's exam is built, so a NEW exam in the same structure can be written.
-${names.length ? `\nThe files, numbered in the order they are given:\n${names.map((n, i) => `${i + 1}. ${n}`).join('\n')}\n` : ''}${texts ? `\n${texts}\n` : ''}
+${names.length ? `\nThe files, numbered:\n${names.map((n, i) => `${i + 1}. ${n} - ${i < pdfCount ? `the attached PDF number ${i + 1}` : `the text below under "=== ${n} ==="`}`).join('\n')}\n` : ''}${texts ? `\n${texts}\n` : ''}
 Return ONLY JSON:
 {
   "language": "he" or "en",
@@ -3311,7 +3312,7 @@ async function examBlueprint(course, past) {
     const opts = { forceJson: true, maxTokens: 24000, thinkingLevel: 'medium', timeoutMs: 240000, noFallback: true };
     let raw;
     try {
-        raw = buffers.length ? await aiProvider.generateFromPdf(buffers, buildExamBlueprintPrompt(course, texts, names), opts)
+        raw = buffers.length ? await aiProvider.generateFromPdf(buffers, buildExamBlueprintPrompt(course, texts, names, buffers.length), opts)
             : await aiProvider.generateText(buildExamBlueprintPrompt(course, texts, names), opts);
     } catch (err) {
         // A PDF the AI couldn't read: try their text.
@@ -3337,14 +3338,29 @@ async function examBlueprint(course, past) {
 function countRecurring(blueprint, names) {
     const list = Array.isArray(blueprint.recurring) ? blueprint.recurring : [];
     if (!names.length || !list.some(r => r && Array.isArray(r.exams))) return list;
-    const valid = (n) => Number.isInteger(Number(n)) && Number(n) >= 1 && Number(n) <= names.length;
-    const other = new Set((Array.isArray(blueprint.notThisCourse) ? blueprint.notThisCourse : []).filter(valid).map(Number));
+    // A file as the AI may name it: 3, "3", "File 3", or its name. Numbered
+    // from 0 (a 0 and never the last number): shifted by one.
+    const all = [...list.flatMap(r => (r && Array.isArray(r.exams) ? r.exams : [])), ...(Array.isArray(blueprint.notThisCourse) ? blueprint.notThisCourse : [])];
+    const asNum = (x) => {
+        if (typeof x === 'number') return x;
+        const s = String(x == null ? '' : x).trim();
+        const byName = names.indexOf(s);
+        if (byName >= 0) return byName + 1;
+        const m = s.match(/^\D{0,12}?(\d+)$/);
+        return m ? Number(m[1]) : NaN;
+    };
+    const nums = all.map(asNum);
+    const fromZero = nums.includes(0) && !nums.includes(names.length) && all.every(x => names.indexOf(String(x).trim()) < 0);
+    const fileOf = (x) => { const n = asNum(x) + (fromZero && names.indexOf(String(x).trim()) < 0 ? 1 : 0); return Number.isInteger(n) && n >= 1 && n <= names.length ? n : null; };
+    const other = new Set((Array.isArray(blueprint.notThisCourse) ? blueprint.notThisCourse : []).map(fileOf).filter(Boolean));
     // (all files marked "another course" would leave nothing - then none is)
     if (other.size >= names.length) other.clear();
     const of = names.length - other.size;
-    return list.filter(r => r && Array.isArray(r.exams)).map(r => {
-        const nums = [...new Set(r.exams.filter(valid).map(Number))].filter(n => !other.has(n)).sort((a, b) => a - b);
-        return { topic: r.topic, count: nums.length, of, example: r.example || '', exams: nums.map(n => names[n - 1]) };
+    return list.filter(Boolean).map(r => {
+        // (an item in the old shape, among new ones: kept as the AI counted it, capped)
+        if (!Array.isArray(r.exams)) return { ...r, of: Math.min(of, Number(r.of) || 0), count: Math.min(of, Number(r.count) || 0, Number(r.of) || 0) };
+        const files = [...new Set(r.exams.map(fileOf).filter(Boolean))].filter(n => !other.has(n)).sort((a, b) => a - b);
+        return { topic: r.topic, count: files.length, of, example: r.example || '', exams: files.map(n => names[n - 1]) };
     }).filter(r => r.count >= 2).sort((a, b) => b.count - a.count);
 }
 
