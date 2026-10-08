@@ -4352,17 +4352,17 @@ const ONBOARDING_STEPS = [
         id: 'exam',
         title: 'When is your exam?',
         text: 'Write it the way you\'d say it, e.g. "מבחן בסטטיסטיקה ב-14.2 ב-9". Everything you practice is timed for that date.',
-        isDone: (st) => st.upcomingExams > 0,
+        isDone: (st) => st.examsEver > 0,
         actions: [{ label: 'Add the exam', primary: true, run: () => goAndClick('nav-weekly', 'trigger-add-event') }]
     },
     {
         id: 'past',
         title: 'Upload past exams',
-        text: 'Past exams of the course (from the exam bank) - with 2 or more, you see which topics every exam asks, and how much of them you know.',
+        text: 'Past exams of the course (from the exam bank), with "מבחן" or "exam" in the file name - with 2 or more, you see which topics every exam asks, and how much of them you know.',
         isDone: (st) => st.pastExams > 0 || localStorage.getItem(onboardingKey('nopast')) === '1',
         actions: [
             { label: 'Upload past exams', primary: true, run: () => { document.getElementById('nav-materials').click(); setTimeout(() => openUploadPicker('files'), 60); } },
-            { label: 'I don\'t have any', run: () => { try { localStorage.setItem(onboardingKey('nopast'), '1'); } catch (e) { /* no storage */ } refreshOnboarding(); } }
+            { label: 'Skip for now', run: () => { try { localStorage.setItem(onboardingKey('nopast'), '1'); } catch (e) { /* no storage */ } refreshOnboarding(); } }
         ]
     },
     {
@@ -4705,6 +4705,7 @@ if (showOnboardingBtn) {
     showOnboardingBtn.onclick = async () => {
         localStorage.removeItem(onboardingKey('hidden'));
         localStorage.removeItem(onboardingKey('skipAi'));
+        localStorage.removeItem(onboardingKey('nopast'));
         await ipcRenderer.invoke('mark-guide-done', false).catch(() => {});
         document.getElementById('nav-home').click();
         await refreshOnboarding();
@@ -6808,7 +6809,7 @@ async function stopExam(ask = true) {
     if (box) box.hidden = true;
     return true;
 }
-const PAST_EXAM_FILE = /מבחן|בחינה|מועד|בוחן|\bexams?\b|midterm|quiz|final exam/i;
+const PAST_EXAM_FILE = /מבחן|בחינה|מועד|בוחן|(?:^|[^a-z])exams?(?![a-z])|(?:^|[^a-z])moed(?![a-z])|midterm|quiz|final exam/i;   // (8/10: also exam_2023, moed_a)
 
 function showExamPart(part) {
     ['exam-setup', 'exam-run', 'exam-checking', 'exam-result'].forEach(id => { document.getElementById(id).hidden = id !== part; });
