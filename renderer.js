@@ -188,11 +188,10 @@ function bootApp(user) {
     if (typeof loadAndRenderWeeklyBoard === 'function') loadAndRenderWeeklyBoard();
     if (typeof loadStudyHome === 'function') loadStudyHome();
     if (typeof loadAiSettings === 'function') loadAiSettings();
-    // Materials and the focus list used to load only once, at start-up -
+    // Materials used to load only once, at start-up -
     // before the login, so they stayed empty until a restart (30/9).
     if (typeof loadAndRenderFolders === 'function') loadAndRenderFolders();
     if (typeof loadAndRenderFiles === 'function') loadAndRenderFiles();
-    if (typeof loadAndRenderBlockedApps === 'function' && !IS_WEB) loadAndRenderBlockedApps();
     if (IS_WEB) refreshGoogleState();
 }
 
@@ -571,51 +570,6 @@ if (!localStorage.getItem('mindsync.themeV2')) {
 }
 applyTheme(localStorage.getItem(THEME_KEY) || 'blue');
 setAppearance(currentAppearance());
-
-// ==========================================
-// 3. Focus Mode
-// ==========================================
-const focusBtn = document.getElementById('focus-btn');
-let isFocusMode = false;
-
-// Focus mode CLOSES apps (Discord, Steam...) - testers pressed it without
-// knowing that, and a program vanishing unasked breaks trust in everything
-// else. Starting it now asks first and names exactly which apps will close.
-function setFocusButtonState(on) {
-    focusBtn.classList.toggle('is-focus-on', on);
-    focusBtn.innerHTML = icon('shield') + (on ? ' Stop focus mode' : ' Start focus mode');
-    focusBtn.title = on ? 'Focus mode is on - listed apps are being closed' : 'Closes distracting apps while you study';
-}
-
-if (focusBtn) {
-    focusBtn.title = 'Closes distracting apps while you study';
-    focusBtn.addEventListener('click', async () => {
-        if (isFocusMode) {
-            isFocusMode = false;
-            ipcRenderer.send('toggle-blocking', false);
-            setFocusButtonState(false);
-            toast.info('Focus mode is off.');
-            return;
-        }
-
-        const apps = (await ipcRenderer.invoke('get-blocked-apps').catch(() => [])) || [];
-        if (!apps.length) {
-            toast.info('No apps are on the focus list yet. Add some in Settings → Focus mode.');
-            return;
-        }
-        const names = apps.map(a => String(a).replace(/\.exe$/i, '')).join(', ');
-        const ok = await confirmDialog(
-            'Start focus mode?',
-            `While it's on, these apps will be closed if you open them: ${names}.\n\nSave anything open in them first. You can change the list in Settings.`,
-            { confirmText: 'Start focus mode' }
-        );
-        if (!ok) return;
-
-        isFocusMode = true;
-        ipcRenderer.send('toggle-blocking', true);
-        setFocusButtonState(true);
-    });
-}
 
 // ==========================================
 // 4. AI Materials
@@ -3525,64 +3479,6 @@ if (cancelFolderBtnFinal) {
 loadAndRenderFolders();
 loadAndRenderFiles();
 
-// ==========================================
-// 8. Settings - App Blocker
-// ==========================================
-window.addNewAppBlocker = async function() {
-    const input = document.getElementById('blocked-app-input');
-    if (!input) return;
-    
-    let val = input.value.trim();
-    if (!val) {
-        toast.error("You didn't type anything! Please enter an app name (e.g., chrome.exe)");
-        return;
-    }
-    
-    if (!val.toLowerCase().endsWith('.exe')) {
-        val += '.exe';
-    }
-    
-    await ipcRenderer.invoke('add-blocked-app', val);
-    input.value = ''; 
-    await loadAndRenderBlockedApps();
-};
-
-async function loadAndRenderBlockedApps() {
-    const list = document.getElementById('blocked-apps-list');
-    if (!list) return;
-    
-    const apps = await ipcRenderer.invoke('get-blocked-apps');
-    list.innerHTML = '';
-    
-    if (!apps || apps.length === 0) {
-        list.innerHTML = '<div class="blocked-empty">Nothing is being blocked yet.</div>';
-        return;
-    }
-
-    apps.forEach(appName => {
-        // Rendered as a chip rather than a full-width row: the list is short
-        // strings, so rows left a huge gap between the name and its button,
-        // which is why the Remove control looked detached.
-        const item = document.createElement('div');
-        item.className = 'blocked-app';
-        item.innerHTML = `
-            <span class="blocked-app__name" dir="ltr"></span>
-            <button class="blocked-app__remove" aria-label="Stop blocking ${escapeHtml(appName)}" title="Remove">${icon('close', { size: 14 })}</button>
-        `;
-        item.querySelector('.blocked-app__name').textContent = appName;
-
-        item.querySelector('.blocked-app__remove').onclick = async () => {
-            await ipcRenderer.invoke('remove-blocked-app', appName);
-            await loadAndRenderBlockedApps();
-            toast.info(`${appName} removed from the block list.`);
-        };
-
-        list.appendChild(item);
-    });
-}
-
-loadAndRenderBlockedApps();
-
 // No inline onclick="" in index.html (30/9): the web version's security
 // policy (CSP) blocks inline script, so these are wired here.
 document.querySelectorAll('[data-go]').forEach((el) => {
@@ -3608,10 +3504,6 @@ document.querySelectorAll('ul.screen-help').forEach((list) => {
         try { localStorage.setItem(key, box.open ? 'open' : 'closed'); } catch (e) { /* ignore */ }
     });
 });
-const blockedAppInput = document.getElementById('blocked-app-input');
-if (blockedAppInput) blockedAppInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') window.addNewAppBlocker(); });
-const blockedAppAddBtn = document.getElementById('blocked-app-add-btn');
-if (blockedAppAddBtn) blockedAppAddBtn.addEventListener('click', () => window.addNewAppBlocker());
 
 // ==========================================
 // 9. Modals closing
@@ -4453,10 +4345,30 @@ const ONBOARDING_STEPS = [
             };
         }
     },
+    // The exam coach's order (8/10): the exam first (what we prepare for), its
+    // past exams (what it asks - the base of the exam map), then the material
+    // - this week's lecture, or the whole course at once.
+    {
+        id: 'exam',
+        title: 'When is your exam?',
+        text: 'Write it the way you\'d say it, e.g. "מבחן בסטטיסטיקה ב-14.2 ב-9". Everything you practice is timed for that date.',
+        isDone: (st) => st.upcomingExams > 0,
+        actions: [{ label: 'Add the exam', primary: true, run: () => goAndClick('nav-weekly', 'trigger-add-event') }]
+    },
+    {
+        id: 'past',
+        title: 'Upload past exams',
+        text: 'Past exams of the course (from the exam bank) - with 2 or more, you see which topics every exam asks, and how much of them you know.',
+        isDone: (st) => st.pastExams > 0 || localStorage.getItem(onboardingKey('nopast')) === '1',
+        actions: [
+            { label: 'Upload past exams', primary: true, run: () => { document.getElementById('nav-materials').click(); setTimeout(() => openUploadPicker('files'), 60); } },
+            { label: 'I don\'t have any', run: () => { try { localStorage.setItem(onboardingKey('nopast'), '1'); } catch (e) { /* no storage */ } refreshOnboarding(); } }
+        ]
+    },
     {
         id: 'upload',
         title: 'Add your course files',
-        text: 'Lecture notes, summaries or exercises for one course - a single file or a whole folder.',
+        text: 'This week\'s lecture - and the next one each week - or the whole course at once. A single file or a whole folder.',
         isDone: (st) => st.files > 0,
         actions: [
             { label: 'Upload files', primary: true, run: () => { document.getElementById('nav-materials').click(); setTimeout(() => openUploadPicker('files'), 60); } },
@@ -4476,13 +4388,6 @@ const ONBOARDING_STEPS = [
         text: 'Before each answer you say how sure you are. That\'s how MindSync learns what you really know - and what you only think you know.',
         isDone: (st) => st.reviews > 0,
         actions: [{ label: 'Start practicing', primary: true, run: () => goAndClick('nav-study', 'start-study-btn') }]
-    },
-    {
-        id: 'week',
-        title: 'Add your classes and exams',
-        text: 'Just write it the way you\'d say it, e.g. "מבחן בסטטיסטיקה ביום חמישי ב-9".',
-        isDone: (st) => st.calendarItems > 0,
-        actions: [{ label: 'Add to calendar', primary: true, run: () => goAndClick('nav-weekly', 'trigger-add-event') }]
     }
 ];
 // Web: no key to paste - the AI step is not part of the guide at all.
@@ -5376,101 +5281,6 @@ document.addEventListener('keydown', (e) => {
         renderTasksList();
     }
 });
-
-// ---- Focus Mode: adding apps without typing filenames ----
-const browseAppBtn = document.getElementById('browse-app-btn');
-const suggestAppBtn = document.getElementById('suggest-app-btn');
-
-async function addBlockedApp(name) {
-    const current = (await ipcRenderer.invoke('get-blocked-apps')) || [];
-    if (current.some(a => a.toLowerCase() === name.toLowerCase())) {
-        toast.info(`${name} is already on the list.`);
-        return false;
-    }
-    const res = await ipcRenderer.invoke('add-blocked-app', name);
-    if (res && res.error) { toast.error(res.error, 'Could not add app'); return false; }
-    await loadAndRenderBlockedApps();
-    toast.success(`${name} will be blocked during Focus Mode.`);
-    return true;
-}
-
-if (browseAppBtn) {
-    browseAppBtn.onclick = async () => {
-        const picked = await ipcRenderer.invoke('pick-application');
-        if (!picked) return; // user cancelled the dialog
-        await addBlockedApp(picked.name);
-    };
-}
-
-if (suggestAppBtn) {
-    suggestAppBtn.onclick = async () => {
-        const suggestions = (await ipcRenderer.invoke('get-suggested-apps')) || [];
-        const blocked = (await ipcRenderer.invoke('get-blocked-apps')) || [];
-        const available = suggestions.filter(
-            sug => !blocked.some(b => b.toLowerCase() === sug.value.toLowerCase())
-        );
-
-        if (available.length === 0) {
-            toast.info('All the common apps are already on your list.');
-            return;
-        }
-
-        const chosen = await pickMultiple('Block common apps', available);
-        if (!chosen || chosen.length === 0) return;
-
-        let added = 0;
-        for (const value of chosen) {
-            const ok = await addBlockedApp(value);
-            if (ok) added++;
-        }
-        if (added > 1) toast.success(`Added ${added} apps to the block list.`);
-    };
-}
-
-// Multi-select modal - lets you tick several presets and add them in one go,
-// instead of reopening the picker for each one.
-function pickMultiple(title, options) {
-    return new Promise((resolve) => {
-        const backdrop = document.createElement('div');
-        backdrop.className = 'ms-modal-backdrop';
-        backdrop.innerHTML = `
-            <div class="ms-modal">
-                <div class="ms-modal__header"><h3 class="ms-modal__title">${escapeHtml(title)}</h3></div>
-                <div class="ms-modal__body ms-modal__body--structured">
-                    <div class="option-list">
-                        ${options.map(o => `
-                            <label class="checkbox-field checkbox-field--compact">
-                                <input type="checkbox" value="${escapeHtml(o.value)}">
-                                <span class="checkbox-field__text">
-                                    <span class="checkbox-field__label">${escapeHtml(o.label)}</span>
-                                    <span class="checkbox-field__hint">${escapeHtml(o.value)}</span>
-                                </span>
-                            </label>`).join('')}
-                    </div>
-                </div>
-                <div class="ms-modal__footer">
-                    <button class="btn-secondary" data-action="cancel">Cancel</button>
-                    <button class="btn-primary" data-action="add">Add selected</button>
-                </div>
-            </div>`;
-
-        function close(v) {
-            document.removeEventListener('keydown', onKey);
-            backdrop.remove();
-            resolve(v);
-        }
-        function onKey(e) { if (e.key === 'Escape') close(null); }
-
-        backdrop.querySelector('[data-action="add"]').onclick = () => {
-            const values = [...backdrop.querySelectorAll('input:checked')].map(i => i.value);
-            close(values);
-        };
-        backdrop.querySelector('[data-action="cancel"]').onclick = () => close(null);
-        backdrop.onclick = (e) => { if (e.target === backdrop) close(null); };
-        document.addEventListener('keydown', onKey);
-        document.body.appendChild(backdrop);
-    });
-}
 
 // ==========================================
 // 15. Study - spaced repetition with confidence calibration

@@ -177,11 +177,6 @@ module.exports = {
 
   // ---- Stats: removed with /api/stats (XP/levels/streak dropped server-side) ----
 
-  // ---- Settings / blocked apps ----
-  getBlockedApps: () => request('GET', '/settings/blocked-apps'),
-  addBlockedApp: (appName) => request('POST', '/settings/blocked-apps', { appName }),
-  removeBlockedApp: (appName) =>
-    request('DELETE', `/settings/blocked-apps/${encodeURIComponent(appName)}`),
 
   // ---- Study (spaced repetition) ----
   getDueStudyItems: async (opts = {}) => {

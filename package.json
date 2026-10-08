@@ -1,7 +1,7 @@
 {
   "name": "mindsync",
   "version": "1.0.0",
-  "description": "MindSync AI - Smart Learning Assistant",
+  "description": "MindSync - an exam coach for university students",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
