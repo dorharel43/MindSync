@@ -2974,9 +2974,12 @@ const MATH_AS_TEXT = 'Maths as readable text, not LaTeX: x^2, x_1, √, ∫, Σ,
 // Everything the app writes: LaTeX, drawn by the screens (math.js).
 const MATH_AS_LATEX = 'Maths in LaTeX: inline between single dollar signs ($\\frac{a}{b}$, $x^2$, $\\sum_{n=1}^{\\infty} a_n$, $\\lim_{x \\to 0}$), a long formula or a step of a computation on its own line between double dollar signs ($$...$$). Only the formula goes inside the dollar signs: words - and anything in Hebrew - stay outside them, never inside \\text{}. Never write $ for money (write ₪ or the word). Code on its own lines with its indentation - never LaTeX in code.';
 
-function buildExamBlueprintPrompt(course, texts) {
+// names: the files numbered - the attached PDFs first, then the texts below
+// (pdfCount says how many are PDFs, each line says which it is) - so the AI can
+// say WHICH exams ask a topic and the code counts them.
+function buildExamBlueprintPrompt(course, texts, names = [], pdfCount = 0) {
     return `You are given past exams of the university course "${course}"${texts ? ' (the PDFs and/or their text below)' : ''}. Describe how this course's exam is built, so a NEW exam in the same structure can be written.
-${texts ? `\n${texts}\n` : ''}
+${names.length ? `\nThe files, numbered:\n${names.map((n, i) => `${i + 1}. ${n} - ${i < pdfCount ? `the attached PDF number ${i + 1}` : `the text below under "=== ${n} ==="`}`).join('\n')}\n` : ''}${texts ? `\n${texts}\n` : ''}
 Return ONLY JSON:
 {
   "language": "he" or "en",
@@ -2993,7 +2996,8 @@ Return ONLY JSON:
      "parts": [{"label": "א", "type": "mc|tf|open|code", "points": 6.25, "topic": "...", "reasonRequired": true}],
      "style": "one sentence on what these questions look like"}
   ],
-  "recurring": [{"topic": "a kind of question, a theorem, a type of computation", "count": in how many of the exams, "of": how many exams there are, "example": "a short example"}],
+  "recurring": [{"topic": "a kind of question, a theorem, a type of computation", "exams": [the numbers of the files that ask it], "example": "a short example"}],
+  "notThisCourse": [the numbers of files that aren't an exam of this course, if any],
   "pool": [{"topic": "...", "type": "mc|tf|open|code", "text": "a past question or part, transcribed"}]
 }
 
@@ -3006,7 +3010,8 @@ Rules:
 - "bonus": true ONLY on a question the exam itself calls a bonus (בונוס / bonus); copy those words into "bonusQuote". Its points are on top of "totalPoints". No such words = no bonus.
 - "maxGrade": only when the exam says the grade is capped below the points (e.g. "the questions add up to 108 points, the top grade is 100" = 100); copy the words into "maxGradeQuote". Otherwise null.
 - "dontKnowShare": only when the exam says that answering "I don't know" (לא יודע/ת) gets part of the points - as a fraction (25% = 0.25); copy the words into "dontKnowQuote". Otherwise null.
-- "recurring": only what appears in 2 or more of the exams, most frequent first, up to 12. One exam = [].
+- "recurring": up to 12 topics that 2 or more of the exams ask. Go through the files one by one and list in "exams" EVERY file that asks the topic directly in a question or part - don't count, list. Include the routine kinds too (computing a derivative, an integral, a limit) - the points a student can count on are often there. An exam and its solution in one file is one exam.
+- "notThisCourse": only a file that clearly is another course's exam (another syllabus); otherwise [].
 - "pool": up to 25 past questions or parts, spread over the topics and kinds. ${MATH_AS_LATEX}
 - Don't invent: what the exams don't show is null or ''.`;
 }
@@ -3078,6 +3083,29 @@ ${EXAM_PART_RULES}
 
 Return ONLY JSON:
 {"title": "a short title naming the topic", "durationMin": number, "questions": [{"n": 1, "title": "...", "points": 20, "stem": "", "choosePartsCount": 0, "bonus": false, "parts": [{"label": "א", "type": "open|code|tf|mc", "text": "...", "options": [], "correct": "", "reasonRequired": false, "points": number, "answer": "...", "rubric": [{"criterion": "...", "points": number}], "topic": "...", "handwritten": false}]}]}`;
+}
+
+// "What repeats in the exam" (3/10): which of the student's practice skills
+// each repeating topic of the past exams covers. Names only - light.
+function buildExamLinkPrompt(course, topics, skills) {
+    return `The university course "${course}". Its past exams keep asking these TOPICS:
+${topics.map((tp, i) => `${i + 1}. ${tp}`).join('\n')}
+
+The student's practice questions are tagged with these SKILLS:
+${skills.map(sk => `- ${sk}`).join('\n')}
+
+For each topic, list the skills whose questions practise it - what a student must know to answer that topic in the exam. A skill may serve more than one topic; a topic may have none. Copy topic and skill names EXACTLY as written above.
+
+Return ONLY JSON: {"links": [{"topic": "...", "skills": ["...", "..."]}]}`;
+}
+
+async function linkExamTopics(course, topics, skills) {
+    const raw = await aiProvider.generateText(buildExamLinkPrompt(course, topics, skills), {
+        forceJson: true, maxTokens: 8000, thinkingLevel: 'low', timeoutMs: 60000, noFallback: true, allowance: 'light'
+    });
+    const links = JSON.parse(extractJsonFromText(String(raw))).links;
+    if (!Array.isArray(links)) throw new Error('The AI didn\'t return the topics. Try again.');
+    return links;
 }
 
 // An answer key for a question that already exists (a real past exam's) -
@@ -3279,22 +3307,61 @@ async function examBlueprint(course, past) {
         if (f.buffer && bytes + f.buffer.length <= 18 * 1024 * 1024) { buffers.push(f.buffer); bytes += f.buffer.length; } else if (String(f.text || '').trim()) asText.push(`=== ${f.name} ===\n${String(f.text).slice(0, 25000)}`);
     }
     const texts = asText.join('\n\n');
+    // (the order the AI gets them in: the PDFs, then the texts)
+    let names = [...past.filter(f => buffers.includes(f.buffer)).map(f => f.name), ...past.filter(f => !buffers.includes(f.buffer) && String(f.text || '').trim()).map(f => f.name)];
     const opts = { forceJson: true, maxTokens: 24000, thinkingLevel: 'medium', timeoutMs: 240000, noFallback: true };
     let raw;
     try {
-        raw = buffers.length ? await aiProvider.generateFromPdf(buffers, buildExamBlueprintPrompt(course, texts), opts)
-            : await aiProvider.generateText(buildExamBlueprintPrompt(course, texts), opts);
+        raw = buffers.length ? await aiProvider.generateFromPdf(buffers, buildExamBlueprintPrompt(course, texts, names, buffers.length), opts)
+            : await aiProvider.generateText(buildExamBlueprintPrompt(course, texts, names), opts);
     } catch (err) {
         // A PDF the AI couldn't read: try their text.
         if (!buffers.length) throw err;
-        const fallback = past.filter(f => String(f.text || '').trim()).map(f => `=== ${f.name} ===\n${String(f.text).slice(0, 25000)}`).join('\n\n');
+        const withText = past.filter(f => String(f.text || '').trim());
+        const fallback = withText.map(f => `=== ${f.name} ===\n${String(f.text).slice(0, 25000)}`).join('\n\n');
         if (!fallback) throw err;
-        raw = await aiProvider.generateText(buildExamBlueprintPrompt(course, fallback), opts);
+        names = withText.map(f => f.name);
+        raw = await aiProvider.generateText(buildExamBlueprintPrompt(course, fallback, names), opts);
     }
     let blueprint;
     try { blueprint = JSON.parse(extractJsonFromText(String(raw))); } catch (e) { blueprint = null; }
     if (blueprint && (!Array.isArray(blueprint.questions) || !blueprint.questions.length)) blueprint = { ...blueprint, questions: null };
+    if (blueprint) blueprint = { ...blueprint, recurring: countRecurring(blueprint, names) };
     return blueprint ? verifyBlueprintRules(blueprint, past) : blueprint;
+}
+
+// What repeats, counted here (7/10): the AI says which files ask a topic,
+// never how many - its own counts were off in real runs ("5 of 6" for a
+// derivative that every one of 8 exams asks). count = those files, of = the
+// files minus any the AI marks as another course's; "exams" keeps their names,
+// so the screen can show where. An answer in the old shape (no "exams") is kept as is.
+function countRecurring(blueprint, names) {
+    const list = Array.isArray(blueprint.recurring) ? blueprint.recurring : [];
+    if (!names.length || !list.some(r => r && Array.isArray(r.exams))) return list;
+    // A file as the AI may name it: 3, "3", "File 3", or its name. Numbered
+    // from 0 (a 0 and never the last number): shifted by one.
+    const all = [...list.flatMap(r => (r && Array.isArray(r.exams) ? r.exams : [])), ...(Array.isArray(blueprint.notThisCourse) ? blueprint.notThisCourse : [])];
+    const asNum = (x) => {
+        if (typeof x === 'number') return x;
+        const s = String(x == null ? '' : x).trim();
+        const byName = names.indexOf(s);
+        if (byName >= 0) return byName + 1;
+        const m = s.match(/^\D{0,12}?(\d+)$/);
+        return m ? Number(m[1]) : NaN;
+    };
+    const nums = all.map(asNum);
+    const fromZero = nums.includes(0) && !nums.includes(names.length) && all.every(x => names.indexOf(String(x).trim()) < 0);
+    const fileOf = (x) => { const n = asNum(x) + (fromZero && names.indexOf(String(x).trim()) < 0 ? 1 : 0); return Number.isInteger(n) && n >= 1 && n <= names.length ? n : null; };
+    const other = new Set((Array.isArray(blueprint.notThisCourse) ? blueprint.notThisCourse : []).map(fileOf).filter(Boolean));
+    // (all files marked "another course" would leave nothing - then none is)
+    if (other.size >= names.length) other.clear();
+    const of = names.length - other.size;
+    return list.filter(Boolean).map(r => {
+        // (an item in the old shape, among new ones: kept as the AI counted it, capped)
+        if (!Array.isArray(r.exams)) return { ...r, of: Math.min(of, Number(r.of) || 0), count: Math.min(of, Number(r.count) || 0, Number(r.of) || 0) };
+        const files = [...new Set(r.exams.map(fileOf).filter(Boolean))].filter(n => !other.has(n)).sort((a, b) => a - b);
+        return { topic: r.topic, count: files.length, of, example: r.example || '', exams: files.map(n => names[n - 1]) };
+    }).filter(r => r.count >= 2).sort((a, b) => b.count - a.count);
 }
 
 // A bonus question, a grade capped below the points and "I don't know" for
@@ -3537,6 +3604,11 @@ async function buildFullExam({ course, pastIds, durationMin }, stage) {
             pastFiles.push({ name: f.name, buffer, text: f.content || '' });
         }
         blueprint = await examBlueprint(course, pastFiles);
+        // What repeats goes to the course's exam profile too (3/10) - no extra call.
+        if (blueprint && Array.isArray(blueprint.recurring) && blueprint.recurring.length) {
+            await api.saveExamProfile({ course, recurring: blueprint.recurring, pastExams: past.map(f => f.name) })
+                .catch(err => console.warn('exam profile not saved:', err.message));
+        }
     }
 
     // 2. The exam itself, with answers and marking schemes.
@@ -3607,6 +3679,63 @@ async function buildDailyQuestion(stage) {
     return { examId: String(saved.id || saved._id), course };
 }
 
+// "What repeats in the exam" (3/10): the course's past exams analysed (the
+// same call a full exam starts with), then linked to the practice skills.
+// One link at a time per user and course: a second tab (or click) waits for
+// the same call instead of paying for its own.
+const EXAM_LINKS = new Map();   // owner + course -> promise
+function linkExamMap(course) {
+    const key = `${fullExamJobOwner()}\n${course}`;
+    if (EXAM_LINKS.has(key)) return EXAM_LINKS.get(key);
+    const run = (async () => {
+        const map = await api.getExamMap(course);
+        if (!map.needsLink || !map.profile || !map.skills.length) return map;
+        const topics = map.profile.recurring.map(r => r.topic);
+        const links = await linkExamTopics(course, topics, map.skills);
+        // (409: a new analysis came in meanwhile - its topics are linked next time)
+        await api.saveExamLinks({ course, topics, links, skills: map.skills }).catch(err => { if (err.status !== 409) throw err; });
+        return api.getExamMap(course);
+    })().finally(() => EXAM_LINKS.delete(key));
+    EXAM_LINKS.set(key, run);
+    return run;
+}
+
+// The past exams one analysis reads: the course's, the newest year in the
+// name first (a name with no year last - not first, as a plain name sort
+// put "other-sample" before 2025), up to 8. The screen compares these names
+// with the ones the saved analysis read.
+const EXAM_MAP_FILES = 8;
+const yearOf = (name) => Math.max(0, ...(String(name).match(/(?:19|20)\d\d/g) || []).map(Number));
+const examMapFiles = (files, course) => (Array.isArray(files) ? files : [])
+    .filter(f => (f.folder || '') === course && PAST_EXAM_FILE.test(f.name || ''))
+    .sort((a, b) => yearOf(b.name) - yearOf(a.name) || String(b.name).localeCompare(String(a.name)))
+    .slice(0, EXAM_MAP_FILES);
+
+async function analyzeExamMap(course, stage) {
+    stage('reading');
+    const past = examMapFiles(await api.getFiles(), course);
+    if (past.length < 2) throw new Error('Upload at least 2 past exams of this course (a file name with "מבחן" or "exam") to see what repeats.');
+    stage('blueprint');
+    const pastFiles = [];
+    for (const f of past) {
+        const buffer = isPdfFile(f) ? await readOriginalFile(f.sourcePath).catch(() => null) : null;
+        pastFiles.push({ name: f.name, buffer, text: f.content || '' });
+    }
+    const blueprint = await examBlueprint(course, pastFiles);
+    const recurring = blueprint && Array.isArray(blueprint.recurring) ? blueprint.recurring : [];
+    if (!recurring.length) throw new Error('No topic repeats in these past exams - nothing to map yet.');
+    stage('saving');
+    // (replace: this is the analysis itself - a full exam's partial one never replaces it)
+    const saved = await api.saveExamProfile({ course, recurring, pastExams: past.map(f => f.name), replace: true });
+    if (!saved || saved.success === false) throw new Error('No topic repeats in these past exams - nothing to map yet.');
+    stage('linking');
+    // (the analysis is saved; a link that fails now is tried again from the screen)
+    try { return await linkExamMap(course); } catch (err) {
+        console.warn('exam map: linking failed, it will be tried again:', err.message);
+        return api.getExamMap(course);
+    }
+}
+
 // The check that didn't run (or missed parts) when the exam was written, run
 // on the saved exam: only the parts still unchecked change.
 async function recheckFullExam(examId, stage) {
@@ -3643,6 +3772,39 @@ ipcMain.handle('daily-question', async () => {
     // cloud: it can be written (and graded) here - the local model can't
     try { return { ...(await api.getDailyQuestion()), cloud: aiProvider.resolveProvider() === 'gemini' }; } catch (err) { return { error: err.message }; }
 });
+// "What repeats in the exam" (3/10). pastExams: the course's files that are
+// past exams (the analysis needs 2). cloud: the AI parts can run here.
+ipcMain.handle('exam-map', async (event, course) => {
+    try {
+        const c = String(course || '').trim();
+        if (!c) return { error: 'Choose a course first.' };
+        const [map, files] = await Promise.all([api.getExamMap(c), api.getFilesLight().catch(() => [])]);
+        const pastExams = (Array.isArray(files) ? files : []).filter(f => (f.folder || '') === c && PAST_EXAM_FILE.test(f.name || '')).length;
+        // An analysis now would read other files than the saved one did (new,
+        // deleted or swapped past exams, or a full exam's own choice of files).
+        // (as sets - the same exam uploaded twice is one name)
+        const now = new Set(examMapFiles(files, c).map(f => f.name));
+        const read = new Set((map.profile && map.profile.pastExams) || []);
+        const changed = !!map.profile && now.size >= 2 && (now.size !== read.size || [...now].some(n => !read.has(n)));
+        return { ...map, pastExams, changed, cloud: aiProvider.resolveProvider() === 'gemini' };
+    } catch (err) { return { error: err.message }; }
+});
+// Links new skills to the topics (one light call) - only when the server says it's due.
+ipcMain.handle('exam-map-link', async (event, course) => {
+    try {
+        if (aiProvider.resolveProvider() !== 'gemini') return { error: 'This needs the cloud AI (a Gemini key in Settings).' };
+        return await linkExamMap(String(course || '').trim());
+    } catch (err) { return { error: err.message }; }
+});
+ipcMain.handle('exam-map-analyze', async (event, course) => {
+    try {
+        const c = String(course || '').trim();
+        if (!c) return { error: 'Choose a course first.' };
+        if (aiProvider.resolveProvider() !== 'gemini') return { error: 'This needs the cloud AI (a Gemini key in Settings).' };
+        return { jobId: startFullExamJob((stage) => analyzeExamMap(c, stage)) };
+    } catch (err) { return { error: err.message }; }
+});
+
 const DAILY_JOBS = new Map();   // owner -> job id
 ipcMain.handle('daily-question-build', async () => {
     try {
@@ -3788,7 +3950,7 @@ async function solveExamParts(course, question) {
 
 // The stages above, for the owner's exam check on the server (exported by
 // tools/port-main.py; unused in the desktop app).
-const EXAM_STAGES = { examBlueprint, verifyBlueprintRules, writeExam, writeDailyQuestion, checkExam, replaceBrokenParts, autoMarkPart, reasonedChoicePoints, gradeExamQuestion, marksFromAi, pointsFromAi, solveExamParts, normaliseExam, answerIsBlank, cleanExamText, cleanMathNotation, cutText, extractJsonFromText, FORMULA_STATS };
+const EXAM_STAGES = { examBlueprint, countRecurring, verifyBlueprintRules, writeExam, writeDailyQuestion, linkExamTopics, checkExam, replaceBrokenParts, autoMarkPart, reasonedChoicePoints, gradeExamQuestion, marksFromAi, pointsFromAi, solveExamParts, normaliseExam, answerIsBlank, cleanExamText, cleanMathNotation, cutText, extractJsonFromText, FORMULA_STATS };
 
 // Graded sittings whose save failed: a retry only saves again, it doesn't
 // pay for the AI grading twice.
@@ -4978,7 +5140,7 @@ ipcMain.handle('get-onboarding-status', async () => {
     // Home's "upcoming exam" (readiness per course, 3/10): the same stats, no extra call
     subjects: stats && Array.isArray(stats.subjects) ? stats.subjects.map(s => ({
       category: s.category, items: s.items, due: s.due, exam: s.exam || null,
-      readiness: s.readiness || null, lastMock: s.lastMock || null, lastFull: s.lastFull || null
+      readiness: s.readiness || null, lastMock: s.lastMock || null, lastFull: s.lastFull || null, topTopic: s.topTopic || null
     })) : []
   };
 });

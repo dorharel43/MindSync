@@ -1175,6 +1175,42 @@ body.auth-pending #auth-screen { background: var(--bg-sidebar); }
 .syllabus-modal .settings-hint { margin-top: 4px; font-size: var(--text-xs); color: var(--text-tertiary); }
 .syllabus-modal #syllabus-google-row[hidden] { display: none; }
 
+/* ---------- Study: what repeats in the exam (3/10) ---------- */
+.exam-map { margin-bottom: 16px; }
+.exam-map[hidden] { display: none; }
+.exam-map__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.exam-map__label { font-size: var(--text-sm); color: var(--text-secondary); }
+.exam-map__course { font-size: var(--text-base); font-weight: 650; color: var(--text-primary); margin-top: 2px; }
+.exam-map__pick { width: auto; max-width: 50%; }
+.exam-map__pick[hidden] { display: none; }
+.exam-map__text { margin: 8px 0 0; font-size: var(--text-sm); line-height: 1.5; color: var(--text-secondary); max-width: 64ch; }
+.exam-map__text:empty { display: none; }
+.exam-map__list { list-style: none; margin: 12px 0 0; padding: 0; }
+.exam-map__list:empty { display: none; }
+.exam-map__row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border-color); }
+.exam-map__topic { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; text-align: start; color: var(--text-primary); min-width: 0; }
+.exam-map__name { font-weight: 600; overflow-wrap: anywhere; }
+.exam-map__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 4px; font-size: var(--text-sm); color: var(--text-secondary); }
+.exam-map__freq { display: inline-flex; align-items: center; gap: 6px; }
+.exam-map__freqbar { width: 56px; height: 6px; border-radius: 999px; background: var(--border-color); overflow: hidden; display: inline-block; }
+.exam-map__freqbar span { display: block; height: 100%; background: var(--accent-purple); }
+.exam-map__know--low { color: var(--status-danger); font-weight: 600; }
+.exam-map__know--mid { color: var(--status-warning); font-weight: 600; }
+.exam-map__know--high { color: var(--status-success); font-weight: 600; }
+.exam-map__topic { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 6px; }
+.exam-map__topic > .exam-map__name, .exam-map__topic > .exam-map__meta { grid-column: 1; }
+.exam-map__chev { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-size: var(--text-sm); color: var(--text-secondary); transition: transform 0.15s; }
+.exam-map__topic[aria-expanded="true"] .exam-map__chev { transform: rotate(180deg); }
+.exam-map__skills { grid-column: 1 / -1; font-size: var(--text-sm); line-height: 1.5; color: var(--text-secondary); }
+.exam-map__example { margin-bottom: 4px; color: var(--text-primary); overflow-wrap: anywhere; }
+.exam-map__example > span:first-child { color: var(--text-secondary); }
+.exam-map__where { margin-bottom: 4px; overflow-wrap: anywhere; }
+.exam-map__skills[hidden] { display: none; }
+.exam-map__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 12px; }
+.exam-map__actions:has(> [hidden] + [hidden]) { display: none; }
+.home-ready__topic { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-top: 10px; font-size: var(--text-sm); color: var(--hero-ink); max-width: 46ch; }
+.home-ready__topic[hidden] { display: none; }
+
 /* ---------- Study: the daily exam question (3/10) ---------- */
 .daily-q { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .daily-q[hidden] { display: none; }
