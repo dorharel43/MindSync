@@ -610,6 +610,7 @@
         'Write the course name.': 'צריך לכתוב את שם הקורס.', 'Could not save the course: {e}': 'לא הצלחנו לשמור את הקורס: {e}',
         'You already have a course with this name.': 'כבר יש לך קורס בשם הזה.',
         'That already exists.': 'זה כבר קיים.',
+        'This name is taken by the app - choose another.': 'השם הזה שמור לאפליקציה - צריך לבחור שם אחר.',
         'Course name is too long (max 100 characters)': 'שם הקורס ארוך מדי (עד 100 תווים)',
         'There is already exam data under this name (from a course you deleted). Choose another name.': 'כבר יש נתוני מבחן בשם הזה (מקורס שנמחק). צריך לבחור שם אחר.'
     });

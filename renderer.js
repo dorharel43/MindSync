@@ -2263,7 +2263,7 @@ function guessFileRole(name) {
     return PAST_EXAM_FILE.test(n) ? 'past_exam' : 'material';
 }
 function isPastExamFile(f) {
-    return !!f && (f.role ? f.role === 'past_exam' : PAST_EXAM_FILE.test(f.name || ''));
+    return !!f && (f.role ? f.role === 'past_exam' : guessFileRole(f.name) === 'past_exam');
 }
 // A <select> of the roles, with `role` chosen.
 function fileRoleSelect(role, label) {
@@ -2549,7 +2549,7 @@ async function runUploadBatch() {
         newName = uploadNewCourse.value.trim();
         if (!newName) { uploadNewCourse.focus(); toast.warning(t('Write the name of the new course.')); return; }
     } else if (folder.startsWith(NEW_FOLDER_PREFIX)) {
-        newName = folder.slice(NEW_FOLDER_PREFIX.length);
+        newName = folder.slice(NEW_FOLDER_PREFIX.length).trim();   // (the server keeps the trimmed name)
     }
     batch.running = true;
     uploadFolderSelect.disabled = true;
@@ -2565,6 +2565,7 @@ async function runUploadBatch() {
         if (created && created.error && !/duplicate|exists|E11000|already have a course/i.test(created.error)) {
             toast.error(t('Could not create the course "{c}": {e}', { c: folder, e: t(String(created.error)) }));
             batch.running = false;
+            batch.stopRequested = false;   // (Stop pressed meanwhile - the next Upload starts clean)
             uploadFolderSelect.disabled = false;
             uploadNewCourse.disabled = false;
             uploadList.querySelectorAll('select').forEach(sel => { sel.disabled = false; });
@@ -2703,7 +2704,8 @@ async function offerNextStepsAfterUpload(uploadedNow) {
     // The newest record with each name (a re-upload keeps the old one too).
     const byName = (name) => [...all].reverse().find(f => f.name === name);
 
-    const isSyllabus = (u) => u.role === 'syllabus' || looksLikeSyllabus(u.content);
+    // (a past exam reads like a syllabus - "מועד א", "שם הקורס" - so not one marked so)
+    const isSyllabus = (u) => u.role === 'syllabus' || (u.role !== 'past_exam' && looksLikeSyllabus(u.content));
     const syllabi = uploadedNow.filter(isSyllabus).map(u => byName(u.name)).filter(Boolean);
     syllabi.slice(0, 2).forEach(file => {
         showActionToast(`${isolate(file.name)} looks like a syllabus. Add its exams and deadlines to your Planner and Tasks?`,
@@ -6930,7 +6932,12 @@ async function openExamSetup(course, label, total) {
     });
     document.querySelectorAll('#exam-count .filter-chip').forEach(b => b.classList.toggle('active', b === chosen));
     renderExamTimeChips();
-    const past = (studyItemsCache || []).some(i => studyCourseOf(i) === course && !i.twinOf && PAST_EXAM_FILE.test(i.sourceFile || ''));
+    // (the file's role - by its name only for a file from before roles, or deleted since)
+    const files = await ipcRenderer.invoke('get-files-light').catch(() => []);
+    const roles = new Map();
+    (Array.isArray(files) ? files : []).forEach(f => { if (f.role) roles.set(f.name, roles.get(f.name) === 'past_exam' ? 'past_exam' : f.role); });
+    const fromPast = (src) => { const r = roles.get(src || ''); return r ? r === 'past_exam' : PAST_EXAM_FILE.test(src || ''); };
+    const past = (studyItemsCache || []).some(i => studyCourseOf(i) === course && !i.twinOf && fromPast(i.sourceFile));
     document.getElementById('exam-past-note').hidden = !past;
     showExamPart('exam-setup');
     window.scrollTo(0, 0);

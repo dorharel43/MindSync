@@ -3293,7 +3293,8 @@ const isPdfFile = (f) => /\.pdf$/i.test(f.name || '') || /\.pdf$/i.test(f.source
 const PAST_EXAM_FILE = /מבחן|בחינה|מועד|בוחן|(?:^|[^a-z])exams?(?![a-z])|(?:^|[^a-z])moed(?![a-z])|midterm|quiz|final exam/i;   // (8/10: also exam_2023, moed_a)
 // What the student said the file is (8/10: role, picked at upload); a file
 // from before has none - then its name decides.
-const isPastExam = (f) => !!f && (f.role ? f.role === 'past_exam' : PAST_EXAM_FILE.test(f.name || ''));
+const SYLLABUS_FILE = /סילבוס|syllabus|תוכנית הקורס|course outline/i;   // (the same guess as the upload window's)
+const isPastExam = (f) => !!f && (f.role ? f.role === 'past_exam' : PAST_EXAM_FILE.test(f.name || '') && !SYLLABUS_FILE.test(f.name || ''));
 
 // ---- The stages of a full exam. Each one takes its inputs directly, so the
 // owner's exam check (the server's tools/exam-check.js) can run the SAME code
