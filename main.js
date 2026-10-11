@@ -3291,6 +3291,10 @@ function courseMaterialText(files, budget = 90000) {
 const isPdfFile = (f) => /\.pdf$/i.test(f.name || '') || /\.pdf$/i.test(f.sourcePath || '');
 // A file that IS a past exam, by its name (the same rule as the Study screen's).
 const PAST_EXAM_FILE = /מבחן|בחינה|מועד|בוחן|(?:^|[^a-z])exams?(?![a-z])|(?:^|[^a-z])moed(?![a-z])|midterm|quiz|final exam/i;   // (8/10: also exam_2023, moed_a)
+// What the student said the file is (8/10: role, picked at upload); a file
+// from before has none - then its name decides.
+const SYLLABUS_FILE = /סילבוס|syllabus|תוכנית הקורס|course outline/i;   // (the same guess as the upload window's)
+const isPastExam = (f) => !!f && (f.role ? f.role === 'past_exam' : PAST_EXAM_FILE.test(f.name || '') && !SYLLABUS_FILE.test(f.name || ''));
 
 // ---- The stages of a full exam. Each one takes its inputs directly, so the
 // owner's exam check (the server's tools/exam-check.js) can run the SAME code
@@ -3652,7 +3656,7 @@ async function buildDailyQuestion(stage) {
     const { course, topic } = status.target;
     const files = await api.getFiles();
     const mine = (Array.isArray(files) ? files : []).filter(f => (f.folder || '') === course);
-    const isPast = (f) => PAST_EXAM_FILE.test(f.name || '');
+    const isPast = isPastExam;
     const materialText = courseMaterialText(mine.filter(f => !isPast(f)), 30000);
     const pastText = mine.filter(isPast).filter(f => String(f.content || '').trim()).slice(0, 3)
         .map(f => `=== ${f.name} ===\n${String(f.content).slice(0, 6000)}`).join('\n\n');
@@ -3706,14 +3710,14 @@ function linkExamMap(course) {
 const EXAM_MAP_FILES = 8;
 const yearOf = (name) => Math.max(0, ...(String(name).match(/(?:19|20)\d\d/g) || []).map(Number));
 const examMapFiles = (files, course) => (Array.isArray(files) ? files : [])
-    .filter(f => (f.folder || '') === course && PAST_EXAM_FILE.test(f.name || ''))
+    .filter(f => (f.folder || '') === course && isPastExam(f))
     .sort((a, b) => yearOf(b.name) - yearOf(a.name) || String(b.name).localeCompare(String(a.name)))
     .slice(0, EXAM_MAP_FILES);
 
 async function analyzeExamMap(course, stage) {
     stage('reading');
     const past = examMapFiles(await api.getFiles(), course);
-    if (past.length < 2) throw new Error('Upload at least 2 past exams of this course (a file name with "מבחן" or "exam") to see what repeats.');
+    if (past.length < 2) throw new Error('Upload at least 2 past exams of this course (marked "Past exam" under Materials) to see what repeats.');
     stage('blueprint');
     const pastFiles = [];
     for (const f of past) {
@@ -3778,7 +3782,7 @@ ipcMain.handle('exam-map', async (event, course) => {
         const c = String(course || '').trim();
         if (!c) return { error: 'Choose a course first.' };
         const [map, files] = await Promise.all([api.getExamMap(c), api.getFilesLight().catch(() => [])]);
-        const pastExams = (Array.isArray(files) ? files : []).filter(f => (f.folder || '') === c && PAST_EXAM_FILE.test(f.name || '')).length;
+        const pastExams = (Array.isArray(files) ? files : []).filter(f => (f.folder || '') === c && isPastExam(f)).length;
         // An analysis now would read other files than the saved one did (new,
         // deleted or swapped past exams, or a full exam's own choice of files).
         // (as sets - the same exam uploaded twice is one name)
@@ -5132,7 +5136,7 @@ ipcMain.handle('get-onboarding-status', async () => {
     hasKey: Boolean(aiProvider.readConfig().geminiKey),
     files: (files || []).length,
     // the guide's "past exams" step (8/10)
-    pastExams: (files || []).filter(f => PAST_EXAM_FILE.test(f.name || '')).length,
+    pastExams: (files || []).filter(isPastExam).length,
     questions: stats ? stats.totalItems || 0 : 0,
     reviews: stats ? stats.reviewsAllTime || 0 : 0,
     calendarItems: (events || []).length + (tasks || []).length,
@@ -5162,6 +5166,14 @@ ipcMain.handle('get-files', async (event, opts = {}) => {
 });
 ipcMain.handle('save-file', async (event, newFile) => {
   try { return await api.createFile(newFile); } catch (err) { return { error: err.message }; }
+});
+// Its course or what it is (8/10: changed on the file's row).
+ipcMain.handle('update-file', async (event, id, updates = {}) => {
+  const allowed = {};
+  if (typeof updates.folder === 'string') allowed.folder = updates.folder;
+  if (['material', 'past_exam', 'syllabus'].includes(updates.role)) allowed.role = updates.role;
+  if (!Object.keys(allowed).length) return { error: 'Nothing to change.' };
+  try { return await api.updateFile(id, allowed); } catch (err) { return { error: err.message }; }
 });
 ipcMain.handle('delete-file', async (event, id) => {
   try { return await api.deleteFile(id); } catch (err) { return { error: err.message }; }

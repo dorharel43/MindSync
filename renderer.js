@@ -2246,6 +2246,35 @@ const addFolderModal = document.getElementById('add-folder-modal');
 
 let currentActiveFolder = 'All';
 
+// A course is a folder (8/10) - the screens say "course"; the stored name of
+// "no course" stays 'No Folder'.
+const NO_COURSE = 'No Folder';
+const courseLabel = (name) => (!name || name === NO_COURSE ? t('No course') : name);
+
+// What a file is (8/10): course material, a past exam or a syllabus - picked
+// at upload (guessed from the name first) and changeable on the file. A file
+// from before has no role: then its name decides, as it always did.
+const PAST_EXAM_FILE = /מבחן|בחינה|מועד|בוחן|(?:^|[^a-z])exams?(?![a-z])|(?:^|[^a-z])moed(?![a-z])|midterm|quiz|final exam/i;   // (8/10: also exam_2023, moed_a)
+const SYLLABUS_FILE = /סילבוס|syllabus|תוכנית הקורס|course outline/i;
+const FILE_ROLES = [['material', 'Course material'], ['past_exam', 'Past exam'], ['syllabus', 'Syllabus']];
+function guessFileRole(name) {
+    const n = String(name || '');
+    if (SYLLABUS_FILE.test(n)) return 'syllabus';
+    return PAST_EXAM_FILE.test(n) ? 'past_exam' : 'material';
+}
+function isPastExamFile(f) {
+    return !!f && (f.role ? f.role === 'past_exam' : guessFileRole(f.name) === 'past_exam');
+}
+// A <select> of the roles, with `role` chosen.
+function fileRoleSelect(role, label) {
+    const sel = document.createElement('select');
+    sel.className = 'input-field file-role-select';
+    sel.setAttribute('aria-label', t(label));
+    for (const [value, text] of FILE_ROLES) sel.appendChild(new Option(t(text), value));
+    sel.value = FILE_ROLES.some(r => r[0] === role) ? role : 'material';
+    return sel;
+}
+
 async function loadAndRenderFolders() {
     if (!materialsGrid) return;
     const folders = await ipcRenderer.invoke('get-folders');
@@ -2266,9 +2295,9 @@ async function loadAndRenderFolders() {
         folderCard.className = 'card folder-card' + (currentActiveFolder === folder.name ? ' is-active' : '');
         
         folderCard.innerHTML = `
-            <div class="folder-icon">${icon('folder')}</div>
+            <div class="folder-icon">${icon('graduation')}</div>
             <div class="folder-name" dir="auto">${escapeHtml(folder.name)}</div>
-            <button class="btn-icon btn-icon--danger delete-folder-btn" title="Delete folder" aria-label="Delete folder">${icon('trash')}</button>
+            <button class="btn-icon btn-icon--danger delete-folder-btn" title="${escapeHtml(t('Delete course'))}" aria-label="${escapeHtml(t('Delete course'))}">${icon('trash')}</button>
         `;
         
         folderCard.onclick = (e) => {
@@ -2282,10 +2311,10 @@ async function loadAndRenderFolders() {
         delBtn.onclick = async (e) => {
             e.stopPropagation();
             // Asked first (30/9) - it was one click, no undo.
-            if (!await confirmDialog(t('Delete the folder "{name}"?', { name: folder.name }),
-                t('The files in it are not deleted - they move to "No folder".'), { confirmText: t('Delete folder'), danger: true })) return;
+            if (!await confirmDialog(t('Delete the course "{name}"?', { name: folder.name }),
+                t('Its files are not deleted - they move to "No course". Its practice questions stay in Study.'), { confirmText: t('Delete course'), danger: true })) return;
             const result = await ipcRenderer.invoke('delete-folder', folder.id); // Fixed: Pass ID instead of index
-            if (result && result.error) { toast.error('Could not delete folder: ' + result.error); return; }
+            if (result && result.error) { toast.error(t('Could not delete the course: {e}', { e: t(String(result.error)) })); return; }
             if (currentActiveFolder === folder.name) currentActiveFolder = 'All';
             await loadAndRenderFolders();
             await loadAndRenderFiles();
@@ -2296,22 +2325,19 @@ async function loadAndRenderFolders() {
 
     const addBtn = document.createElement('div');
     addBtn.className = 'card folder-card add-folder';
-    addBtn.innerHTML = `<div class="folder-icon">${icon('plus')}</div><div class="folder-name">${escapeHtml(t('New folder'))}</div>`;
+    addBtn.innerHTML = `<div class="folder-icon">${icon('plus')}</div><div class="folder-name">${escapeHtml(t('New course'))}</div>`;
     addBtn.onclick = () => addFolderModal.style.display = 'flex';
     materialsGrid.appendChild(addBtn);
-
-    if (uploadFolderSelect) {
-        // Built with DOM nodes, not an HTML string: a folder name is user text,
-        // and this used to put it into innerHTML raw - an injection point.
-        uploadFolderSelect.innerHTML = '';
-        uploadFolderSelect.appendChild(new Option('No Folder', 'No Folder'));
-        folders.forEach(f => uploadFolderSelect.appendChild(new Option(f.name, f.name)));
-    }
+    // (the upload window builds its own list of courses when it opens)
 }
 
 async function loadAndRenderFiles() {
     if (!filesListContainer) return;
-    const files = await ipcRenderer.invoke('get-files', { strict: true }).catch(e => ({ error: e.message }));
+    const [files, folders] = await Promise.all([
+        ipcRenderer.invoke('get-files', { strict: true }).catch(e => ({ error: e.message })),
+        ipcRenderer.invoke('get-folders').catch(() => [])
+    ]);
+    const courseNames = (Array.isArray(folders) ? folders : []).map(f => f.name);
     filesListContainer.innerHTML = '';
     if (!Array.isArray(files)) {   // 30/9: not "No files here yet" when the server didn't answer
         renderEmptyState(filesListContainer, {
@@ -2343,7 +2369,7 @@ async function loadAndRenderFiles() {
                 <div class="file-icon">${icon('file')}</div>
                 <div>
                     <div class="file-name" dir="auto" title="${escapeHtml(file.name)}">${escapeHtml(fileLabel(file.name))}</div>
-                    <div class="file-meta">${escapeHtml(file.folder)}</div>
+                    <div class="file-meta file-meta--edit"></div>
                 </div>
             </div>
             <div class="file-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
@@ -2353,6 +2379,37 @@ async function loadAndRenderFiles() {
                 <button class="btn-icon btn-icon--danger delete-file-btn" title="Delete file" aria-label="Delete file">${icon('trash')}</button>
             </div>
         `;
+
+        // Its course and what it is - both changeable here (8/10): a file
+        // uploaded to the wrong course, or a past exam the name didn't give
+        // away, is fixed in place.
+        const meta = fileItem.querySelector('.file-meta--edit');
+        const courseSel = document.createElement('select');
+        courseSel.className = 'input-field file-course-select';
+        courseSel.setAttribute('aria-label', t('Course of this file'));
+        courseSel.appendChild(new Option(t('No course'), NO_COURSE));
+        const names = [...courseNames];
+        if (file.folder && file.folder !== NO_COURSE && !names.includes(file.folder)) names.push(file.folder);
+        names.forEach(n => courseSel.appendChild(new Option(n, n)));
+        courseSel.value = file.folder || NO_COURSE;
+        const roleSel = fileRoleSelect(file.role || guessFileRole(file.name), 'What this file is');
+        const saveMeta = async (sel, updates, revert) => {
+            sel.disabled = true;
+            const r = await ipcRenderer.invoke('update-file', file.id, updates).catch(e => ({ error: e.message }));
+            sel.disabled = false;
+            if (!r || r.error) { sel.value = revert; toast.error(t('Could not save the change: {e}', { e: t(String((r && r.error) || '')) })); return false; }
+            Object.assign(file, updates);
+            return true;
+        };
+        courseSel.onchange = async () => {
+            const before = file.folder || NO_COURSE;
+            if (await saveMeta(courseSel, { folder: courseSel.value }, before)) {
+                toast.success(t('Moved to {c}.', { c: courseLabel(courseSel.value) }));
+                await loadAndRenderFiles();
+            }
+        };
+        roleSel.onchange = () => saveMeta(roleSel, { role: roleSel.value }, file.role || guessFileRole(file.name));
+        meta.append(courseSel, roleSel);
 
         // Opens (or brings to front) a separate, resizable summary window.
         // A saved summary shows instantly; otherwise it's generated there.
@@ -2389,6 +2446,16 @@ const uploadList = document.getElementById('upload-file-list');
 const confirmUploadBtn = document.getElementById('confirm-upload-btn');
 const cancelUploadBtn = document.getElementById('cancel-upload-btn');
 const NEW_FOLDER_PREFIX = '__new__:';
+const NEW_COURSE_TYPED = '__newcourse__';
+const uploadNewCourse = document.getElementById('upload-new-course');
+// "+ New course…" shows a box for its name.
+function syncUploadCourse() {
+    const typed = uploadFolderSelect.value === NEW_COURSE_TYPED;
+    uploadNewCourse.hidden = !typed;
+    uploadFolderSelect.classList.remove('is-invalid');
+    if (typed) uploadNewCourse.focus();
+}
+if (uploadFolderSelect) uploadFolderSelect.addEventListener('change', syncUploadCourse);
 
 let uploadBatch = null; // { files, folderName, running, stopRequested, done }
 
@@ -2416,6 +2483,8 @@ async function openUploadPicker(mode) {
     uploadSummary.textContent = `${picked.files.length} file${picked.files.length === 1 ? '' : 's'} ready to upload.`
         + (picked.truncated ? ` Only the first ${picked.maxFiles} are included - upload the rest in another batch.` : '');
 
+    // Each file says what it is (8/10) - guessed from its name, changeable
+    // here: "What repeats in the exam" reads only the past exams.
     uploadList.innerHTML = '';
     picked.files.forEach((f, i) => {
         const row = document.createElement('div');
@@ -2426,30 +2495,36 @@ async function openUploadPicker(mode) {
         name.className = 'upload-row__name';
         name.dir = 'auto';
         name.textContent = f.name;
+        const role = fileRoleSelect(guessFileRole(f.name), 'What this file is');
+        role.classList.add('upload-row__role');
         const status = document.createElement('span');
         status.className = 'upload-row__status';
-        row.append(name, status);
+        row.append(name, role, status);
         uploadList.appendChild(row);
     });
 
-    // Destination: existing folders, plus - for a folder upload - an option
-    // to create a matching folder here (selected by default, since that's
-    // almost always what uploading "Statistics" means).
+    // The course (8/10): always the student's choice - no silent "No course".
+    // Chosen already when it's clear: the course open on the screen, or the
+    // uploaded folder's name (its course, or a new course of that name).
     const folders = await ipcRenderer.invoke('get-folders').catch(() => []) || [];
     uploadFolderSelect.innerHTML = '';
-    uploadFolderSelect.appendChild(new Option('No Folder', 'No Folder'));
+    uploadFolderSelect.appendChild(new Option(t('Choose a course…'), ''));
     folders.forEach(f => uploadFolderSelect.appendChild(new Option(f.name, f.name)));
+    uploadFolderSelect.appendChild(new Option(t('+ New course…'), NEW_COURSE_TYPED));
+    uploadFolderSelect.appendChild(new Option(t('No course'), NO_COURSE));
+    uploadNewCourse.value = '';
 
     const existingMatch = picked.folderName && folders.find(f => f.name.trim() === picked.folderName.trim());
     if (picked.folderName && !existingMatch) {
-        const opt = new Option(`New folder: ${picked.folderName}`, NEW_FOLDER_PREFIX + picked.folderName);
+        const opt = new Option(t('New course: {c}', { c: picked.folderName }), NEW_FOLDER_PREFIX + picked.folderName);
         uploadFolderSelect.insertBefore(opt, uploadFolderSelect.options[1] || null);
         uploadFolderSelect.value = opt.value;
     } else if (existingMatch) {
         uploadFolderSelect.value = existingMatch.name;
     } else {
-        uploadFolderSelect.value = currentActiveFolder !== 'All' ? currentActiveFolder : 'No Folder';
+        uploadFolderSelect.value = currentActiveFolder !== 'All' && folders.some(f => f.name === currentActiveFolder) ? currentActiveFolder : '';
     }
+    syncUploadCourse();
 
     uploadFolderSelect.disabled = false;
     confirmUploadBtn.disabled = false;
@@ -2461,20 +2536,39 @@ async function openUploadPicker(mode) {
 async function runUploadBatch() {
     const batch = uploadBatch;
     if (!batch || batch.running) return;
+    // The course first - asked, never assumed.
+    let folder = uploadFolderSelect.value;
+    if (!folder) {
+        uploadFolderSelect.classList.add('is-invalid');
+        uploadFolderSelect.focus();
+        toast.warning(t('Choose the course these files belong to - or "No course".'));
+        return;
+    }
+    let newName = '';
+    if (folder === NEW_COURSE_TYPED) {
+        newName = uploadNewCourse.value.trim();
+        if (!newName) { uploadNewCourse.focus(); toast.warning(t('Write the name of the new course.')); return; }
+    } else if (folder.startsWith(NEW_FOLDER_PREFIX)) {
+        newName = folder.slice(NEW_FOLDER_PREFIX.length).trim();   // (the server keeps the trimmed name)
+    }
     batch.running = true;
     uploadFolderSelect.disabled = true;
+    uploadNewCourse.disabled = true;
+    uploadList.querySelectorAll('select').forEach(sel => { sel.disabled = true; });
     confirmUploadBtn.disabled = true;
     cancelUploadBtn.textContent = 'Stop';
 
-    // Resolve the destination, creating the folder first if asked to.
-    let folder = uploadFolderSelect.value;
-    if (folder.startsWith(NEW_FOLDER_PREFIX)) {
-        folder = folder.slice(NEW_FOLDER_PREFIX.length);
+    // A new course is made first (one that already exists is simply used).
+    if (newName) {
+        folder = newName;
         const created = await ipcRenderer.invoke('save-folder', { name: folder });
-        if (created && created.error && !/duplicate|exists|E11000/i.test(created.error)) {
-            toast.error(`Could not create the folder "${folder}": ${created.error}`);
+        if (created && created.error && !/duplicate|exists|E11000|already have a course/i.test(created.error)) {
+            toast.error(t('Could not create the course "{c}": {e}', { c: folder, e: t(String(created.error)) }));
             batch.running = false;
+            batch.stopRequested = false;   // (Stop pressed meanwhile - the next Upload starts clean)
             uploadFolderSelect.disabled = false;
+            uploadNewCourse.disabled = false;
+            uploadList.querySelectorAll('select').forEach(sel => { sel.disabled = false; });
             confirmUploadBtn.disabled = false;
             cancelUploadBtn.textContent = 'Cancel';
             return;
@@ -2511,12 +2605,15 @@ async function runUploadBatch() {
             setUploadRowStatus(i, 'failed', IS_WEB && read && read.error ? read.error : "Couldn't read this file");
             continue;
         }
+        const roleSel = uploadList.querySelector(`[data-index="${i}"] .upload-row__role`);
+        const role = roleSel ? roleSel.value : guessFileRole(f.name);
         const saved = await ipcRenderer.invoke('save-file', {
             // The picker's name (unique within the batch - see select-upload-files).
             name: f.name || read.fileName,
             content: read.fileContent,
             sourcePath: read.filePath || '',
-            folder
+            folder,
+            role
         });
         if (saved && saved.error) {
             failed++;
@@ -2524,7 +2621,7 @@ async function runUploadBatch() {
             continue;
         }
         uploaded++;
-        uploadedNow.push({ name: read.fileName, content: read.fileContent || '' });
+        uploadedNow.push({ name: read.fileName, content: read.fileContent || '', role });
         alreadyThere.add(f.name);
         // Web, storage full: the text was saved but not the PDF itself (30/9).
         setUploadRowStatus(i, 'done', read.warning ? t('Uploaded as text only (storage is full)') : 'Uploaded');
@@ -2538,7 +2635,7 @@ async function runUploadBatch() {
     if (failed) parts.push(`${failed} failed`);
     if (notUploaded) parts.push(`${notUploaded} not uploaded`);
     const resultText = parts.join(' · ');
-    const where = folder === 'No Folder' ? '' : ` to "${folder}"`;
+    const where = folder === NO_COURSE ? '' : ` to "${folder}"`;
 
     if (failed === 0) {
         // Nothing needs the user's attention - close the window by itself and
@@ -2554,7 +2651,7 @@ async function runUploadBatch() {
             toast.success(`Uploaded ${batch.files[0].name}${where}.`);
         } else {
             const title = notUploaded ? 'Upload stopped'
-                : folder === 'No Folder' ? 'Upload finished' : `Uploaded to ${folder}`;
+                : folder === NO_COURSE ? 'Upload finished' : `Uploaded to ${folder}`;
             toast.success(resultText + '.', title);
         }
     } else {
@@ -2567,7 +2664,8 @@ async function runUploadBatch() {
         toast.warning(`${failed} file${failed === 1 ? '' : 's'} couldn't be uploaded - see the list.`);
     }
 
-    if (folder !== 'No Folder') currentActiveFolder = folder;
+    uploadNewCourse.disabled = false;
+    if (folder !== NO_COURSE) currentActiveFolder = folder;
     await loadAndRenderFolders();
     await loadAndRenderFiles();
     if (typeof refreshOnboarding === 'function') refreshOnboarding();
@@ -2606,13 +2704,15 @@ async function offerNextStepsAfterUpload(uploadedNow) {
     // The newest record with each name (a re-upload keeps the old one too).
     const byName = (name) => [...all].reverse().find(f => f.name === name);
 
-    const syllabi = uploadedNow.filter(u => looksLikeSyllabus(u.content)).map(u => byName(u.name)).filter(Boolean);
+    // (a past exam reads like a syllabus - "מועד א", "שם הקורס" - so not one marked so)
+    const isSyllabus = (u) => u.role === 'syllabus' || (u.role !== 'past_exam' && looksLikeSyllabus(u.content));
+    const syllabi = uploadedNow.filter(isSyllabus).map(u => byName(u.name)).filter(Boolean);
     syllabi.slice(0, 2).forEach(file => {
         showActionToast(`${isolate(file.name)} looks like a syllabus. Add its exams and deadlines to your Planner and Tasks?`,
             'Add exams & deadlines', () => openSyllabusImport(file, null), { title: 'Syllabus found' });
     });
 
-    const others = uploadedNow.filter(u => !looksLikeSyllabus(u.content));
+    const others = uploadedNow.filter(u => !isSyllabus(u));
     if (uploadedNow.length === 1 && others.length === 1) {
         const file = byName(others[0].name);
         if (file && (file.content || file.sourcePath)) {
@@ -3459,10 +3559,10 @@ if (timetableBtn && timetableFileInput) {
 const saveFolderBtnFinal = document.getElementById('save-folder-btn');
 if (saveFolderBtnFinal) {
     saveFolderBtnFinal.onclick = async () => {
-        const name = document.getElementById('folder-name-input').value;
-        if (!name) return toast.error('Folder name is required!');
+        const name = document.getElementById('folder-name-input').value.trim();
+        if (!name) return toast.error(t('Write the course name.'));
         const result = await ipcRenderer.invoke('save-folder', { name: name });
-        if (result && result.error) { toast.error('Could not save folder: ' + result.error); return; }
+        if (result && result.error) { toast.error(t('Could not save the course: {e}', { e: t(String(result.error)) })); return; }
         document.getElementById('folder-name-input').value = '';
         addFolderModal.style.display = 'none';
         await loadAndRenderFolders();
@@ -4358,7 +4458,7 @@ const ONBOARDING_STEPS = [
     {
         id: 'past',
         title: 'Upload past exams',
-        text: 'Past exams of the course (from the exam bank), with "מבחן" or "exam" in the file name - with 2 or more, you see which topics every exam asks, and how much of them you know.',
+        text: 'Past exams of the course (from the exam bank) - mark them "Past exam" when you upload. With 2 or more, you see which topics every exam asks, and how much of them you know.',
         isDone: (st) => st.pastExams > 0 || localStorage.getItem(onboardingKey('nopast')) === '1',
         actions: [
             { label: 'Upload past exams', primary: true, run: () => { document.getElementById('nav-materials').click(); setTimeout(() => openUploadPicker('files'), 60); } },
@@ -6809,7 +6909,6 @@ async function stopExam(ask = true) {
     if (box) box.hidden = true;
     return true;
 }
-const PAST_EXAM_FILE = /מבחן|בחינה|מועד|בוחן|(?:^|[^a-z])exams?(?![a-z])|(?:^|[^a-z])moed(?![a-z])|midterm|quiz|final exam/i;   // (8/10: also exam_2023, moed_a)
 
 function showExamPart(part) {
     ['exam-setup', 'exam-run', 'exam-checking', 'exam-result'].forEach(id => { document.getElementById(id).hidden = id !== part; });
@@ -6833,7 +6932,12 @@ async function openExamSetup(course, label, total) {
     });
     document.querySelectorAll('#exam-count .filter-chip').forEach(b => b.classList.toggle('active', b === chosen));
     renderExamTimeChips();
-    const past = (studyItemsCache || []).some(i => studyCourseOf(i) === course && !i.twinOf && PAST_EXAM_FILE.test(i.sourceFile || ''));
+    // (the file's role - by its name only for a file from before roles, or deleted since)
+    const files = await ipcRenderer.invoke('get-files-light').catch(() => []);
+    const roles = new Map();
+    (Array.isArray(files) ? files : []).forEach(f => { if (f.role) roles.set(f.name, roles.get(f.name) === 'past_exam' ? 'past_exam' : f.role); });
+    const fromPast = (src) => { const r = roles.get(src || ''); return r ? r === 'past_exam' : PAST_EXAM_FILE.test(src || ''); };
+    const past = (studyItemsCache || []).some(i => studyCourseOf(i) === course && !i.twinOf && fromPast(i.sourceFile));
     document.getElementById('exam-past-note').hidden = !past;
     showExamPart('exam-setup');
     window.scrollTo(0, 0);
@@ -8199,7 +8303,7 @@ async function loadFullSetup() {
         const box = document.createElement('input');
         box.type = 'checkbox';
         box.value = f.id || f._id;
-        box.checked = PAST_EXAM_FILE.test(f.name || '');
+        box.checked = isPastExamFile(f);
         const name = document.createElement('span');
         name.className = 'file-name';
         name.dir = 'auto';
@@ -8261,7 +8365,7 @@ document.getElementById('full-upload-btn').onclick = () => {
     const course = fullState.course;
     stopFullExam(false);
     document.getElementById('nav-materials').click();
-    if (course) toast.info(t('Upload the past exams into the folder "{c}" - then come back to Full exam.').replace('{c}', course));
+    if (course) toast.info(t('Upload the past exams to the course "{c}" and mark them "Past exam" - then come back to Full exam.').replace('{c}', course));
 };
 
 function leaveFullExam() {
