@@ -427,8 +427,8 @@
                 </div>
             </div>
 
-<ul class="screen-help"><li>Make <strong>one folder per course</strong> - questions and exams are matched to the course by it.</li><li>On each file: <strong>Summarize</strong> writes a summary, <strong>Questions</strong> makes practice questions for Study, and <strong>Exams &amp; deadlines</strong> reads a syllabus - exams go to the Planner, submissions to Tasks.</li></ul>
-            <h3 class="section-title">Folders</h3>
+<ul class="screen-help"><li>Add <strong>each course you take</strong> - its files, questions and exams stay together. When you upload, mark which files are <strong>past exams</strong>: "What repeats in the exam" and the full exam read them.</li><li>On each file: <strong>Summarize</strong> writes a summary, <strong>Questions</strong> makes practice questions for Study, and <strong>Exams &amp; deadlines</strong> reads a syllabus - exams go to the Planner, submissions to Tasks.</li></ul>
+            <h3 class="section-title">My courses</h3>
             <div class="materials-grid">
             </div>
 
@@ -1393,8 +1393,10 @@
             <div class="upload-summary" id="upload-summary"></div>
             <div class="upload-list" id="upload-file-list"></div>
 
-            <label class="form-label" for="upload-folder-select">Save them in</label>
+            <label class="form-label" for="upload-folder-select">Which course?</label>
             <select id="upload-folder-select" class="input-field"></select>
+            <input type="text" id="upload-new-course" class="input-field" maxlength="100" dir="auto" placeholder="Name of the new course" hidden>
+            <p class="settings-hint" id="upload-course-hint">Files of one course go together - its questions, exam map and full exam use them.</p>
 
             <div class="upload-actions">
                 <button id="confirm-upload-btn" class="btn-primary">Upload</button>
@@ -1458,11 +1460,11 @@
     <!-- 5. Add Folder Modal -->
     <div id="add-folder-modal" class="modal-overlay" style="display: none;">
         <div class="modal-content card">
-            <h3>New Folder</h3>
+            <h3>New course</h3>
             <div>
-                <input type="text" id="folder-name-input" placeholder="Folder Name (e.g.: Algorithms)" class="input-field">
+                <input type="text" id="folder-name-input" placeholder="Course name (e.g.: Algorithms)" class="input-field" maxlength="100" dir="auto">
                 <div>
-                    <button id="save-folder-btn" class="btn-primary">Save Folder</button>
+                    <button id="save-folder-btn" class="btn-primary">Save course</button>
                     <button id="cancel-folder-btn" class="btn-secondary">Cancel</button>
                 </div>
             </div>
