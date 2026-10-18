@@ -659,13 +659,25 @@ function askExamCourse(evt, folders) {
     document.getElementById('exam-course-what').textContent = describeEvent(evt);
     box.textContent = '';
     return new Promise((resolve) => {
-        const close = (picked) => { modal.style.display = 'none'; resolve(picked); };
-        const save = async (folder, btn) => {
-            box.querySelectorAll('button').forEach(b => { b.disabled = true; });
-            if (btn) btn.disabled = true;
+        let done = false;
+        const close = (picked) => {
+            if (done) return;
+            done = true;
+            examCourseClose = null;
+            modal.style.display = 'none';
+            resolve(picked);
+        };
+        // Escape / a click outside close it this way too (closeModalSafely).
+        examCourseClose = () => close(false);
+        const actionButtons = () => [...box.querySelectorAll('button'), document.getElementById('exam-course-none'), document.getElementById('exam-course-later')];
+        const save = async (folder) => {
+            // All off while saving - "Not now" too: it would open the next
+            // question, which this save's close would then hide.
+            actionButtons().forEach(b => { b.disabled = true; });
+            examCourseBusy = true;
             const r = await ipcRenderer.invoke('set-event-course', evt.id, folder ? (folder.id || folder._id) : null).catch(e => ({ error: e.message }));
-            box.querySelectorAll('button').forEach(b => { b.disabled = false; });
-            if (btn) btn.disabled = false;
+            examCourseBusy = false;
+            actionButtons().forEach(b => { b.disabled = false; });
             if (!r || r.error) { toast.error(t('Could not save the course: {e}', { e: t(String((r && r.error) || '')) })); return; }
             toast.success(folder ? t('Linked to {c} - its practice is timed for this exam.', { c: folder.name }) : t('Not linked to a course.'));
             close(true);
@@ -679,17 +691,18 @@ function askExamCourse(evt, folders) {
             b.className = 'btn-secondary exam-course-option';
             b.dir = 'auto';
             b.textContent = f.name;
-            b.onclick = () => save(f, b);
+            b.onclick = () => save(f);
             box.appendChild(b);
         }
-        const none = document.getElementById('exam-course-none');
-        none.onclick = () => save(null, none);
+        document.getElementById('exam-course-none').onclick = () => save(null);
         document.getElementById('exam-course-later').onclick = () => close(false);
         modal.style.display = 'flex';
         const first = box.querySelector('button');
         if (first) first.focus();
     });
 }
+let examCourseClose = null;   // closes the open question (Escape / outside click)
+let examCourseBusy = false;   // a pick being saved - it can't be closed meanwhile
 // Several new exams: asked one after the other.
 async function askExamCourses(list, folders) {
     for (const evt of list) await askExamCourse(evt, folders);
@@ -3083,7 +3096,8 @@ async function showSyllabusReview(file, res) {
     // The file's course; a file with none: the course named in the syllabus
     // is offered, the student picks (18/10).
     const fileCourse = realFolder(file);
-    await fillCoursePicker(syllabusPicker, { current: fileCourse, suggestion: fileCourse ? '' : resolveCourse(file, res.course, await knownCourses().catch(() => [])) });
+    const readCourse = String(res.course || '').trim();
+    await fillCoursePicker(syllabusPicker, { current: fileCourse, suggestion: fileCourse || !readCourse ? '' : resolveCourse(file, readCourse, await knownCourses().catch(() => [])) });
     if (syllabusGoogle) syllabusGoogle.checked = false;
     renderSyllabusList();
     syllabusModal.style.display = 'flex';
@@ -3128,20 +3142,27 @@ async function confirmSyllabusImport() {
         if (!state.until && !state.noEnd) { updateSyllabusConfirm(); return; }
         if (state.fromError || timetableEndsBeforeStart(state)) { updateSyllabusConfirm(); return; }
     }
+    // Busy from here (a second Add, or Cancel, while the course is made would
+    // import twice / after the window closed).
+    state.saving = true;
+    syllabusConfirm.disabled = true;
+    syllabusCancel.disabled = true;
     let course = '';
     let courseId = null;
     if (!timetable) {
         const pc = await pickedCourseName(syllabusPicker, t('Choose the course of this syllabus - or "No course".'));
-        if (!pc) return;
+        if (!pc) {
+            state.saving = false;
+            syllabusCancel.disabled = false;
+            if (syllabusState === state) updateSyllabusConfirm();
+            return;
+        }
         course = pc.name === syllabusPicker.noCourse ? '' : pc.name;
         // (its exams are that course's - by id, not only by the name in their title)
         if (course) courseId = await courseIdByName(course);
     }
     const syncToGoogle = !!(syllabusGoogle && syllabusGoogle.checked && picked.some(i => i.kind === 'exam' || i.kind === 'class'));
 
-    state.saving = true;
-    syllabusConfirm.disabled = true;
-    syllabusCancel.disabled = true;
     syllabusConfirm.textContent = syncToGoogle ? 'Adding and syncing…' : 'Adding…';
     let res;
     try {
@@ -3728,6 +3749,8 @@ function closeModalSafely(modal) {
     if (modal === addEventModal && editingEvent) { closeAddEventModal(); return; }
     // The import window: closed properly, so a review waiting for it opens.
     if (modal === syllabusModal) { closeSyllabusModal(); return; }
+    // "Which course is this exam?": closed as "Not now", so the next one is asked.
+    if (modal.id === 'exam-course-modal') { if (!examCourseBusy && examCourseClose) examCourseClose(); return; }
     modal.style.display = 'none';
 }
 document.querySelectorAll('.modal-overlay').forEach(modal => {
@@ -7573,7 +7596,8 @@ async function generateQuestionsFor(file, button = null) {
 
         // The file's course; a file with none: what the AI read in it is a
         // suggestion - the student picks on the review screen (18/10).
-        const suggestion = folder ? '' : resolveCourse(file, result[0] && result[0].category, await knownCourses());
+        const aiCourse = result[0] && String(result[0].category || '').trim();
+        const suggestion = folder || !aiCourse ? '' : resolveCourse(file, aiCourse, await knownCourses());
         result.forEach(item => { item.category = folder || suggestion; });
 
         // Draft first, deck second: a review screen before anything is saved.
@@ -8149,12 +8173,13 @@ if (reviewConfirmBtn) reviewConfirmBtn.onclick = async () => {
     const moveFile = reviewMeta.fileId && moveRow && !moveRow.hidden && moveBox && moveBox.checked && course !== QUESTIONS_NO_COURSE;
 
     const res = await ipcRenderer.invoke('save-study-items', chosen);
-    reviewConfirmBtn.disabled = false;
     if (!(res && res.error) && moveFile) {
+        // (still disabled: a second click while this runs would save the questions twice)
         const moved = await ipcRenderer.invoke('update-file', reviewMeta.fileId, { folder: course }).catch(e => ({ error: e.message }));
         if (moved && moved.error) toast.warning(t('The questions were saved, but the file wasn\'t moved: {e}', { e: t(String(moved.error)) }));
         else if (typeof loadAndRenderFiles === 'function') { loadAndRenderFolders(); loadAndRenderFiles(); }
     }
+    reviewConfirmBtn.disabled = false;
 
     if (res && res.error) { toast.error(res.error, 'Could not save'); return; }
 
