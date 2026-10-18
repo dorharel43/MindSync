@@ -2456,6 +2456,12 @@ function syncUploadCourse() {
     if (typed) uploadNewCourse.focus();
 }
 if (uploadFolderSelect) uploadFolderSelect.addEventListener('change', syncUploadCourse);
+// Enter in the new course's name = Upload (18/10: it did nothing).
+if (uploadNewCourse) uploadNewCourse.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    e.preventDefault();
+    if (!confirmUploadBtn.disabled) confirmUploadBtn.click();
+});
 
 let uploadBatch = null; // { files, folderName, running, stopRequested, done }
 
@@ -3561,13 +3567,23 @@ if (saveFolderBtnFinal) {
     saveFolderBtnFinal.onclick = async () => {
         const name = document.getElementById('folder-name-input').value.trim();
         if (!name) return toast.error(t('Write the course name.'));
-        const result = await ipcRenderer.invoke('save-folder', { name: name });
+        if (saveFolderBtnFinal.disabled) return;   // (a second Enter while saving)
+        saveFolderBtnFinal.disabled = true;
+        const result = await ipcRenderer.invoke('save-folder', { name: name }).finally(() => { saveFolderBtnFinal.disabled = false; });
         if (result && result.error) { toast.error(t('Could not save the course: {e}', { e: t(String(result.error)) })); return; }
         document.getElementById('folder-name-input').value = '';
         addFolderModal.style.display = 'none';
         await loadAndRenderFolders();
     };
 }
+
+// Enter in the course name = Save (18/10: it did nothing).
+const folderNameInput = document.getElementById('folder-name-input');
+if (folderNameInput && saveFolderBtnFinal) folderNameInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    e.preventDefault();
+    saveFolderBtnFinal.click();
+});
 
 const cancelFolderBtnFinal = document.getElementById('cancel-folder-btn');
 if (cancelFolderBtnFinal) {
