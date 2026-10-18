@@ -573,13 +573,21 @@
                     </div>
                 </div>
 
-                <!-- The course the questions go under - worked out from the
-                     file's folder or from the file itself (renderer.js
-                     resolveCourse). Shown so a wrong guess is visible. -->
+                <!-- The course the questions go under (18/10): the file's
+                     course; a file with none - the student picks (what the
+                     AI read in the file is only a suggestion). -->
                 <div class="review-course">
-                    <label class="form-label" for="review-course-input">Course</label>
-                    <input id="review-course-input" class="input-field" list="review-course-list" maxlength="100" dir="auto">
-                    <datalist id="review-course-list"></datalist>
+                    <label class="form-label" for="review-course-select">Course</label>
+                    <select id="review-course-select" class="input-field"></select>
+                    <input id="review-course-new" class="input-field" maxlength="100" dir="auto" placeholder="Name of the new course" hidden>
+                    <p class="settings-hint review-course__hint" id="review-course-hint" hidden>
+                        <span id="review-course-hint-text" dir="auto"></span>
+                        <button type="button" class="btn-link" id="review-course-use">Use it</button>
+                    </p>
+                    <label class="checkbox-field" for="review-move-file" id="review-move-file-row" hidden>
+                        <input type="checkbox" id="review-move-file" checked>
+                        <span class="checkbox-field__text"><span class="checkbox-field__label">Also move the file to this course</span></span>
+                    </label>
                 </div>
                 <div class="review-toolbar">
                     <div class="review-count"><strong id="review-selected-count">0</strong> of <span id="review-total-count">0</span> selected</div>
@@ -1384,6 +1392,21 @@
         </div>
     </div>
 
+    <!-- Which course is this exam (18/10): asked after adding an exam no
+         course's name was found in, and from the exam's card. -->
+    <div id="exam-course-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content card exam-course-modal">
+            <h3>Which course is this exam?</h3>
+            <p class="smart-help" id="exam-course-what" dir="auto"></p>
+            <div class="exam-course-options" id="exam-course-options"></div>
+            <p class="settings-hint">Its practice is timed for this exam, and the countdown shows on the course.</p>
+            <div class="smart-actions">
+                <button id="exam-course-none" class="btn-secondary">Not a course exam</button>
+                <button id="exam-course-later" class="btn-secondary">Not now</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 4. Upload File Modal -->
     <!-- Upload: one file, many files, or a whole folder. The list shows each
          file's status as it uploads, so a big batch never looks frozen. -->
@@ -1438,7 +1461,12 @@
 
             <div id="syllabus-course-wrap">
                 <label class="form-label" for="syllabus-course">Course</label>
-                <input id="syllabus-course" class="input-field" maxlength="80" dir="auto" placeholder="Course name">
+                <select id="syllabus-course" class="input-field"></select>
+                <input id="syllabus-course-new" class="input-field" maxlength="80" dir="auto" placeholder="Name of the new course" hidden>
+                <p class="settings-hint review-course__hint" id="syllabus-course-hint" hidden>
+                    <span id="syllabus-course-hint-text" dir="auto"></span>
+                    <button type="button" class="btn-link" id="syllabus-course-use">Use it</button>
+                </p>
                 <p class="settings-hint">Added to the names in the Planner, and used as the category of the tasks.</p>
             </div>
             <datalist id="syllabus-courses"></datalist>
