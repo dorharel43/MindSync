@@ -611,6 +611,16 @@
         'You already have a course with this name.': 'כבר יש לך קורס בשם הזה.',
         'That already exists.': 'זה כבר קיים.',
         'This name is taken by the app - choose another.': 'השם הזה שמור לאפליקציה - צריך לבחור שם אחר.',
+        'Which course is this exam?': 'של איזה קורס המבחן?', 'Which course?': 'איזה קורס?', 'Not a course exam': 'לא קשור לקורס',
+        'Its practice is timed for this exam, and the countdown shows on the course.': 'התרגול בקורס יתוזמן לפי המבחן הזה, והספירה לאחור תופיע בקורס.',
+        'Linked to {c} - its practice is timed for this exam.': 'שויך ל{c} - התרגול בקורס יתוזמן לפי המבחן.', 'Not linked to a course.': 'לא שויך לקורס.',
+        'From the file, it looks like {c}.': 'לפי הקובץ, נראה שזה {c}.', 'Use it': 'להשתמש בהצעה',
+        'The file names the course "{c}" - you have no course by that name yet.': 'בקובץ כתוב שהקורס הוא "{c}" - עוד אין לך קורס בשם הזה.',
+        'Also move the file to this course': 'להעביר גם את הקובץ לקורס הזה',
+        'From the document': 'מהקובץ', 'AI solution — check this one': 'פתרון של AI - כדאי לבדוק אותו',
+        'Choose the course these questions belong to - or "No course".': 'צריך לבחור לאיזה קורס השאלות שייכות - או "בלי קורס".',
+        'Choose the course of this syllabus - or "No course".': 'צריך לבחור של איזה קורס הסילבוס - או "בלי קורס".',
+        "The questions were saved, but the file wasn't moved: {e}": 'השאלות נשמרו, אבל הקובץ לא הועבר: {e}',
         'Course name is too long (max 100 characters)': 'שם הקורס ארוך מדי (עד 100 תווים)',
         'There is already exam data under this name (from a course you deleted). Choose another name.': 'כבר יש נתוני מבחן בשם הזה (מקורס שנמחק). צריך לבחור שם אחר.'
     });
@@ -772,6 +782,8 @@
         [/^(\d+) item\(s\) could not be (saved|added)$/, (m, x, w) => (x === '1' ? `פריט אחד לא ${w === 'saved' ? 'נשמר' : 'נוסף'}` : `${x} פריטים לא ${w === 'saved' ? 'נשמרו' : 'נוספו'}`)],
         [/^(Saved|Changed|Added) in MindSync, but not in Google Calendar: (.+)$/, (m, w, e) => `${{ Saved: 'נשמר', Changed: 'שונה', Added: 'נוסף' }[w]} ב-MindSync, אבל לא ב-Google Calendar: ${e}`],
         [/^Added (\d+): (.+)$/, 'נוספו $1: $2'],
+        [/^Added: (.+)$/, 'נוסף: $1'],
+        [/^Changed: (.+)$/, 'שונה: $1'],
         // Materials / upload / syllabus
         [/^Upload folder "(.+)"$/, 'העלאת התיקייה "$1"'],
         [/^1 file ready to upload\.$/, 'קובץ אחד מוכן להעלאה.'],

@@ -629,11 +629,83 @@ const weeklyClassMap = {
 // its title (lesson titles tend to name the course), while study/exam events
 // go straight to Study since that's what preparing for them means.
 function getEventLearningDestination(evt, folders) {
+    // An exam that knows its course (18/10) goes to that course.
+    const linked = courseOfEvent(evt, folders);
+    if (linked) return { type: 'materials', folderName: linked.name };
+    if (evt.type === 'exam' && evt.coursePicked) return { type: 'study' };   // "not a course exam"
     const title = (evt.title || '').toLowerCase();
     const folder = folders.find(f => f.name && title.includes(f.name.trim().toLowerCase()));
     if (folder) return { type: 'materials', folderName: folder.name };
     if (evt.type === 'study' || evt.type === 'exam') return { type: 'study' };
     return null;
+}
+
+// The course an event is linked to (its courseId), or null.
+function courseOfEvent(evt, folders) {
+    if (!evt || !evt.courseId) return null;
+    return (folders || []).find(f => String(f.id || f._id) === String(evt.courseId)) || null;
+}
+// An exam that knows no course, and the student hasn't said - ask.
+const examNeedsCourse = (evt, folders) => evt && evt.type === 'exam' && !evt.courseId && !evt.coursePicked && (folders || []).length > 0;
+
+// ---- Which course is this exam? (18/10) ----
+// The exam's course is what times its course's practice and shows its
+// countdown. A title that names one course links it by itself; otherwise the
+// student is asked - never guessed. Resolves when the window closes.
+function askExamCourse(evt, folders) {
+    const modal = document.getElementById('exam-course-modal');
+    const box = document.getElementById('exam-course-options');
+    if (!modal || !box || !evt || !evt.id) return Promise.resolve(false);
+    document.getElementById('exam-course-what').textContent = describeEvent(evt);
+    box.textContent = '';
+    return new Promise((resolve) => {
+        let done = false;
+        const close = (picked) => {
+            if (done) return;
+            done = true;
+            examCourseClose = null;
+            modal.style.display = 'none';
+            resolve(picked);
+        };
+        // Escape / a click outside close it this way too (closeModalSafely).
+        examCourseClose = () => close(false);
+        const actionButtons = () => [...box.querySelectorAll('button'), document.getElementById('exam-course-none'), document.getElementById('exam-course-later')];
+        const save = async (folder) => {
+            // All off while saving - "Not now" too: it would open the next
+            // question, which this save's close would then hide.
+            actionButtons().forEach(b => { b.disabled = true; });
+            examCourseBusy = true;
+            const r = await ipcRenderer.invoke('set-event-course', evt.id, folder ? (folder.id || folder._id) : null).catch(e => ({ error: e.message }));
+            examCourseBusy = false;
+            actionButtons().forEach(b => { b.disabled = false; });
+            if (!r || r.error) { toast.error(t('Could not save the course: {e}', { e: t(String((r && r.error) || '')) })); return; }
+            toast.success(folder ? t('Linked to {c} - its practice is timed for this exam.', { c: folder.name }) : t('Not linked to a course.'));
+            close(true);
+            await loadAndRenderWeeklyBoard();
+            await loadAndRenderHome();
+            if (typeof refreshSidebarCourses === 'function') refreshSidebarCourses();
+        };
+        for (const f of folders || []) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'btn-secondary exam-course-option';
+            b.dir = 'auto';
+            b.textContent = f.name;
+            b.onclick = () => save(f);
+            box.appendChild(b);
+        }
+        document.getElementById('exam-course-none').onclick = () => save(null);
+        document.getElementById('exam-course-later').onclick = () => close(false);
+        modal.style.display = 'flex';
+        const first = box.querySelector('button');
+        if (first) first.focus();
+    });
+}
+let examCourseClose = null;   // closes the open question (Escape / outside click)
+let examCourseBusy = false;   // a pick being saved - it can't be closed meanwhile
+// Several new exams: asked one after the other.
+async function askExamCourses(list, folders) {
+    for (const evt of list) await askExamCourse(evt, folders);
 }
 
 // Shared by both the task list and the calendar views below.
@@ -1073,7 +1145,11 @@ function renderWeeklyBoard() {
                 <div class="task-time">${escapeHtml(evt.time)}${weekly ? ` <span class="task-repeat" title="${escapeHtml(evt.until ? t('Every week until {d}', { d: untilLabel(evt.until) }) : t('Every week'))}">↻${evt.until ? ` ${escapeHtml(t('until {d}', { d: untilLabel(evt.until) }))}` : ''}</span>` : ''}</div>
                 <div class="task-card__title" dir="auto">${escapeHtml(evt.title)}</div>
                 ${evt.location ? `<div class="task-card__location" dir="auto" title="${escapeHtml(evt.location)}">${escapeHtml(evt.location)}</div>` : ''}
+                ${evt.type === 'exam' && courseOfEvent(evt, folders) ? `<div class="task-card__course" dir="auto">${escapeHtml(courseOfEvent(evt, folders).name)}</div>` : ''}
+                ${examNeedsCourse(evt, folders) ? `<button type="button" class="task-card__pick-course">${escapeHtml(t('Which course?'))}</button>` : ''}
             `;
+            const pickCourse = taskCard.querySelector('.task-card__pick-course');
+            if (pickCourse) pickCourse.onclick = (e) => { e.stopPropagation(); askExamCourse(evt, folders); };
 
             // Clicking a study/exam event (or one whose title names a
             // Materials folder) jumps straight to the relevant place.
@@ -1338,6 +1414,9 @@ async function saveEventEdit(text) {
         await loadAndRenderHome();
     });
     if (res.googleSyncError) toast.warning(`Changed in MindSync, but not in Google Calendar: ${res.googleSyncError}`);
+    // Became an exam, or renamed, and no course's name is in it now (18/10).
+    const folders = (weeklyData && weeklyData.folders) || [];
+    if (examNeedsCourse(after, folders)) askExamCourse(after, folders);
 }
 
 function describeEvent(evt) {
@@ -1392,7 +1471,7 @@ if (saveEventBtn) {
                 }
                 const res = await ipcRenderer.invoke('save-event', evt);
                 if (res && res.error) saveErrors.push(res.error);
-                else saved.push({ ...evt, id: res && (res.id || res._id) });
+                else saved.push({ ...evt, id: res && (res.id || res._id), courseId: res && res.courseId, coursePicked: res && res.coursePicked });
             }
         } catch (e) {
             toast.error('Something went wrong reading that. Please try again.');
@@ -1434,6 +1513,10 @@ if (saveEventBtn) {
 
         if (saveErrors.length) toast.error(saveErrors[0], `${saveErrors.length} item(s) could not be saved`);
         if (syncToGoogle && syncErrors.length) toast.warning(`Saved in MindSync, but not in Google Calendar: ${syncErrors[0]}`);
+        // An exam no course's name was found in: which course is it? (18/10)
+        const folders = (weeklyData && weeklyData.folders) || [];
+        const unsure = saved.filter(e => examNeedsCourse(e, folders));
+        if (unsure.length) askExamCourses(unsure, folders);
     });
 }
 
@@ -2763,7 +2846,16 @@ if (cancelUploadBtn) {
 const syllabusModal = document.getElementById('syllabus-modal');
 const syllabusList = document.getElementById('syllabus-list');
 const syllabusIntro = document.getElementById('syllabus-intro');
-const syllabusCourse = document.getElementById('syllabus-course');
+const syllabusPicker = {
+    select: document.getElementById('syllabus-course'),
+    newInput: document.getElementById('syllabus-course-new'),
+    hint: document.getElementById('syllabus-course-hint'),
+    hintText: document.getElementById('syllabus-course-hint-text'),
+    useBtn: document.getElementById('syllabus-course-use'),
+    // "No course": nothing added to the names. (Not '' - that is "nothing
+    // chosen yet"; a course can't be named "__…", the server refuses it.)
+    noCourse: '__nocourse__'
+};
 const syllabusGoogle = document.getElementById('syllabus-google');
 const syllabusGoogleRow = document.getElementById('syllabus-google-row');
 wireGoogleCheckbox(syllabusGoogle);
@@ -3001,7 +3093,11 @@ async function showSyllabusReview(file, res) {
     // Folder first, then the course named in the syllabus (matched to one
     // the user already has), then the file name - so the exams link to the
     // right questions without the user knowing anything about it.
-    syllabusCourse.value = resolveCourse(file, res.course, await knownCourses().catch(() => []));
+    // The file's course; a file with none: the course named in the syllabus
+    // is offered, the student picks (18/10).
+    const fileCourse = realFolder(file);
+    const readCourse = String(res.course || '').trim();
+    await fillCoursePicker(syllabusPicker, { current: fileCourse, suggestion: fileCourse || !readCourse ? '' : resolveCourse(file, readCourse, await knownCourses().catch(() => [])) });
     if (syllabusGoogle) syllabusGoogle.checked = false;
     renderSyllabusList();
     syllabusModal.style.display = 'flex';
@@ -3046,19 +3142,34 @@ async function confirmSyllabusImport() {
         if (!state.until && !state.noEnd) { updateSyllabusConfirm(); return; }
         if (state.fromError || timetableEndsBeforeStart(state)) { updateSyllabusConfirm(); return; }
     }
-    const course = timetable ? '' : syllabusCourse.value.trim();
-    const syncToGoogle = !!(syllabusGoogle && syllabusGoogle.checked && picked.some(i => i.kind === 'exam' || i.kind === 'class'));
-
+    // Busy from here (a second Add, or Cancel, while the course is made would
+    // import twice / after the window closed).
     state.saving = true;
     syllabusConfirm.disabled = true;
     syllabusCancel.disabled = true;
+    let course = '';
+    let courseId = null;
+    if (!timetable) {
+        const pc = await pickedCourseName(syllabusPicker, t('Choose the course of this syllabus - or "No course".'));
+        if (!pc) {
+            state.saving = false;
+            syllabusCancel.disabled = false;
+            if (syllabusState === state) updateSyllabusConfirm();
+            return;
+        }
+        course = pc.name === syllabusPicker.noCourse ? '' : pc.name;
+        // (its exams are that course's - by id, not only by the name in their title)
+        if (course) courseId = await courseIdByName(course);
+    }
+    const syncToGoogle = !!(syllabusGoogle && syllabusGoogle.checked && picked.some(i => i.kind === 'exam' || i.kind === 'class'));
+
     syllabusConfirm.textContent = syncToGoogle ? 'Adding and syncing…' : 'Adding…';
     let res;
     try {
         res = await ipcRenderer.invoke('import-syllabus-items',
             timetable ? picked.map(i => timetableImportItem(i, state))
                 : picked.map(({ kind, title, date, until, time, durationMinutes, weekday, endTime }) => ({ kind, title, date, until, time, durationMinutes, weekday, endTime })),
-            { course, syncToGoogle });
+            { course, courseId, syncToGoogle });
     } catch (e) {
         res = { created: { events: [], tasks: [] }, errors: [e.message], syncErrors: [] };
     }
@@ -3638,6 +3749,8 @@ function closeModalSafely(modal) {
     if (modal === addEventModal && editingEvent) { closeAddEventModal(); return; }
     // The import window: closed properly, so a review waiting for it opens.
     if (modal === syllabusModal) { closeSyllabusModal(); return; }
+    // "Which course is this exam?": closed as "Not now", so the next one is asked.
+    if (modal.id === 'exam-course-modal') { if (!examCourseBusy && examCourseClose) examCourseClose(); return; }
     modal.style.display = 'none';
 }
 document.querySelectorAll('.modal-overlay').forEach(modal => {
@@ -7481,14 +7594,17 @@ async function generateQuestionsFor(file, button = null) {
         const result = JSON.parse(response);
         if (result.error) { toast.error(result.error, 'Could not create questions'); return; }
 
-        const course = folder || resolveCourse(file, result[0] && result[0].category, await knownCourses());
-        result.forEach(item => { item.category = course; });
+        // The file's course; a file with none: what the AI read in it is a
+        // suggestion - the student picks on the review screen (18/10).
+        const aiCourse = result[0] && String(result[0].category || '').trim();
+        const suggestion = folder || !aiCourse ? '' : resolveCourse(file, aiCourse, await knownCourses());
+        result.forEach(item => { item.category = folder || suggestion; });
 
         // Draft first, deck second: a review screen before anything is saved.
         if (typeof working === 'function') working();
         const nav = document.getElementById('nav-study');
         if (nav && document.getElementById('view-study').style.display === 'none') nav.click();
-        openReviewScreen(result, { course, fileName: file.name });
+        openReviewScreen(result, { course: folder, suggestion, fileName: file.name, fileId: file.id || file._id });
     } catch (e) {
         toast.error(e.message, 'Something went wrong');
     } finally {
@@ -7845,20 +7961,105 @@ function openReviewScreen(items, meta = {}) {
     if (sessionEl) sessionEl.hidden = true;
     reviewDraft = items.map((it, i) => ({ ...it, _id: i, _selected: true }));
 
-    const courseInput = document.getElementById('review-course-input');
-    if (courseInput) {
-        courseInput.value = meta.course || (items[0] && items[0].category) || '';
-        knownCourses().then(names => {
-            const dl = document.getElementById('review-course-list');
-            if (dl) dl.innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
-        }).catch(() => {});
-    }
+    fillReviewCourse(meta, items).catch(err => console.warn('review: courses not loaded:', err.message));
 
     document.getElementById('study-home').hidden = true;
     document.getElementById('study-manage').hidden = true;
     document.getElementById('study-review').hidden = false;
 
     renderReviewList();
+}
+
+// ---- A course picker (18/10) ----
+// A <select> of the student's courses, "+ New course…" (a box for its name)
+// and "No course" (p.noCourse: the value that means none). `current` comes
+// chosen; with none, nothing is - the student picks - and what the AI read in
+// the file (`suggestion`) is offered with "Use it", never chosen by itself.
+async function fillCoursePicker(p, { current = '', suggestion = '' } = {}) {
+    if (!p.select) return;
+    const folders = await ipcRenderer.invoke('get-folders').catch(() => []) || [];
+    p.select.innerHTML = '';
+    p.select.appendChild(new Option(t('Choose a course…'), ''));
+    const names = folders.map(f => f.name);
+    if (current && current !== p.noCourse && !names.includes(current)) names.push(current);
+    names.forEach(n => p.select.appendChild(new Option(n, n)));
+    p.select.appendChild(new Option(t('+ New course…'), NEW_COURSE_TYPED));
+    p.select.appendChild(new Option(t('No course'), p.noCourse));
+    p.select.value = current || '';
+    p.newInput.value = '';
+    const sug = !current && String(suggestion || '').trim();
+    if (p.hint) p.hint.hidden = !sug;
+    if (sug && p.hint) {
+        const existing = folders.find(f => courseKey(f.name) === courseKey(sug));
+        p.hintText.textContent = existing
+            ? t('From the file, it looks like {c}.', { c: existing.name })
+            : t('The file names the course "{c}" - you have no course by that name yet.', { c: sug });
+        p.useBtn.onclick = () => {
+            if (existing) p.select.value = existing.name;
+            else { p.select.value = NEW_COURSE_TYPED; p.newInput.value = sug; }
+            p.hint.hidden = true;
+            syncCoursePicker(p);
+        };
+    }
+    p.select.onchange = () => syncCoursePicker(p);
+    syncCoursePicker(p);
+}
+function syncCoursePicker(p) {
+    p.newInput.hidden = p.select.value !== NEW_COURSE_TYPED;
+    p.select.classList.remove('is-invalid');
+    if (p.onChange) p.onChange();
+}
+// A course's id by its name (null when there's no such course).
+async function courseIdByName(name) {
+    const folders = await ipcRenderer.invoke('get-folders').catch(() => []) || [];
+    const f = folders.find(x => x.name === name);
+    return f ? String(f.id || f._id) : null;
+}
+// The picked course's name - a new one made first. { name } (p.noCourse for
+// "No course"), or null after saying what's missing.
+async function pickedCourseName(p, askText) {
+    const v = p.select.value;
+    if (!v) {
+        p.select.classList.add('is-invalid');
+        p.select.focus();
+        toast.warning(askText);
+        return null;
+    }
+    if (v !== NEW_COURSE_TYPED) return { name: v };
+    const name = p.newInput.value.trim();
+    if (!name) { p.newInput.focus(); toast.warning(t('Write the name of the new course.')); return null; }
+    const made = await ipcRenderer.invoke('save-folder', { name }).catch(e => ({ error: e.message }));
+    if (made && made.error && !/duplicate|exists|E11000|already have a course/i.test(made.error)) {
+        toast.error(t('Could not create the course "{c}": {e}', { c: name, e: t(String(made.error)) }));
+        return null;
+    }
+    return { name };
+}
+
+// The review screen's course (18/10) - see fillCoursePicker.
+const QUESTIONS_NO_COURSE = 'Uncategorized';
+const reviewPicker = {
+    select: document.getElementById('review-course-select'),
+    newInput: document.getElementById('review-course-new'),
+    hint: document.getElementById('review-course-hint'),
+    hintText: document.getElementById('review-course-hint-text'),
+    useBtn: document.getElementById('review-course-use'),
+    noCourse: QUESTIONS_NO_COURSE,
+    onChange: () => {
+        // Moving the file: only for a file with no course, to a real course.
+        const row = document.getElementById('review-move-file-row');
+        const v = reviewPicker.select.value;
+        if (row) row.hidden = !reviewMeta.fileId || !!reviewMeta.course || !v || v === QUESTIONS_NO_COURSE;
+    }
+};
+let reviewMeta = {};
+async function fillReviewCourse(meta, items) {
+    reviewMeta = meta || {};
+    const moveBox = document.getElementById('review-move-file');
+    if (moveBox) moveBox.checked = true;
+    // (a course the questions already carry but no course card has - kept)
+    const current = meta.course || (!meta.fileId && items[0] && items[0].category) || '';
+    await fillCoursePicker(reviewPicker, { current, suggestion: meta.suggestion });
 }
 
 function renderReviewList() {
@@ -7960,12 +8161,24 @@ if (reviewConfirmBtn) reviewConfirmBtn.onclick = async () => {
 
     if (chosen.length === 0) return;
 
-    const courseInput = document.getElementById('review-course-input');
-    const course = courseInput && courseInput.value.trim();
-    if (course) chosen.forEach(c => { c.category = course; });
-
+    // The course - asked, never assumed (18/10).
     reviewConfirmBtn.disabled = true;
+    const pickedCourse = await pickedCourseName(reviewPicker, t('Choose the course these questions belong to - or "No course".'));
+    if (!pickedCourse) { reviewConfirmBtn.disabled = false; return; }
+    const course = pickedCourse.name;
+    chosen.forEach(c => { c.category = course; });
+    // The file goes to the course too, when it had none and that's ticked.
+    const moveBox = document.getElementById('review-move-file');
+    const moveRow = document.getElementById('review-move-file-row');
+    const moveFile = reviewMeta.fileId && moveRow && !moveRow.hidden && moveBox && moveBox.checked && course !== QUESTIONS_NO_COURSE;
+
     const res = await ipcRenderer.invoke('save-study-items', chosen);
+    if (!(res && res.error) && moveFile) {
+        // (still disabled: a second click while this runs would save the questions twice)
+        const moved = await ipcRenderer.invoke('update-file', reviewMeta.fileId, { folder: course }).catch(e => ({ error: e.message }));
+        if (moved && moved.error) toast.warning(t('The questions were saved, but the file wasn\'t moved: {e}', { e: t(String(moved.error)) }));
+        else if (typeof loadAndRenderFiles === 'function') { loadAndRenderFolders(); loadAndRenderFiles(); }
+    }
     reviewConfirmBtn.disabled = false;
 
     if (res && res.error) { toast.error(res.error, 'Could not save'); return; }

@@ -850,7 +850,9 @@ ipcMain.handle('import-syllabus-items', async (event, items = [], options = {}) 
                     if (g.success) evt.googleEventId = g.eventId;
                     else syncErrors.push(g.error);
                 }
-                const saved = await api.createEvent(evt);
+                // The course picked for the syllabus (18/10): its exams are that course's.
+                const courseId = /^[a-f0-9]{24}$/i.test(String(options.courseId || '')) ? String(options.courseId) : null;
+                const saved = await api.createEvent(courseId ? { ...evt, courseId } : evt);
                 created.events.push({ ...evt, id: saved && (saved._id || saved.id) });
             } else {
                 // T00:00:00 = local midnight (a bare YYYY-MM-DD is read as UTC).
@@ -5027,6 +5029,13 @@ ipcMain.handle('update-event', async (event, id, changes = {}, options = {}) => 
     console.error('❌ update-event failed:', err.message);
     return { error: err.message };
   }
+});
+
+// An exam's course (18/10): the student's answer to "which course?" - one of
+// their courses, or none (null). Only that; no Google re-sync for it.
+ipcMain.handle('set-event-course', async (event, id, courseId) => {
+  try { return await api.updateEvent(id, { courseId: courseId || null, coursePicked: true }); }
+  catch (err) { return { error: err.message }; }
 });
 
 ipcMain.handle('delete-event', async (event, id) => {
