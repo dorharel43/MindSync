@@ -611,6 +611,7 @@
         'You already have a course with this name.': 'כבר יש לך קורס בשם הזה.',
         'That already exists.': 'זה כבר קיים.',
         'This name is taken by the app - choose another.': 'השם הזה שמור לאפליקציה - צריך לבחור שם אחר.',
+        "No courses yet - write this exam's course, and it's made.": 'עוד אין קורסים - כותבים את הקורס של המבחן, והוא נוצר.',
         'Which course is this exam?': 'של איזה קורס המבחן?', 'Which course?': 'איזה קורס?', 'Not a course exam': 'לא קשור לקורס',
         'Its practice is timed for this exam, and the countdown shows on the course.': 'התרגול בקורס יתוזמן לפי המבחן הזה, והספירה לאחור תופיע בקורס.',
         'Linked to {c} - its practice is timed for this exam.': 'שויך ל{c} - התרגול בקורס יתוזמן לפי המבחן.', 'Not linked to a course.': 'לא שויך לקורס.',
