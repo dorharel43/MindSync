@@ -645,8 +645,11 @@ function courseOfEvent(evt, folders) {
     if (!evt || !evt.courseId) return null;
     return (folders || []).find(f => String(f.id || f._id) === String(evt.courseId)) || null;
 }
-// An exam that knows no course, and the student hasn't said - ask.
-const examNeedsCourse = (evt, folders) => evt && evt.type === 'exam' && !evt.courseId && !evt.coursePicked && (folders || []).length > 0;
+// An exam that knows no course, and the student hasn't said - ask. (Also
+// with no courses yet (23/10): the exam is the guide's FIRST step, before any
+// course exists - the question then makes the course.)
+const examNeedsCourse = (evt) => !!evt && evt.type === 'exam' && !evt.courseId && !evt.coursePicked;
+
 
 // ---- Which course is this exam? (18/10) ----
 // The exam's course is what times its course's practice and shows its
@@ -669,7 +672,10 @@ function askExamCourse(evt, folders) {
         };
         // Escape / a click outside close it this way too (closeModalSafely).
         examCourseClose = () => close(false);
-        const actionButtons = () => [...box.querySelectorAll('button'), document.getElementById('exam-course-none'), document.getElementById('exam-course-later')];
+        const newWrap = document.getElementById('exam-course-new-wrap');
+        const newInput = document.getElementById('exam-course-new');
+        const newSave = document.getElementById('exam-course-new-save');
+        const actionButtons = () => [...box.querySelectorAll('button'), newSave, document.getElementById('exam-course-none'), document.getElementById('exam-course-later')];
         const save = async (folder) => {
             // All off while saving - "Not now" too: it would open the next
             // question, which this save's close would then hide.
@@ -694,18 +700,58 @@ function askExamCourse(evt, folders) {
             b.onclick = () => save(f);
             box.appendChild(b);
         }
+        // A new course, made here (23/10) - and the only way when there are
+        // none yet. Its name is typed (not guessed from the title: "מבחן
+        // ביולוגיה" - is the ב "in", or part of the name?).
+        const hasCourses = (folders || []).length > 0;
+        newInput.value = '';
+        newWrap.hidden = hasCourses;
+        document.getElementById('exam-course-none-yet').hidden = hasCourses;
+        if (hasCourses) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'btn-secondary exam-course-option exam-course-option--new';
+            b.textContent = t('+ New course…');
+            b.onclick = () => { b.hidden = true; newWrap.hidden = false; newInput.focus(); };
+            box.appendChild(b);
+        }
+        const saveNew = async () => {
+            if (examCourseBusy) return;
+            const name = newInput.value.trim();
+            if (!name) { newInput.focus(); toast.warning(t('Write the name of the new course.')); return; }
+            // Busy for the whole of it - making the course, then linking: no
+            // other answer, Escape or second Enter in between.
+            examCourseBusy = true;
+            actionButtons().forEach(b => { b.disabled = true; });
+            const made = await ipcRenderer.invoke('save-folder', { name }).catch(e => ({ error: e.message }));
+            const failed = made && made.error && !/duplicate|exists|E11000|already have a course/i.test(made.error);
+            const id = failed ? null : made && !made.error ? (made.id || made._id) : await courseIdByName(name);
+            examCourseBusy = false;
+            actionButtons().forEach(b => { b.disabled = false; });
+            if (!id) {
+                toast.error(t('Could not create the course "{c}": {e}', { c: name, e: failed ? t(String(made.error)) : '' }));
+                return;
+            }
+            await save({ id, name });
+        };
+        newSave.onclick = saveNew;
+        newInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); saveNew(); } };
         document.getElementById('exam-course-none').onclick = () => save(null);
         document.getElementById('exam-course-later').onclick = () => close(false);
         modal.style.display = 'flex';
-        const first = box.querySelector('button');
-        if (first) first.focus();
+        if (hasCourses) { const first = box.querySelector('button'); if (first) first.focus(); }
+        else newInput.focus();
     });
 }
 let examCourseClose = null;   // closes the open question (Escape / outside click)
 let examCourseBusy = false;   // a pick being saved - it can't be closed meanwhile
 // Several new exams: asked one after the other.
 async function askExamCourses(list, folders) {
-    for (const evt of list) await askExamCourse(evt, folders);
+    for (let i = 0; i < list.length; i++) {
+        // (a course made in the last question is in the next one's list)
+        const now = i ? await ipcRenderer.invoke('get-folders').catch(() => null) : null;
+        await askExamCourse(list[i], Array.isArray(now) ? now : folders);
+    }
 }
 
 // Shared by both the task list and the calendar views below.

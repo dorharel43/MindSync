@@ -1398,7 +1398,12 @@
         <div class="modal-content card exam-course-modal">
             <h3>Which course is this exam?</h3>
             <p class="smart-help" id="exam-course-what" dir="auto"></p>
+            <p class="settings-hint" id="exam-course-none-yet" hidden>No courses yet - write this exam's course, and it's made.</p>
             <div class="exam-course-options" id="exam-course-options"></div>
+            <div class="exam-course-new" id="exam-course-new-wrap" hidden>
+                <input id="exam-course-new" class="input-field" maxlength="100" dir="auto" placeholder="Name of the new course" aria-label="Name of the new course">
+                <button id="exam-course-new-save" class="btn-primary">Save course</button>
+            </div>
             <p class="settings-hint">Its practice is timed for this exam, and the countdown shows on the course.</p>
             <div class="smart-actions">
                 <button id="exam-course-none" class="btn-secondary">Not a course exam</button>
