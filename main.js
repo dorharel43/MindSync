@@ -12,39 +12,21 @@ const authClient = require('./authClient');
 const logger = require('./logger');
 
 // =====================================
-// Local AI Mechanism (Ollama)
+// AI calls (aiProvider.js: Gemini only since 23/10 - the local model is gone)
 // =====================================
-// Switched from the custom 'MindSync-AI' (qwen2.5:3b based) to aya-expanse:8b,
-// which is built for multilingual use and handles Hebrew far better - the 3B
-// model kept falling into repetition loops on Hebrew documents. This is only
-// used as the localModel fallback inside aiProvider now - see the note on
-// callAIWithFallback below.
-const LOCAL_MODEL = 'aya-expanse:8b';
-
 // Hard cap on generated tokens. Without this, a model that doesn't know
 // when to stop will generate until something else kills it - which looks
 // exactly like a hang.
 const MAX_OUTPUT_TOKENS = 800;
 
-// NOTE (bug fix): this used to talk to Ollama directly and completely bypassed
-// aiProvider.js - meaning every caller of this function (task urgency, event
-// type classification, task extraction from PDFs, etc.) could NEVER use
-// Gemini, even when the user had a Gemini key configured in Settings, and
-// would hard-fail with "Ollama is not running" on any machine without Ollama
-// installed. That's why "Add Task" worked on one machine and not another: it
-// depended on whether Ollama happened to be running locally, not on the AI
-// provider actually configured in the app.
-//
-// aiProvider.generateText() already implements the right policy (Gemini
-// first when a key exists, Ollama as fallback/offline option), so this is now
-// a thin adapter that keeps the existing call signature every caller here
-// already uses, instead of a second, parallel AI implementation.
+// A thin adapter that keeps the call signature every caller here already
+// uses (task urgency, event type, tasks from a PDF...) - aiProvider does the
+// rest.
 async function callAIWithFallback(prompt, systemOverride = null, maxTokens = MAX_OUTPUT_TOKENS, forceJson = false) {
     return aiProvider.generateText(prompt, {
         system: systemOverride,
         maxTokens,
-        forceJson,
-        localModel: LOCAL_MODEL
+        forceJson
     });
 }
 
@@ -206,11 +188,9 @@ ipcMain.handle('summarize-text', async (event, textToSummarize, sourcePath) => {
         }
 
         console.log(`📝 summarize-text: received ${(textToSummarize || '').length} chars`);
-        // Gemini reads far more than a local model can: 15,000 characters was
-        // about 5 pages, so a long file was summarized from its beginning
-        // only. Gemini now gets up to ~120,000; the local model keeps the
-        // smaller limit its context window can actually hold.
-        const SUMMARY_MAX_INPUT_CHARS = aiProvider.resolveProvider() === 'gemini' ? 120000 : 15000;
+        // Up to ~120,000 characters in one go (15,000 - about 5 pages - used
+        // to summarize a long file from its beginning only).
+        const SUMMARY_MAX_INPUT_CHARS = 120000;
 
         const safeText = textToSummarize && textToSummarize.length > SUMMARY_MAX_INPUT_CHARS
             ? textToSummarize.slice(0, SUMMARY_MAX_INPUT_CHARS) + '\n\n[...document truncated...]'
@@ -227,7 +207,6 @@ ${safeText}`;
             maxTokens: SUMMARY_MAX_OUTPUT_TOKENS,
             thinkingLevel: 'medium',
             timeoutMs: SUMMARY_TIMEOUT_MS,
-            localModel: LOCAL_MODEL,
             withMeta: true
         });
         return result(r.text, r.model);
@@ -668,7 +647,7 @@ ipcMain.handle('read-syllabus', async (event, file = {}) => {
         //    (not 2,000-character pieces), so a table stays together.
         if (!r) {
             if (!sourceText.trim()) return { error: 'This file has no readable text.' };
-            const maxChars = aiProvider.resolveProvider() === 'gemini' ? 120000 : 15000;
+            const maxChars = 120000;
             r = await aiProvider.generateText(`${prompt}\n\nTHE DOCUMENT (extracted text - table layout may be lost):\n${sourceText.slice(0, maxChars)}`, {
                 // No local-model fallback: a small offline model reads a
                 // syllabus badly (it returned items with no dates), and a wrong
@@ -2339,9 +2318,8 @@ ipcMain.handle('generate-study-items', async (event, sourceText, options = {}) =
         console.log(`🧠 generate-study-items (text): ${text.length} chars, category "${category}"`);
         if (!text.trim()) return JSON.stringify({ error: 'This file has no readable text.' });
 
-        // Gemini reads ~120,000 characters in one go; a local model's context
-        // window holds far less.
-        const maxChars = aiProvider.resolveProvider() === 'gemini' ? 120000 : 15000;
+        // Gemini reads ~120,000 characters in one go.
+        const maxChars = 120000;
         const existing = await existingQuestionsFor(sourceFile);
         const prompt = `${buildStudyPrompt(category, existing, minItemsFor({ chars: Math.min(text.length, maxChars) }))}
 
@@ -2354,19 +2332,14 @@ ${text.slice(0, maxChars)}`;
             maxTokens: 16384,
             thinkingLevel: 'medium',
             timeoutMs: 180000,
-            // No quiet switch to the small local model when Gemini is out of
-            // quota or busy: its questions were the reason for all those
-            // filters. Say what happened instead. (A user who ONLY has the
-            // local model still gets it - noFallback only stops the switch.)
-            noFallback: true,
-            localModel: LOCAL_MODEL
+            noFallback: true
         });
         const first = finaliseStudyItems(responseText, category, sourceFile, existing);
         const items = await withUnderstandingTopUp(first, category, sourceFile, existing, (topUp) => aiProvider.generateText(`${topUp}
 
 THE MATERIAL:
 
-${text.slice(0, maxChars)}`, { forceJson: true, maxTokens: 8192, thinkingLevel: 'medium', timeoutMs: 120000, noFallback: true, localModel: LOCAL_MODEL, allowance: 'light' }));
+${text.slice(0, maxChars)}`, { forceJson: true, maxTokens: 8192, thinkingLevel: 'medium', timeoutMs: 120000, noFallback: true, allowance: 'light' }));
         return JSON.stringify(items);
     } catch (error) {
         console.error('❌ generate-study-items failed:', error.message);
@@ -2891,7 +2864,7 @@ ipcMain.handle('preview-variants', async (event, items = []) => {
 
 ipcMain.handle('prepare-variants', async (event, payload = {}) => {
     try {
-        // A small local model writes poor problems and checks them worse.
+        // (no AI key: nothing to write them with)
         if (aiProvider.resolveProvider() !== 'gemini') return { prepared: 0, skipped: 'no cloud AI' };
         const when = payload && payload.when === 'tomorrow' ? 'tomorrow' : 'today';
         const candidates = await api.getVariantCandidates(when);
@@ -3903,7 +3876,7 @@ ipcMain.handle('full-exam-recheck', async (event, examId) => {
 // The daily question (3/10): where today stands, and writing it (a job, like a
 // full exam's; one at a time - a second click gets the same job).
 ipcMain.handle('daily-question', async () => {
-    // cloud: it can be written (and graded) here - the local model can't
+    // cloud: there is an AI key to write (and grade) it with
     try { return { ...(await api.getDailyQuestion()), cloud: aiProvider.resolveProvider() === 'gemini' }; } catch (err) { return { error: err.message }; }
 });
 // "What repeats in the exam" (3/10). pastExams: the course's files that are
@@ -4716,7 +4689,7 @@ Return ONLY JSON: {"labels": ["K", "U", ...]} - one letter per question, in orde
 async function judgeKinds(items) {
     try {
         const raw = await aiProvider.generateText(buildKindJudgePrompt(items.map(i => i.question)), {
-            forceJson: true, maxTokens: 2048, thinkingLevel: 'low', timeoutMs: 60000, noFallback: true, localModel: LOCAL_MODEL
+            forceJson: true, maxTokens: 2048, thinkingLevel: 'low', timeoutMs: 60000, noFallback: true
         });
         const labels = JSON.parse(extractJsonFromText(raw)).labels;
         if (!Array.isArray(labels) || labels.length !== items.length) return null;

@@ -14,13 +14,10 @@
 //   person does. That needs a provider that can accept images, which Ollama
 //   text models can't.
 //
-// Design:
-//   - 'gemini'  : cloud, multimodal, BYOK. Each user supplies their own free
-//                 API key, so distribution costs nothing and scales with no
-//                 shared quota.
-//   - 'ollama'  : local, text only, fully offline. Kept as the privacy option
-//                 and the fallback.
-//   - 'auto'    : Gemini when a key exists, otherwise Ollama.
+// Design (23/10): Gemini only - cloud, multimodal, BYOK (each user supplies
+// their own free API key). The local model (Ollama) that used to be the
+// fallback is gone: the product is the website (the server's copy of this
+// file, rpc/aiProvider.js, uses the server's key).
 // ---------------------------------------------------------------------------
 
 const fs = require('fs');
@@ -49,7 +46,6 @@ function activeGeminiModel(cfg) {
 // model actually wrote something.
 function modelLabel(model) {
     const m = String(model || '');
-    if (m.startsWith('ollama:')) return 'the local model';
     return m
         .replace(/-preview$/, '')
         .split('-')
@@ -105,92 +101,11 @@ function writeConfig(updates) {
     return next;
 }
 
-// ---- Ollama (local, text) ---------------------------------------------------
-const OLLAMA_URL = 'http://localhost:11434/api/generate';
-const AI_IDLE_TIMEOUT_MS = 60000;
-const AI_TOTAL_TIMEOUT_MS = 300000;
-
-async function callOllama(prompt, { model, maxTokens = 800, forceJson = false, system = null, contextSize = 8192 }) {
-    const controller = new AbortController();
-    const startedAt = Date.now();
-    let lastTokenAt = Date.now();
-    let fullResponse = '';
-    let tokenCount = 0;
-
-    const watchdog = setInterval(() => {
-        if (Date.now() - lastTokenAt > AI_IDLE_TIMEOUT_MS || Date.now() - startedAt > AI_TOTAL_TIMEOUT_MS) {
-            controller.abort();
-        }
-    }, 1000);
-
-    try {
-        const body = {
-            model,
-            prompt,
-            stream: true,
-            options: {
-                num_predict: maxTokens,
-                num_ctx: contextSize,
-                temperature: 0.2,
-                repeat_penalty: 1.3,
-                repeat_last_n: 256
-            }
-        };
-        if (forceJson) body.format = 'json';
-        if (system) body.system = system;
-
-        console.log(`🤖 Ollama (${model}): prompt ${prompt.length} chars...`);
-
-        const response = await fetch(OLLAMA_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-            signal: controller.signal
-        });
-        if (!response.ok) throw new Error(`Ollama returned ${response.status}`);
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop();
-            for (const line of lines) {
-                if (!line.trim()) continue;
-                try {
-                    const chunk = JSON.parse(line);
-                    if (chunk.response) {
-                        fullResponse += chunk.response;
-                        tokenCount++;
-                        lastTokenAt = Date.now();
-                    }
-                } catch { /* partial line */ }
-            }
-        }
-
-        console.log(`🤖 Ollama done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s, ${tokenCount} tokens`);
-        return fullResponse;
-    } catch (error) {
-        if (error.name === 'AbortError') {
-            throw new Error(tokenCount === 0
-                ? `Ollama produced nothing within ${AI_IDLE_TIMEOUT_MS / 1000}s. Is the model loaded? Try: ollama run ${model}`
-                : `Ollama stalled after ${tokenCount} tokens.`);
-        }
-        throw new Error('Ollama is not reachable. Open the Ollama app and try again.');
-    } finally {
-        clearInterval(watchdog);
-    }
-}
-
 // ---- Gemini (cloud, multimodal) ---------------------------------------------
 // MINDSYNC_TEST_GEMINI_URL: only for tests (a fake Gemini server) - a name no other tool sets.
 const GEMINI_BASE = process.env.MINDSYNC_TEST_GEMINI_URL || 'https://generativelanguage.googleapis.com/v1beta/models';
 
-// BUG FIX: this request had no timeout at all, unlike callOllama's watchdog.
+// BUG FIX: this request had no timeout at all.
 // If Google's endpoint stalls (an outage, a dropped connection) fetch() just
 // hangs forever with no error and no log line - which is exactly the "stuck
 // on Processing... with nothing in the terminal" symptom. 90s is generous
@@ -202,7 +117,7 @@ const GEMINI_TIMEOUT_MS = 90000;
 function geminiError(message, fields = {}) {
     return Object.assign(new Error(message), fields);
 }
-const SPENDING_CAP_MESSAGE = "Your Gemini key's monthly spending cap is reached. Raise it in Google AI Studio, or switch to the local model in Settings.";
+const SPENDING_CAP_MESSAGE = "Your Gemini key's monthly spending cap is reached. Raise it in Google AI Studio.";
 
 // When a free key's DAILY quota resets: midnight US Pacific time, whatever
 // the user's own time zone. Returned as a timestamp.
@@ -360,7 +275,7 @@ async function callGemini({ apiKey, model, parts, maxTokens = 2048, forceJson = 
                 );
             }
             const retryAfterMs = parseRetryDelayMs(data);
-            throw geminiError('Gemini rate limit reached. Wait a minute, or switch to the local model in Settings.', {
+            throw geminiError('Gemini rate limit reached. Wait a minute and try again.', {
                 status: 429,
                 retryable: retryAfterMs !== null && retryAfterMs <= 20000,
                 retryAfterMs
@@ -415,8 +330,8 @@ async function callGemini({ apiKey, model, parts, maxTokens = 2048, forceJson = 
 // BUG FIX: one 503 ("model is overloaded") used to fail the whole generation
 // on the spot. Those are momentary and Google's own guidance is to retry with
 // a growing wait. The app then fell back to extracted text - which also went
-// to the same overloaded Gemini - and then to Ollama, which most users don't
-// have. So a busy minute at Google meant "Could not create questions".
+// to the same overloaded Gemini. So a busy minute at Google meant "Could not
+// create questions".
 //
 // Now: retry the same model after 2s, 5s and 12s (plus a little randomness,
 // so many clients don't all retry at the same instant). If it is still busy -
@@ -514,66 +429,27 @@ async function callGeminiResilient(opts) {
 // ---- Public interface --------------------------------------------------------
 
 function resolveProvider() {
-    const cfg = readConfig();
-    if (cfg.provider === 'gemini') return cfg.geminiKey ? 'gemini' : 'ollama';
-    if (cfg.provider === 'ollama') return 'ollama';
-    return cfg.geminiKey ? 'gemini' : 'ollama';   // 'auto'
+    // 'gemini' when there is a key; 'none' = nothing to ask yet.
+    return readConfig().geminiKey ? 'gemini' : 'none';
 }
 
 /**
- * Text-only generation. Works on both providers.
+ * Text-only generation.
  */
 async function generateText(prompt, options = {}) {
     const cfg = readConfig();
-    const provider = options.forceProvider || resolveProvider();
-    let geminiError = null;
-
-    if (provider === 'gemini') {
-        try {
-            const r = await callGeminiResilient({
-                apiKey: cfg.geminiKey,
-                model: activeGeminiModel(cfg),
-                parts: [{ text: prompt }],
-                maxTokens: options.maxTokens || 2048,
-                forceJson: options.forceJson,
-                system: options.system,
-                thinkingLevel: options.thinkingLevel || 'low',
-                ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {})
-            });
-            return options.withMeta ? r : r.text;
-        } catch (err) {
-            // Falling back keeps the app usable when the network or the quota
-            // gives out - the original reason for preferring a local model.
-            console.warn('⚠️ Gemini failed, falling back to Ollama:', err.message);
-            if (options.noFallback) throw err;
-            geminiError = err;
-        }
-    }
-
-    try {
-        const localModel = options.localModel || 'aya-expanse:8b';
-        const text = await callOllama(prompt, {
-            model: localModel,
-            maxTokens: options.maxTokens || 800,
-            forceJson: options.forceJson,
-            system: options.system
-        });
-        return options.withMeta ? { text, model: `ollama:${localModel}` } : text;
-    } catch (ollamaErr) {
-        // BUG FIX: this used to just let ollamaErr propagate alone, which
-        // for someone who only ever configured Gemini (no Ollama installed)
-        // meant seeing "Ollama is not reachable. Open the Ollama app and try
-        // again." - confusing and actionable-sounding for an app they never
-        // set up, while the actual cause (Gemini's real error - rate limit,
-        // bad key, outage...) was logged to the console and never shown to
-        // them at all. Now: someone who uses Gemini just sees Gemini's
-        // reason; the Ollama part is only added if Ollama is actually set up.
-        if (geminiError) {
-            if (/not reachable/i.test(ollamaErr.message)) throw geminiError;
-            throw new Error(`Gemini failed (${geminiError.message}) and the local fallback also failed (${ollamaErr.message}).`);
-        }
-        throw ollamaErr;
-    }
+    if (!cfg.geminiKey) throw new Error('Add your Google AI key in Settings first.');
+    const r = await callGeminiResilient({
+        apiKey: cfg.geminiKey,
+        model: activeGeminiModel(cfg),
+        parts: [{ text: prompt }],
+        maxTokens: options.maxTokens || 2048,
+        forceJson: options.forceJson,
+        system: options.system,
+        thinkingLevel: options.thinkingLevel || 'low',
+        ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {})
+    });
+    return options.withMeta ? r : r.text;
 }
 
 /**

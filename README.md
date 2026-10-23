@@ -44,7 +44,7 @@ Hebrew and English course material are both supported, including right-to-left P
 ## Tech stack
 
 **Client:** Electron · vanilla JavaScript · custom CSS design-token system
-**AI:** Google Gemini (cloud) with a local [Ollama](https://ollama.com) model as fallback
+**AI:** Google Gemini (cloud)
 **PDF:** `pdfjs-dist` for page rendering, `pdf2json` for text extraction
 **Integrations:** Google Calendar API
 **Server (separate repo):** Node.js · Express 5 · MongoDB (Mongoose) · JWT auth
@@ -58,7 +58,6 @@ Hebrew and English course material are both supported, including right-to-left P
 - Node.js 18 or newer
 - A running MindSync server — see [MindSync-Server](https://github.com/dorharel43/MindSync-Server)
 - A Google Gemini API key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
-- *(Optional)* [Ollama](https://ollama.com) for offline AI
 
 ### Install
 
@@ -86,15 +85,6 @@ Google Calendar sync additionally needs `credentials.json` (an OAuth client from
 the Google Cloud Console) in the project root. `token.json` is generated
 automatically on first sync. Both are git-ignored.
 
-### Optional: local AI fallback
-
-```bash
-ollama pull aya-expanse:8b
-```
-
-Ollama must be running in the background. The model name is set at the top of
-`main.js` (`LOCAL_MODEL`).
-
 ### Build a Windows installer
 
 ```bash
@@ -110,7 +100,7 @@ main.js          Electron main process — IPC, AI prompts, content filters
 renderer.js      All UI logic
 apiClient.js     REST wrapper around the server, with timeouts on every call
 authClient.js    Stores the session token in the OS user-data directory
-aiProvider.js    Abstraction over Gemini / Ollama, with two-way fallback
+aiProvider.js    Gemini calls: retries, the fallback model, PDFs and images
 logger.js        Mirrors console.error/warn to a file — a packaged .exe has no terminal
 pdfExtract.js    RTL-aware text extraction
 pdfRender.js     Page-to-image rendering for the vision path
