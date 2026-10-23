@@ -117,7 +117,7 @@ const GEMINI_TIMEOUT_MS = 90000;
 function geminiError(message, fields = {}) {
     return Object.assign(new Error(message), fields);
 }
-const SPENDING_CAP_MESSAGE = "Your Gemini key's monthly spending cap is reached. Raise it in Google AI Studio, or switch to the local model in Settings.";
+const SPENDING_CAP_MESSAGE = "Your Gemini key's monthly spending cap is reached. Raise it in Google AI Studio.";
 
 // When a free key's DAILY quota resets: midnight US Pacific time, whatever
 // the user's own time zone. Returned as a timestamp.
@@ -275,7 +275,7 @@ async function callGemini({ apiKey, model, parts, maxTokens = 2048, forceJson = 
                 );
             }
             const retryAfterMs = parseRetryDelayMs(data);
-            throw geminiError('Gemini rate limit reached. Wait a minute, or switch to the local model in Settings.', {
+            throw geminiError('Gemini rate limit reached. Wait a minute and try again.', {
                 status: 429,
                 retryable: retryAfterMs !== null && retryAfterMs <= 20000,
                 retryAfterMs

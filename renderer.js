@@ -2374,6 +2374,9 @@ const uploadFolderSelect = document.getElementById('upload-folder-select');
 const addFolderModal = document.getElementById('add-folder-modal');
 
 let currentActiveFolder = 'All';
+// How many files the student has, as last loaded (null = not loaded yet):
+// "Make questions" with none opens the file picker from the click itself.
+let knownFileCount = null;
 
 // A course is a folder (8/10) - the screens say "course"; the stored name of
 // "no course" stays 'No Folder'.
@@ -2585,6 +2588,7 @@ async function loadAndRenderFiles() {
         });
         return;
     }
+    knownFileCount = files.length;
 
     const filteredFiles = currentActiveFolder === 'All' 
         ? files 
@@ -2960,10 +2964,18 @@ async function offerNextStepsAfterUpload(uploadedNow, opts = {}) {
 
     const others = uploadedNow.filter(u => !isSyllabus(u));
     // Came from "Make questions" (no files then): the questions, not an offer
-    // of them - from the one file, or the one picked among several.
-    if (opts.makeQuestions && others.length) {
+    // of them - from the one file, or the one picked among several. Never
+    // nothing in silence (the toast promised questions).
+    if (opts.makeQuestions) {
         const files = others.map(u => byName(u.name)).filter(f => f && (f.content || f.sourcePath));
-        const chosen = files.length > 1 ? await pickOption('Create questions from which file?', files.map(f => f.name)) : files[0] && files[0].name;
+        if (!files.length) {
+            toast.info(others.length ? t('No text could be read from that file, so no questions were made.')
+                : t('That looks like a syllabus - questions are made from lectures and notes.'), t('No questions yet'));
+            return;
+        }
+        // (the upload window may still be open, showing a file that failed)
+        if (uploadModal && uploadBatch && uploadBatch.done) { uploadModal.style.display = 'none'; uploadBatch = null; }
+        const chosen = files.length > 1 ? await pickOption('Create questions from which file?', files.map(f => f.name)) : files[0].name;
         const file = files.find(f => f.name === chosen);
         if (file) generateQuestionsFor(file);
         return;
@@ -5571,8 +5583,10 @@ function pickOption(title, options) {
         backdrop.querySelector('.ms-modal__title').textContent = title;
         const list = backdrop.querySelector('.option-list');
         // Escape closes it, like the other windows (ui.js) - it didn't (23/10).
-        const onKey = (e) => { if (e.key === 'Escape') close(null); };
-        function close(v) { document.removeEventListener('keydown', onKey); backdrop.remove(); resolve(v); }
+        // Only it: caught first, so the general Escape doesn't also close a
+        // window under it.
+        const onKey = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); close(null); } };
+        function close(v) { document.removeEventListener('keydown', onKey, true); backdrop.remove(); resolve(v); }
         options.forEach(o => {
             const b = document.createElement('button');
             b.className = 'option-row';
@@ -5583,7 +5597,7 @@ function pickOption(title, options) {
         });
         backdrop.querySelector('[data-action="cancel"]').onclick = () => close(null);
         backdrop.onclick = (e) => { if (e.target === backdrop) close(null); };
-        document.addEventListener('keydown', onKey);
+        document.addEventListener('keydown', onKey, true);
         document.body.appendChild(backdrop);
     });
 }
@@ -8106,17 +8120,23 @@ async function generateQuestionsFor(file, button = null) {
 
 const generateStudyBtn = document.getElementById('generate-study-btn');
 if (generateStudyBtn) {
+    // Nothing to make them from yet (23/10): straight to uploading a file -
+    // the questions are made as soon as it's in, instead of a message sending
+    // the student off to find the upload button.
+    const uploadForQuestions = () => {
+        document.getElementById('nav-materials').click();
+        toast.info('Pick a lecture or notes - the questions are made from it as soon as it uploads.', 'Upload a file first');
+        openUploadPicker('files', { makeQuestions: true });
+    };
     generateStudyBtn.onclick = async () => {
-        const files = await ipcRenderer.invoke('get-files');
-        if (!files || files.length === 0) {
-            // Nothing to make them from yet (23/10): straight to uploading a
-            // file - the questions are made as soon as it's in, instead of a
-            // message sending the student off to find the upload button.
-            document.getElementById('nav-materials').click();
-            toast.info('Pick a lecture or notes - the questions are made from it as soon as it uploads.', 'Upload a file first');
-            openUploadPicker('files', { makeQuestions: true });
-            return;
-        }
+        // Known to have none: the picker opens from the click itself - a
+        // browser opens one only right after a real click, and waiting for
+        // the server first (asleep, slow) could use that moment up.
+        if (knownFileCount === 0) { uploadForQuestions(); return; }
+        const files = await ipcRenderer.invoke('get-files', { strict: true });
+        // (strict: a server that didn't answer isn't "no files")
+        if (!Array.isArray(files)) { toast.error(t('MindSync didn\'t answer. Your files are safe - try again in a moment.'), t('Couldn\'t load your files')); return; }
+        if (files.length === 0) { uploadForQuestions(); return; }
         const chosen = await pickOption('Create questions from which file?', files.map(f => f.name));
         if (!chosen) return;
         const file = files.find(f => f.name === chosen);

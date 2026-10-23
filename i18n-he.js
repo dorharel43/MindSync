@@ -124,7 +124,9 @@
         "The AI didn't return a usable question. Try again.": 'ה-AI לא החזיר שאלה שאפשר להשתמש בה. כדאי לנסות שוב.',
         // The AI budget (the key's monthly spending cap, 3/10)
         "The AI isn't available right now: this month's AI budget is used up. Try again later.": 'ה-AI לא זמין כרגע: התקציב החודשי של ה-AI נוצל. אפשר לנסות שוב מאוחר יותר.',
-        "Your Gemini key's monthly spending cap is reached. Raise it in Google AI Studio, or switch to the local model in Settings.": 'הגעת למגבלת ההוצאה החודשית של מפתח ה-Gemini. אפשר להעלות אותה ב-Google AI Studio, או לעבור למודל המקומי בהגדרות.',
+        "Your Gemini key's monthly spending cap is reached. Raise it in Google AI Studio.": 'מפתח ה-Gemini הגיע למגבלת ההוצאה החודשית. אפשר להעלות אותה ב-Google AI Studio.',
+        'Gemini rate limit reached. Wait a minute and try again.': 'הגענו למגבלת הקצב של Gemini. כדאי לחכות דקה ולנסות שוב.',
+        'Add your Google AI key in Settings first.': 'קודם מוסיפים מפתח AI של Google בהגדרות.',
 
         // ---- login ----
         'Checking your session…': 'בודקים את החיבור…',
@@ -575,6 +577,7 @@
         'Try again': 'לנסות שוב', 'The AI did not return a summary.': 'ה-AI לא החזיר סיכום.', 'Copied': 'הועתק', 'No file was specified.': 'לא צוין קובץ.',
         'Could not load this file.': 'לא הצלחתי לטעון את הקובץ.', 'Saved': 'נשמר', 'KaTeX not installed - formulas will show as code.': 'KaTeX לא מותקן - נוסחאות יוצגו כקוד.',
 
+        'No text could be read from that file, so no questions were made.': 'לא הצלחתי לקרוא טקסט מהקובץ, אז לא נוצרו שאלות.', 'That looks like a syllabus - questions are made from lectures and notes.': 'זה נראה כמו סילבוס - שאלות נוצרות מהרצאות ומסיכומים.', 'No questions yet': 'עוד אין שאלות',
         'Pick a lecture or notes - the questions are made from it as soon as it uploads.': 'בוחרים הרצאה או סיכום - השאלות נוצרות ממנו מיד כשהוא עולה.', 'Upload a file first': 'קודם מעלים קובץ',
         // ---- "Explain it" (23/10) ----
         'Explain why': 'להסביר למה', "Didn't get it? Explain why": 'לא הצלחת? להסביר למה', 'Explaining…': 'מסבירה…',
