@@ -78,10 +78,6 @@
                         <input type="text" id="auth-name-input" class="input-field" autocomplete="name" maxlength="100" pattern="[\p{L}\s'\-]+" title="Letters only (any language) - no numbers or symbols.">
                         <div class="settings-hint" id="auth-name-hint" hidden>Letters only - no numbers or symbols.</div>
                     </div>
-                    <div class="auth-field" id="auth-degree-field" hidden>
-                        <label for="auth-degree-input">Degree / field of study</label>
-                        <input type="text" id="auth-degree-input" class="input-field" autocomplete="organization-title">
-                    </div>
                     <div class="auth-field">
                         <label for="auth-email-input">Email</label>
                         <input type="email" id="auth-email-input" class="input-field" autocomplete="email" required>
@@ -176,7 +172,8 @@
             <div class="profile-pic" id="sidebar-profile-pic">?</div>
             <div class="user-profile__text">
                 <div class="profile-name" id="sidebar-profile-name">Guest</div>
-                <div class="profile-degree" id="sidebar-profile-degree">Student</div>
+                <!-- The next exam (23/10, instead of the degree nobody used) -->
+                <div class="profile-degree" id="sidebar-profile-exam" dir="auto" hidden></div>
             </div>
         </div>
     </div>
@@ -616,7 +613,9 @@
 
                 <div class="review-footer">
                     <button class="btn-secondary" id="review-cancel-btn">Discard all</button>
-                    <button class="btn-primary" id="review-confirm-btn">Add selected questions</button>
+                    <button class="btn-secondary" id="review-confirm-btn">Add selected questions</button>
+                    <!-- (23/10) straight into practice with them - no trip back to Study -->
+                    <button class="btn-primary" id="review-practice-btn">Add and start practicing</button>
                 </div>
             </div>
 
@@ -1126,7 +1125,6 @@
                     <div class="profile-pic-large" id="settings-profile-pic">?</div>
                     <div class="profile-details">
                         <div class="profile-name-large" id="settings-profile-name">Guest</div>
-                        <div class="profile-meta" id="settings-profile-meta">Student</div>
                         <div class="profile-email" id="settings-profile-email"></div>
                     </div>
                     <div class="account-head__actions">
@@ -1551,7 +1549,7 @@
         <div class="modal-content card">
             <h2><span data-icon="brain"></span></h2>
             <h2>Edit profile</h2>
-            <p>Update your name or field of study.</p>
+            <p>Update your name.</p>
 
             <div>
                 <div>
@@ -1559,13 +1557,23 @@
                     <input type="text" id="onboard-name"  class="input-field" maxlength="100" pattern="[\p{L}\s'\-]+" title="Letters only (any language) - no numbers or symbols.">
                     <div class="settings-hint" id="onboard-name-hint" hidden>Letters only - no numbers or symbols.</div>
                 </div>
-                <div>
-                    <label>What is your degree or field of study?</label>
-                    <input type="text" id="onboard-degree" class="input-field">
-                </div>
                 <button id="finish-onboard-btn" class="btn-primary">Save changes</button>
             </div>
         </div>
+    </div>
+
+    <!-- Writing questions from a file (23/10): a minute or two - said here,
+         with how practice works, and the exam date to add meanwhile. -->
+    <div class="gen-progress" id="gen-progress" role="status" aria-live="polite" hidden>
+        <div class="gen-progress__head">
+            <span class="gen-progress__spinner" aria-hidden="true"></span>
+            <strong class="gen-progress__title">Writing your questions…</strong>
+            <span class="gen-progress__time ms-tabular" id="gen-progress-time" translate="no">0:00</span>
+        </div>
+        <div class="gen-progress__file" id="gen-progress-file" dir="auto" translate="no"></div>
+        <div class="settings-hint">Usually a minute or two. You can keep using MindSync - they open here when they're ready.</div>
+        <div class="gen-progress__tip"><strong>How practice works</strong> <span>Before each answer you say how sure you are. What you were sure about and got wrong comes back first.</span></div>
+        <button class="btn-secondary btn-sm" id="gen-progress-exam" hidden>Meanwhile: add your exam date</button>
     </div>
 
     <!-- Toast Notifications Container -->

@@ -45,9 +45,7 @@ const authForm = document.getElementById('auth-form');
 const authTitle = document.getElementById('auth-title');
 const authSubtitle = document.getElementById('auth-subtitle');
 const authNameField = document.getElementById('auth-name-field');
-const authDegreeField = document.getElementById('auth-degree-field');
 const authNameInput = document.getElementById('auth-name-input');
-const authDegreeInput = document.getElementById('auth-degree-input');
 const authEmailInput = document.getElementById('auth-email-input');
 const authPasswordInput = document.getElementById('auth-password-input');
 const authPasswordHint = document.getElementById('auth-password-hint');
@@ -96,7 +94,6 @@ function setAuthMode(mode) {
         authTitle.textContent = 'Create an account';
         authSubtitle.textContent = 'A few seconds, then you\'re in.';
         authNameField.hidden = false;
-        authDegreeField.hidden = false;
         authPasswordHint.hidden = false;
         authSubmitBtn.textContent = 'Create account';
         authToggleText.textContent = 'Already have an account?';
@@ -107,7 +104,6 @@ function setAuthMode(mode) {
         authTitle.textContent = 'Log in';
         authSubtitle.textContent = 'Welcome back.';
         authNameField.hidden = true;
-        authDegreeField.hidden = true;
         authPasswordHint.hidden = true;
         authSubmitBtn.textContent = 'Log in';
         authToggleText.textContent = "Don't have an account?";
@@ -134,7 +130,7 @@ if (/(^|[#&])signup(&|$)/.test(location.hash || '')) {
 // after a successful login/register. Reveals the app and re-runs the loads
 // that may have fired with empty/401 results while the login screen was up.
 let currentUserId = null;
-let currentProfile = { name: '', degree: '' };   // from loadProfile (30/9) // used to keep per-user UI preferences apart on a shared machine
+let currentProfile = { name: '' };   // from loadProfile (30/9) // used to keep per-user UI preferences apart on a shared machine
 
 // Arrived from "Open MindSync" on the email-confirmed page (web, 30/9):
 // /app/#verified=<account id>. This browser may be logged in to ANOTHER
@@ -219,7 +215,6 @@ if (authForm) {
                 ? await ipcRenderer.invoke('auth-register', {
                     email, password,
                     name: authNameInput.value.trim(),
-                    degree: authDegreeInput.value.trim(),
                     lang: (window.I18N && I18N.lang) || 'en'   // the welcome email's language
                   })
                 : await ipcRenderer.invoke('auth-login', { email, password });
@@ -4508,7 +4503,7 @@ loadAndRenderProgress();
 // 11. Profile Settings (edit-only - see the Edit Profile modal above)
 // ==========================================
 // BUG FIX: this used to run unconditionally at boot and auto-open the modal
-// whenever the profile came back empty. Now that name/degree are collected
+// whenever the profile came back empty. Now that the name is collected
 // at registration (see the auth section up top), the only time this should
 // still come back empty is before login exists - which, with the auth
 // screen in front of everything, is exactly when this must NOT pop open a
@@ -4520,27 +4515,22 @@ async function loadProfile() {
     if (!profile) return;
 
     const nameEl = document.getElementById('sidebar-profile-name');
-    const degreeEl = document.getElementById('sidebar-profile-degree');
     const picEl = document.getElementById('sidebar-profile-pic');
     const homeGreetingName = document.getElementById('home-greeting-name');
 
     const settingsName = document.getElementById('settings-profile-name');
-    const settingsMeta = document.getElementById('settings-profile-meta');
     const settingsPic = document.getElementById('settings-profile-pic');
 
-    // Kept for the Edit dialog (30/9): it used to read the names back from
-    // the screen, where "Guest"/"Student" (or their Hebrew) could be taken
-    // for real values and saved as the degree.
-    currentProfile = { name: profile.name || '', degree: profile.degree || '' };
+    // Kept for the Edit dialog (30/9): it used to read the name back from
+    // the screen, where "Guest" (or its Hebrew) could be taken for a real one.
+    currentProfile = { name: profile.name || '' };
     renderGoalPicker(profile.dailyGoal || null);   // Settings' daily goal
     const name = profile.name || t('Guest');
     if (nameEl) nameEl.innerText = name;
-    if (degreeEl) degreeEl.innerText = profile.degree || t('Student');
     if (picEl) picEl.innerText = name.charAt(0).toUpperCase();
     if (homeGreetingName) homeGreetingName.innerText = name;
 
     if (settingsName) settingsName.innerText = name;
-    if (settingsMeta) settingsMeta.innerText = profile.degree || t('Student');
     if (settingsPic) settingsPic.innerText = name.charAt(0).toUpperCase();
     const settingsEmail = document.getElementById('settings-profile-email');
     if (settingsEmail) settingsEmail.textContent = profile.email || '';
@@ -4586,7 +4576,6 @@ const finishOnboardBtn = document.getElementById('finish-onboard-btn');
 if (finishOnboardBtn) {
     finishOnboardBtn.onclick = async () => {
         const nameInput = document.getElementById('onboard-name').value.trim();
-        const degreeInput = document.getElementById('onboard-degree').value.trim();
 
         if (!nameInput) {
             toast.error('Name is required to continue!');
@@ -4599,7 +4588,7 @@ if (finishOnboardBtn) {
 
         finishOnboardBtn.innerText = 'Saving…';
 
-        await ipcRenderer.invoke('save-profile', { name: nameInput, degree: degreeInput });
+        await ipcRenderer.invoke('save-profile', { name: nameInput });
         await loadProfile();
         document.getElementById('onboarding-screen').style.display = 'none';
         finishOnboardBtn.innerText = 'Save changes';
@@ -4614,7 +4603,6 @@ if (settingsEditBtn) {
             // Pre-fill with the current values rather than opening blank -
             // this is an edit form now, not a first-run questionnaire.
             document.getElementById('onboard-name').value = currentProfile.name;
-            document.getElementById('onboard-degree').value = currentProfile.degree;
             onboardScreen.style.display = 'flex';
         }
     };
@@ -4624,6 +4612,25 @@ if (settingsEditBtn) {
 // 12. Dynamic Home & Hard Reset
 // ==========================================
 // Same "latest refresh wins" ticket as the weekly board above.
+// Under the name in the sidebar (23/10): the next exam - "מבחן בסטטיסטיקה
+// - in 12 days" - instead of the degree the app never used. Nothing when
+// there's none.
+function renderSidebarExam(events, todayIso) {
+    const el = document.getElementById('sidebar-profile-exam');
+    if (!el) return;
+    const next = (Array.isArray(events) ? events : [])
+        .filter(e => e.type === 'exam' && e.date && e.date >= todayIso)
+        .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')))[0];
+    el.hidden = !next;
+    if (!next) { el.textContent = ''; return; }
+    const [y, m, d] = next.date.split('-').map(Number);
+    const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+    const days = Math.round((new Date(y, m - 1, d) - today0) / 864e5);
+    el.textContent = days === 0 ? t('{title} - today', { title: next.title })
+        : days === 1 ? t('{title} - tomorrow', { title: next.title })
+            : t('{title} - in {n} days', { title: next.title, n: days });
+    el.title = el.textContent;
+}
 let homeRenderTicket = 0;
 
 async function loadAndRenderHome() {
@@ -4681,6 +4688,7 @@ async function loadAndRenderHome() {
             document.getElementById('home-next-exam-when').textContent = `${when} · ${WEEKDAY_NAMES[new Date(y, m - 1, d).getDay()].slice(0, 3)} ${d}/${m}`;
         }
     }
+    renderSidebarExam(events, todayIso);
 
     
     const todayEvents = events.filter(e => eventOccursOn(e, new Date())).sort((a, b) => a.time.localeCompare(b.time));
@@ -4838,13 +4846,32 @@ const ONBOARDING_STEPS = [
             };
         }
     },
-    // The exam coach's order (8/10): the exam first (what we prepare for), its
-    // past exams (what it asks - the base of the exam map), then the material
-    // - this week's lecture, or the whole course at once.
+    // Value first (23/10): a lecture in, practice questions out, the first
+    // answers - and only then the exam and its past exams, which time and aim
+    // the practice. (8/10 put the exam first; a new student met three steps
+    // before seeing anything the app does.)
+    {
+        id: 'questions',
+        title: 'Upload a lecture - get practice questions',
+        text: 'This week\'s lecture or your notes. MindSync writes practice questions from it - you look them over, then practice right away.',
+        isDone: (st) => st.questions > 0,
+        // Uploaded already (before this order): make them from it.
+        actions: (st) => st.files > 0
+            ? [{ label: 'Make questions', primary: true, run: () => goAndClick('nav-study', 'generate-study-btn') },
+                { label: 'Upload a lecture', run: () => uploadForQuestions() }]
+            : [{ label: 'Upload a lecture', primary: true, run: () => uploadForQuestions() }]
+    },
+    {
+        id: 'practice',
+        title: 'Answer your first questions',
+        text: 'Before each answer you say how sure you are. That\'s how MindSync learns what you really know - and what you only think you know.',
+        isDone: (st) => st.reviews > 0,
+        actions: [{ label: 'Start practicing', primary: true, run: () => goAndClick('nav-study', 'start-study-btn') }]
+    },
     {
         id: 'exam',
         title: 'When is your exam?',
-        text: 'Write it the way you\'d say it, e.g. "מבחן בסטטיסטיקה ב-14.2 ב-9". Everything you practice is timed for that date.',
+        text: 'Then everything you practice is timed for it. Write it the way you\'d say it, e.g. "מבחן בסטטיסטיקה ב-14.2 ב-9".',
         isDone: (st) => st.examsEver > 0,
         actions: [{ label: 'Add the exam', primary: true, run: () => goAndClick('nav-weekly', 'trigger-add-event') }]
     },
@@ -4857,30 +4884,6 @@ const ONBOARDING_STEPS = [
             { label: 'Upload past exams', primary: true, run: () => { document.getElementById('nav-materials').click(); setTimeout(() => openUploadPicker('files'), 60); } },
             { label: 'Skip for now', run: () => { try { localStorage.setItem(onboardingKey('nopast'), '1'); } catch (e) { /* no storage */ } refreshOnboarding(); } }
         ]
-    },
-    {
-        id: 'upload',
-        title: 'Add your course files',
-        text: 'This week\'s lecture - and the next one each week - or the whole course at once. A single file or a whole folder.',
-        isDone: (st) => st.files > 0,
-        actions: [
-            { label: 'Upload files', primary: true, run: () => { document.getElementById('nav-materials').click(); setTimeout(() => openUploadPicker('files'), 60); } },
-            { label: 'Upload a folder', run: () => { document.getElementById('nav-materials').click(); setTimeout(() => openUploadPicker('folder'), 60); } }
-        ]
-    },
-    {
-        id: 'questions',
-        title: 'Make practice questions',
-        text: 'Pick a file and the AI writes questions from it. You look them over before they\'re added.',
-        isDone: (st) => st.questions > 0,
-        actions: [{ label: 'Make questions', primary: true, run: () => goAndClick('nav-study', 'generate-study-btn') }]
-    },
-    {
-        id: 'practice',
-        title: 'Answer your first questions',
-        text: 'Before each answer you say how sure you are. That\'s how MindSync learns what you really know - and what you only think you know.',
-        isDone: (st) => st.reviews > 0,
-        actions: [{ label: 'Start practicing', primary: true, run: () => goAndClick('nav-study', 'start-study-btn') }]
     }
 ];
 // Web: no key to paste - the AI step is not part of the guide at all.
@@ -4931,7 +4934,7 @@ function renderOnboarding(status) {
             } else if (step.actions) {
                 const row = document.createElement('div');
                 row.className = 'onboarding__actions';
-                step.actions.forEach(a => {
+                (typeof step.actions === 'function' ? step.actions(status) : step.actions).forEach(a => {
                     const btn = document.createElement('button');
                     btn.className = a.primary ? 'btn-primary' : 'btn-secondary';
                     btn.textContent = a.label;
@@ -8070,7 +8073,7 @@ async function generateQuestionsFor(file, button = null) {
     const folder = realFolder(file);
     const originalHTML = button ? button.innerHTML : '';
     if (button) { button.disabled = true; button.textContent = 'Reading the document...'; }
-    const working = button ? null : toast.info(`Making questions from ${isolate(file.name)}… this takes about a minute.`, 'Working on it');
+    showGenProgress(file.name);
 
     try {
         const aiConfig = await ipcRenderer.invoke('get-ai-config');
@@ -8106,7 +8109,7 @@ async function generateQuestionsFor(file, button = null) {
         result.forEach(item => { item.category = folder || suggestion; });
 
         // Draft first, deck second: a review screen before anything is saved.
-        if (typeof working === 'function') working();
+        hideGenProgress();
         const nav = document.getElementById('nav-study');
         if (nav && document.getElementById('view-study').style.display === 'none') nav.click();
         openReviewScreen(result, { course: folder, suggestion, fileName: file.name, fileId: file.id || file._id });
@@ -8114,20 +8117,58 @@ async function generateQuestionsFor(file, button = null) {
         toast.error(e.message, 'Something went wrong');
     } finally {
         questionsInProgress = false;
+        hideGenProgress();
         if (button) { button.disabled = false; button.innerHTML = originalHTML; }
     }
 }
 
+// ---- Writing questions: the waiting card (23/10) ----
+// A real run takes over a minute (70s for a 4-page lecture - one long AI
+// call). Said here instead of a toast that went away: how long so far, how
+// practice works (so the first question makes sense), and - with no exam
+// on the calendar yet - the exam date to add meanwhile.
+let genProgressTimer = null;
+async function showGenProgress(fileName) {
+    const box = document.getElementById('gen-progress');
+    if (!box) return;
+    const started = Date.now();
+    document.getElementById('gen-progress-file').textContent = fileLabel(fileName);
+    const time = document.getElementById('gen-progress-time');
+    const tick = () => {
+        const sec = Math.floor((Date.now() - started) / 1000);
+        time.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+    };
+    tick();
+    clearInterval(genProgressTimer);
+    genProgressTimer = setInterval(tick, 1000);
+    const examBtn = document.getElementById('gen-progress-exam');
+    examBtn.hidden = true;
+    box.hidden = false;
+    const events = await ipcRenderer.invoke('get-events').catch(() => []);
+    const today = localIsoDate(new Date());
+    const hasExam = Array.isArray(events) && events.some(e => e.type === 'exam' && (!e.date || e.date >= today));
+    if (!box.hidden && Array.isArray(events) && !hasExam) examBtn.hidden = false;
+}
+function hideGenProgress() {
+    clearInterval(genProgressTimer);
+    const box = document.getElementById('gen-progress');
+    if (box) box.hidden = true;
+}
+const genProgressExamBtn = document.getElementById('gen-progress-exam');
+if (genProgressExamBtn) genProgressExamBtn.onclick = () => { genProgressExamBtn.hidden = true; goAndClick('nav-weekly', 'trigger-add-event'); };
+
+// Nothing to make questions from yet (23/10): straight to uploading a file -
+// they're made as soon as it's in, instead of a message sending the student
+// off to find the upload button. Called right from a click: a browser opens
+// the file picker only then. (Also the guide's first step.)
+function uploadForQuestions() {
+    document.getElementById('nav-materials').click();
+    toast.info('Pick a lecture or notes - the questions are made from it as soon as it uploads.', 'Upload a file first');
+    openUploadPicker('files', { makeQuestions: true });
+}
+
 const generateStudyBtn = document.getElementById('generate-study-btn');
 if (generateStudyBtn) {
-    // Nothing to make them from yet (23/10): straight to uploading a file -
-    // the questions are made as soon as it's in, instead of a message sending
-    // the student off to find the upload button.
-    const uploadForQuestions = () => {
-        document.getElementById('nav-materials').click();
-        toast.info('Pick a lecture or notes - the questions are made from it as soon as it uploads.', 'Upload a file first');
-        openUploadPicker('files', { makeQuestions: true });
-    };
     generateStudyBtn.onclick = async () => {
         // Known to have none: the picker opens from the click itself - a
         // browser opens one only right after a real click, and waiting for
@@ -8637,6 +8678,8 @@ function updateReviewCount() {
         confirmBtn.disabled = selected === 0;
         confirmBtn.textContent = selected === 0 ? 'Nothing selected' : `Add ${selected} question${selected === 1 ? '' : 's'}`;
     }
+    const practiceBtn = document.getElementById('review-practice-btn');
+    if (practiceBtn) practiceBtn.disabled = selected === 0;
 }
 
 function closeReviewScreen() {
@@ -8670,7 +8713,10 @@ if (reviewCancelBtn) reviewCancelBtn.onclick = async () => {
 };
 
 const reviewConfirmBtn = document.getElementById('review-confirm-btn');
-if (reviewConfirmBtn) reviewConfirmBtn.onclick = async () => {
+const reviewPracticeBtn = document.getElementById('review-practice-btn');
+// practice (23/10): "Add and start practicing" - straight into a session
+// with just these questions, not back to Study to press Start.
+async function addReviewedQuestions(practice) {
     const chosen = reviewDraft
         .filter(d => d._selected && d.question && d.question.trim())
         .map(({ _id, _selected, ...clean }) => clean);   // keeps mode, solutionSource, skillTag
@@ -8678,9 +8724,11 @@ if (reviewConfirmBtn) reviewConfirmBtn.onclick = async () => {
     if (chosen.length === 0) return;
 
     // The course - asked, never assumed (18/10).
-    reviewConfirmBtn.disabled = true;
+    const busy = (on) => { reviewConfirmBtn.disabled = on; if (reviewPracticeBtn) reviewPracticeBtn.disabled = on; };
+    if (reviewConfirmBtn.disabled) return;   // (the other button's save is running)
+    busy(true);
     const pickedCourse = await pickedCourseName(reviewPicker, t('Choose the course these questions belong to - or "No course".'));
-    if (!pickedCourse) { reviewConfirmBtn.disabled = false; return; }
+    if (!pickedCourse) { busy(false); return; }
     const course = pickedCourse.name;
     chosen.forEach(c => { c.category = course; });
     // The file goes to the course too, when it had none and that's ticked.
@@ -8695,7 +8743,7 @@ if (reviewConfirmBtn) reviewConfirmBtn.onclick = async () => {
         if (moved && moved.error) toast.warning(t('The questions were saved, but the file wasn\'t moved: {e}', { e: t(String(moved.error)) }));
         else if (typeof loadAndRenderFiles === 'function') { loadAndRenderFolders(); loadAndRenderFiles(); }
     }
-    reviewConfirmBtn.disabled = false;
+    busy(false);
 
     if (res && res.error) { toast.error(res.error, 'Could not save'); return; }
 
@@ -8710,7 +8758,11 @@ if (reviewConfirmBtn) reviewConfirmBtn.onclick = async () => {
     );
     closeReviewScreen();
     await loadStudyHome();
-};
+    const ids = practice && res && Array.isArray(res.items) ? res.items.map(i => i.id || i._id).filter(Boolean).map(String) : [];
+    if (ids.length) startStudySession(null, { category: course, label: course === QUESTIONS_NO_COURSE ? t('New questions') : course, ids });
+}
+if (reviewConfirmBtn) reviewConfirmBtn.onclick = () => addReviewedQuestions(false);
+if (reviewPracticeBtn) reviewPracticeBtn.onclick = () => addReviewedQuestions(true);
 
 // ==========================================
 // 17. AI engine settings

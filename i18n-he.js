@@ -134,7 +134,7 @@
         'Log in': 'כניסה', 'Welcome back.': 'ברוכים השבים.', 'Name': 'שם',
         'Letters only - no numbers or symbols.': 'אותיות בלבד - בלי מספרים או סימנים.',
         'Letters only (any language) - no numbers or symbols.': 'אותיות בלבד (בכל שפה) - בלי מספרים או סימנים.',
-        'Degree / field of study': 'תואר / תחום לימודים', 'Email': 'מייל', 'Password': 'סיסמה',
+        'Email': 'מייל', 'Password': 'סיסמה',
         'At least 8 characters.': 'לפחות 8 תווים.', "Don't have an account?": 'אין לך חשבון?', 'Create one': 'ליצירת חשבון',
         'Create an account': 'יצירת חשבון', "A few seconds, then you're in.": 'כמה שניות ונכנסים.', 'Create account': 'יצירת חשבון',
         'Already have an account?': 'כבר יש לך חשבון?', 'Logging in...': 'נכנסים…', 'Creating account...': 'יוצרים חשבון…',
@@ -168,15 +168,12 @@
         "That key didn't work. Copy it again from the Google page and paste it here.": 'המפתח לא עבד. אפשר להעתיק אותו שוב מהדף של Google ולהדביק כאן.',
         'The AI is connected.': 'ה-AI מחובר.', 'All set': 'הכול מוכן',
         "You can connect it later in Settings. Until then, summaries and questions won't work.": 'אפשר לחבר אחר כך בהגדרות. עד אז סיכומים ושאלות לא יעבדו.',
-        'Add your course files': 'להוסיף את קבצי הקורס',
-        'This week\'s lecture - and the next one each week - or the whole course at once. A single file or a whole folder.': 'ההרצאה של השבוע - ובכל שבוע את הבאה - או כל הקורס בבת אחת. קובץ אחד או תיקייה שלמה.',
+
         'Upload files': 'העלאת קבצים', 'Upload a folder': 'העלאת תיקייה',
         'Make practice questions': 'ליצור שאלות תרגול',
-        "Pick a file and the AI writes questions from it. You look them over before they're added.": 'בוחרים קובץ וה-AI כותב ממנו שאלות. לפני שהן נוספות אפשר לעבור עליהן.',
         'Make questions': 'יצירת שאלות', 'Answer your first questions': 'לענות על השאלות הראשונות',
         "Before each answer you say how sure you are. That's how MindSync learns what you really know - and what you only think you know.": 'לפני כל תשובה מסמנים את רמת הביטחון. כך MindSync לומדת מה באמת ידוע לך - ומה רק נדמה לך שידוע.',
         'Start practicing': 'להתחיל לתרגל', 'When is your exam?': 'מתי המבחן?',
-        'Write it the way you\'d say it, e.g. "מבחן בסטטיסטיקה ב-14.2 ב-9". Everything you practice is timed for that date.': 'כותבים כמו שאומרים, למשל "מבחן בסטטיסטיקה ב-14.2 ב-9". כל התרגול מתוזמן לתאריך הזה.',
         'Add to calendar': 'הוספה ללוח',
         'Add the exam': 'הוספת המבחן', 'Skip for now': 'לדלג בינתיים',
         'Past exams of the course (from the exam bank) - mark them "Past exam" when you upload. With 2 or more, you see which topics every exam asks, and how much of them you know.': 'מבחנים קודמים של הקורס (ממאגר הבחינות) - מסמנים אותם "מבחן קודם" בהעלאה. עם 2 או יותר רואים על אילו נושאים כל מבחן שואל, וכמה מהם ידועים לך.',
@@ -337,7 +334,7 @@
         'Write when the exam is, e.g. "12.2".': 'כותבים מתי המבחן, למשל "12.2".', "Couldn't read that": 'לא הצלחתי להבין',
         'Could not save it. Please try again.': 'לא הצלחתי לשמור. אפשר לנסות שוב.', 'Write when the exam is.': 'כותבים מתי המבחן.',
         'Create questions from which file?': 'מאיזה קובץ ליצור שאלות?',
-        'Already making questions - one file at a time.': 'כבר נוצרות שאלות מקובץ אחר - קובץ אחד בכל פעם.', 'Reading the document...': 'קוראים את המסמך…', 'Working on it': 'בעבודה',
+        'Already making questions - one file at a time.': 'כבר נוצרות שאלות מקובץ אחר - קובץ אחד בכל פעם.', 'Reading the document...': 'קוראים את המסמך…',
         "Reading the PDF directly didn't work right now - using the text extracted from it instead. Formulas and tables may come out worse, so check the questions before adding them.": 'קריאת ה-PDF ישירות לא עבדה כרגע - במקום זה נעשה שימוש בטקסט שחולץ ממנו. נוסחאות וטבלאות עלולות לצאת פחות טוב, אז כדאי לבדוק את השאלות לפני שמוסיפים.',
         'Using the extracted text': 'נעשה שימוש בטקסט שחולץ', 'Could not create questions': 'לא הצלחתי ליצור שאלות', 'Something went wrong': 'משהו השתבש',
 
@@ -503,9 +500,8 @@
         'Reset everything?': 'לאפס הכול?',
         'Reset everything': 'איפוס הכול', 'A new semester begins!': 'סמסטר חדש מתחיל!', 'System reset': 'המערכת אופסה',
         
-        
-        'Profile': 'פרופיל', 'Edit Profile': 'עריכת פרופיל', 'Edit profile': 'עריכת פרופיל', 'Update your name or field of study.': 'עדכון השם או תחום הלימודים.',
-        "What's your name?": 'מה השם שלך?', 'What is your degree or field of study?': 'מה התואר או תחום הלימודים שלך?', 'Name is required to continue!': 'צריך שם כדי להמשיך!',
+        'Profile': 'פרופיל', 'Edit Profile': 'עריכת פרופיל', 'Edit profile': 'עריכת פרופיל', 'Update your name.': 'עדכון השם.',
+        "What's your name?": 'מה השם שלך?', 'Name is required to continue!': 'צריך שם כדי להמשיך!',
         'Log out': 'יציאה', 'Ends your session on this device. Your data stays on the server.': 'מסיים את החיבור במכשיר הזה. הנתונים נשארים בשרת.',
         'Delete account': 'מחיקת החשבון', "Deletes your account and everything in it - tasks, calendar, files, questions. This can't be undone.": 'מוחק את החשבון וכל מה שבו - משימות, לוח, קבצים, שאלות. אי אפשר לבטל.',
         'Delete your account?': 'למחוק את החשבון?',
@@ -550,17 +546,14 @@
         'Missing file name.': 'חסר שם קובץ.', 'The file is empty.': 'הקובץ ריק.', "This doesn't look like a PDF file.": 'זה לא נראה כמו קובץ PDF.',
         'Invalid or tampered token.': 'החיבור לא תקין. צריך להיכנס שוב.',
         "Finish connecting in the same browser you started in. Start again from Settings.": 'צריך לסיים את החיבור באותו דפדפן שבו התחלת. אפשר להתחיל שוב מההגדרות.',
-
         'Change password': 'שינוי סיסמה', 'Also logs you out on every other device.': 'מנתק גם מכל שאר המכשירים.',
         'Your current password:': 'הסיסמה הנוכחית:', 'The new password (at least 8 characters). Every other device will be logged out.': 'הסיסמה החדשה (לפחות 8 תווים). כל שאר המכשירים ינותקו.',
         'The new password again:': 'שוב את הסיסמה החדשה:', 'The two new passwords are different. Nothing was changed.': 'שתי הסיסמאות החדשות שונות. לא שונה כלום.',
         'Every other device was logged out.': 'כל שאר המכשירים נותקו.', 'Password changed': 'הסיסמה שונתה', 'Password not changed': 'הסיסמה לא שונתה',
         'Enter your current password and a new one.': 'צריך את הסיסמה הנוכחית ואת החדשה.',
-
         'Uploaded as text only (storage is full)': 'הועלה כטקסט בלבד (האחסון מלא)',
         "Couldn't load your questions right now. Your paused session is kept - try again in a moment.": 'לא הצלחתי לטעון את השאלות כרגע. התרגול שעצרת שמור - אפשר לנסות שוב עוד רגע.',
         '{n} of {total} study blocks could not be saved.': '{n} מתוך {total} זמני הלימוד לא נשמרו.',
-
         'No answer passage — this will be a practice prompt.': 'אין קטע תשובה - זו תהיה שאלת תרגול.',
 
         // ---- tooltips ----
@@ -576,9 +569,18 @@
         'Reading the document and writing the summary…': 'קוראים את המסמך וכותבים את הסיכום…', 'This can take 1-2 minutes for a long file.': 'בקובץ ארוך זה יכול לקחת 1-2 דקות.',
         'Try again': 'לנסות שוב', 'The AI did not return a summary.': 'ה-AI לא החזיר סיכום.', 'Copied': 'הועתק', 'No file was specified.': 'לא צוין קובץ.',
         'Could not load this file.': 'לא הצלחתי לטעון את הקובץ.', 'Saved': 'נשמר', 'KaTeX not installed - formulas will show as code.': 'KaTeX לא מותקן - נוסחאות יוצגו כקוד.',
-
         'No text could be read from that file, so no questions were made.': 'לא הצלחתי לקרוא טקסט מהקובץ, אז לא נוצרו שאלות.', 'That looks like a syllabus - questions are made from lectures and notes.': 'זה נראה כמו סילבוס - שאלות נוצרות מהרצאות ומסיכומים.', 'No questions yet': 'עוד אין שאלות',
         'Pick a lecture or notes - the questions are made from it as soon as it uploads.': 'בוחרים הרצאה או סיכום - השאלות נוצרות ממנו מיד כשהוא עולה.', 'Upload a file first': 'קודם מעלים קובץ',
+        // ---- The first practice, sooner (23/10) ----
+        'Upload a lecture - get practice questions': 'מעלים הרצאה - מקבלים שאלות תרגול', 'Upload a lecture': 'העלאת הרצאה',
+        "This week's lecture or your notes. MindSync writes practice questions from it - you look them over, then practice right away.": 'ההרצאה של השבוע או הסיכום שלך. MindSync כותבת ממנו שאלות תרגול - עוברים עליהן ומתרגלים מיד.',
+        'Then everything you practice is timed for it. Write it the way you\'d say it, e.g. "מבחן בסטטיסטיקה ב-14.2 ב-9".': 'ואז כל התרגול מתוזמן אליו. כותבים כמו שאומרים, למשל "מבחן בסטטיסטיקה ב-14.2 ב-9".',
+        'Add and start practicing': 'הוספה והתחלת תרגול', 'New questions': 'שאלות חדשות',
+        'Writing your questions…': 'כותבת את השאלות שלך…', "Usually a minute or two. You can keep using MindSync - they open here when they're ready.": 'בדרך כלל דקה או שתיים. אפשר להמשיך להשתמש ב-MindSync - השאלות ייפתחו כשיהיו מוכנות.',
+        'How practice works': 'איך התרגול עובד', 'Before each answer you say how sure you are. What you were sure about and got wrong comes back first.': 'לפני כל תשובה בוחרים כמה בטוחים. מה שסימנת "בטוח" וטעית בו - חוזר ראשון.',
+        'Meanwhile: add your exam date': 'בינתיים: להוסיף את תאריך המבחן',
+        '{title} - today': '{title} - היום', '{title} - tomorrow': '{title} - מחר', '{title} - in {n} days': '{title} - בעוד {n} ימים',
+
         // ---- "Explain it" (23/10) ----
         'Explain why': 'להסביר למה', "Didn't get it? Explain why": 'לא הצלחת? להסביר למה', 'Explaining…': 'מסבירה…',
         'Why this is the answer': 'למה זו התשובה', 'Where it went wrong': 'איפה זה השתבש', 'A common trap': 'מלכודת נפוצה',
@@ -761,7 +763,6 @@
         [/^(\d+) more were right while you were guessing\. That doesn't count as knowing them - they come back tomorrow to check\.$/, 'עוד $1 היו נכונות בניחוש. זה לא נחשב שידעת - הן חוזרות מחר לבדיקה.'],
         [/^1 question you felt sure about turned out wrong\. Those are scheduled to come back quickly\.$/, 'שאלה אחת שסימנת בה "בוודאות" התבררה כשגויה. היא תחזור בקרוב.'],
         [/^(\d+) questions you felt sure about turned out wrong\. Those are scheduled to come back quickly\.$/, '$1 שאלות שסימנת בהן "בוודאות" התבררו כשגויות. הן יחזרו בקרוב.'],
-        [/^Making questions from (.+)… this takes about a minute\.$/, 'יוצר שאלות מ$1… זה לוקח בערך דקה.'],
         [/^(.+) AI-generated solution — worth checking$/, '$1 פתרון שנכתב על ידי AI - כדאי לבדוק'],
         [/^AI-generated solution — worth checking$/, 'פתרון שנכתב על ידי AI - כדאי לבדוק'],
         // Calibration

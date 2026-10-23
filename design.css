@@ -2200,3 +2200,20 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 .study-last-mistake__title { color: var(--text-secondary); }
 .study-last-mistake__yours { color: var(--text-primary); }
 .study-last-mistake__slip { margin-top: 4px; color: var(--text-primary); overflow-wrap: anywhere; }
+
+/* Writing questions (23/10): a card in the corner while the AI writes them -
+   the time so far, how practice works, and the exam date to add meanwhile. */
+.gen-progress { position: fixed; inset-inline-end: 20px; bottom: 20px; z-index: 900; width: min(360px, calc(100vw - 32px)); padding: 14px 16px; border-radius: var(--radius-lg); background: var(--bg-card, var(--bg-main)); border: 1px solid var(--border-strong); box-shadow: 0 8px 28px rgba(0, 0, 0, .14); display: grid; gap: 8px; }
+.gen-progress[hidden] { display: none; }
+.gen-progress__head { display: flex; align-items: center; gap: 10px; }
+.gen-progress__title { flex: 1; color: var(--text-primary); }
+.gen-progress__time { color: var(--text-secondary); font-size: var(--text-sm); }
+.gen-progress__spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--border-strong); border-top-color: var(--accent-purple); animation: gen-spin .9s linear infinite; flex-shrink: 0; }
+@keyframes gen-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .gen-progress__spinner { animation: none; } }
+.gen-progress__file { font-size: var(--text-sm); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gen-progress__tip { font-size: var(--text-sm); color: var(--text-primary); background: var(--bg-subtle); border-radius: var(--radius-md); padding: 8px 10px; line-height: 1.5; }
+.gen-progress__tip strong { display: block; margin-bottom: 2px; }
+.gen-progress .btn-sm { justify-self: start; }
+.gen-progress .btn-sm[hidden] { display: none; }
+@media (max-width: 600px) { .gen-progress { inset-inline: 16px; bottom: 16px; width: auto; } }
