@@ -2225,3 +2225,9 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 /* Three buttons at the foot of the review (23/10): they wrap on a phone. */
 .review-footer { flex-wrap: wrap; }
 @media (max-width: 600px) { .review-footer > button { flex: 1 1 100%; } }
+/* Practice's card is one block (23/10). */
+.home-hero.study-hero { grid-template-columns: 1fr; }
+.home-hero.study-hero .home-focus-actions { flex-direction: row; }
+/* A course row's ⋯ menu (23/10) opens just under the row, by its button. */
+.study-course { position: relative; }
+.study-course > .course-menu { top: calc(100% - 4px); }

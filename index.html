@@ -134,23 +134,11 @@
                 <div class="menu-item" id="nav-settings"><span data-icon="settings"></span> Settings</div>
             </div>
 
-            <div class="sidebar-highlight" id="sidebar-highlight">
-                <div class="sidebar-highlight__label">Up next</div>
-                <div class="sidebar-highlight__title" id="sidebar-next-title">Loading…</div>
-                <div class="sidebar-highlight__meta" id="sidebar-next-meta"></div>
-            </div>
         </div>
 
-        <!-- My courses (30/9): each course's status and exam countdown; a
-             click shows the facts and a Practice button. Filled by
-             renderSidebarCourses() in renderer.js; scrolls on short windows. -->
-        <div class="sidebar-courses" id="sidebar-courses" hidden>
-            <button type="button" class="sidebar-courses__head" id="sidebar-courses-toggle" aria-expanded="true" aria-controls="sidebar-courses-list">
-                <span>My courses</span>
-                <span class="sidebar-courses__chev" data-icon="chevronDown" data-icon-size="14" aria-hidden="true"></span>
-            </button>
-            <div class="sidebar-courses__list" id="sidebar-courses-list"></div>
-        </div>
+        <!-- (23/10) The sidebar is navigation only: the "Up next" box and the
+             course list repeated what Home and Practice say - the next exam
+             is under the name. -->
 
         <div class="sidebar-spacer"></div>
 
@@ -253,10 +241,14 @@
                     <button class="btn-primary home-hero__btn" id="home-study-btn"></button>
                     <ul class="home-ready__others" id="home-ready-others" hidden></ul>
                 </div>
-                <div class="home-hero__next">
-                    <div class="home-hero__label">Up Next Today</div>
-                    <div class="home-hero__title home-hero__title--next" id="home-next-title">Loading data...</div>
-                    <div class="home-hero__text" id="home-next-time">Please wait</div>
+                <!-- Today (23/10): the next thing on today's calendar, or the
+                     tasks due today - hidden on a free day. -->
+                <div class="home-hero__next" id="home-hero-next" hidden>
+                    <div id="home-next-today">
+                        <div class="home-hero__label" id="home-next-label">Up next today</div>
+                        <div class="home-hero__title home-hero__title--next" id="home-next-title" dir="auto"></div>
+                        <div class="home-hero__text" id="home-next-time" dir="auto"></div>
+                    </div>
                     <div class="home-hero__exam" id="home-next-exam" hidden>
                         <span class="home-hero__exam-label">Next exam</span>
                         <bdi class="home-hero__exam-name" id="home-next-exam-name"></bdi>
@@ -268,30 +260,9 @@
                 </div>
             </section>
 
-            <div class="dashboard-grid">
-                <div class="card home-card">
-                    <div class="home-card__head">
-                        <h2 class="home-card__title">Today's Timeline</h2>
-                        <a href="#" class="link-text" data-go="nav-weekly">To Planner</a>
-                    </div>
-                    <div class="timeline" id="home-timeline-list">
-                    </div>
-                </div>
-
-                <div class="card home-card">
-                    <div class="home-card__head">
-                        <h2 class="home-card__title">This week</h2>
-                        <a href="#" class="link-text" data-go="nav-weekly">To Planner</a>
-                    </div>
-                    <!-- Was 4 grey tiles with icons; a plain list reads faster. -->
-                    <ul class="week-list">
-                        <li><button type="button" class="week-list__row" data-go="nav-tasks"><span class="week-list__label">Open Tasks</span><span class="week-list__value" id="home-stat-tasks">0</span></button></li>
-                        <li><button type="button" class="week-list__row" data-go="nav-weekly"><span class="week-list__label">Upcoming Exams</span><span class="week-list__value" id="home-stat-exams">0</span></button></li>
-                        <li><button type="button" class="week-list__row" data-go="nav-weekly"><span class="week-list__label">Classes This Week</span><span class="week-list__value" id="home-stat-lessons">0</span></button></li>
-                        <li><button type="button" class="week-list__row" data-go="nav-weekly"><span class="week-list__label">Events This Week</span><span class="week-list__value" id="home-stat-events">0</span></button></li>
-                    </ul>
-                </div>
-            </div>
+            <!-- (23/10) "Today's timeline" and "This week" (four counts) are gone:
+                 the first said what the panel above says, the second gave
+                 numbers with nothing to do about them. -->
         </div>
 
         <!-- Planner View (was "Weekly Plan"; ids stay nav-weekly / view-weekly
@@ -463,16 +434,11 @@
                             <div class="daily-goal__bar" id="study-goal-bar" role="progressbar" aria-valuemin="0"><span class="daily-goal__fill" id="study-goal-fill"></span></div>
                         </div>
                         <button class="btn-primary home-hero__btn" id="start-study-btn">Start smart practice</button>
-                    </div>
-                    <div class="home-hero__next study-hero__side">
-                        <ul class="hero-stats">
-                            <li><span class="hero-stats__label">Questions</span><span class="hero-stats__value ms-tabular" id="study-total-count">0</span></li>
-                            <li><span class="hero-stats__label">Answered so far</span><span class="hero-stats__value ms-tabular" id="study-reviews-count">0</span></li>
-                        </ul>
+                        <!-- (23/10) one block: the side half's two counts and "Full exam"
+                             left (a course's ⋯ has its exam) - these two moved under the button -->
                         <div class="home-focus-actions">
                             <button class="home-hero__link" id="generate-study-btn"><span data-icon="file" data-icon-size="15"></span> Make questions from a file</button>
                             <button class="home-hero__link" id="manage-study-btn"><span data-icon="list" data-icon-size="15"></span> My questions</button>
-                            <button class="home-hero__link" id="full-exam-link"><span data-icon="clock" data-icon-size="15"></span> Full exam</button>
                         </div>
                     </div>
                 </section>
@@ -493,26 +459,6 @@
                     </div>
                     <div class="daily-q__actions">
                         <button class="btn-primary btn-sm" id="daily-q-btn" hidden></button>
-                    </div>
-                </div>
-
-                <!-- "What repeats in the exam" vs "what you know" (3/10): the course's
-                     past exams analysed, each repeating topic joined with the
-                     student's answers - where an hour of practice pays most.
-                     renderExamMap() in renderer.js. -->
-                <div class="card exam-map" id="exam-map" hidden>
-                    <div class="exam-map__head">
-                        <div>
-                            <div class="exam-map__label">What repeats in the exam</div>
-                            <div class="exam-map__course" id="exam-map-course" dir="auto" translate="no"></div>
-                        </div>
-                        <select class="input-field exam-map__pick" id="exam-map-pick" aria-label="Course" hidden></select>
-                    </div>
-                    <p class="exam-map__text" id="exam-map-text"></p>
-                    <ul class="exam-map__list" id="exam-map-list"></ul>
-                    <div class="exam-map__actions">
-                        <button class="btn-primary btn-sm" id="exam-map-btn" hidden></button>
-                        <button class="btn-link" id="exam-map-more" hidden></button>
                     </div>
                 </div>
 
@@ -565,12 +511,11 @@
                 <div class="card study-courses" id="study-courses" hidden>
                     <div class="study-way__text">
                         <h3 class="section-title">Practice one course</h3>
-                        <p class="settings-hint">Pick a course - or one file inside it - to practice only that. "Ready now" is what's due today; you can always practice the rest too.</p>
+                        <p class="settings-hint">Only one course. Its exam and its files are under ⋯.</p>
                     </div>
                     <div class="study-courses__list" id="study-courses-list"></div>
                 </div>
 
-                <p class="settings-hint study-to-progress">How ready you are for each exam, and how reliable your "I'm sure" is: <a href="#" class="link-text" id="study-to-progress-link">see Progress</a>.</p>
             </div>
 
             <!-- Review generated questions before they enter the deck -->
@@ -1007,6 +952,27 @@
                     <span><i class="rd-dot rd-unseen"></i>Not practiced</span>
                 </div>
                 <div id="readiness-list"></div>
+            </div>
+
+        <!-- "What repeats in the exam" vs "what you know" (3/10; moved here from
+             Practice 23/10 - it's analysis, not practice): the course's
+                 past exams analysed, each repeating topic joined with the
+                 student's answers - where an hour of practice pays most.
+                 renderExamMap() in renderer.js. -->
+            <div class="card exam-map" id="exam-map" hidden>
+                <div class="exam-map__head">
+                    <div>
+                        <div class="exam-map__label">What repeats in the exam</div>
+                        <div class="exam-map__course" id="exam-map-course" dir="auto" translate="no"></div>
+                    </div>
+                    <select class="input-field exam-map__pick" id="exam-map-pick" aria-label="Course" hidden></select>
+                </div>
+                <p class="exam-map__text" id="exam-map-text"></p>
+                <ul class="exam-map__list" id="exam-map-list"></ul>
+                <div class="exam-map__actions">
+                    <button class="btn-primary btn-sm" id="exam-map-btn" hidden></button>
+                    <button class="btn-link" id="exam-map-more" hidden></button>
+                </div>
             </div>
 
             <!-- Moved here from Study (30/9): what your answers say about you. -->
