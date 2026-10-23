@@ -2463,7 +2463,14 @@ function closeCourseMenu() {
     document.removeEventListener('click', closeCourseMenuOutside, true);
     document.removeEventListener('keydown', closeCourseMenuKey);
 }
-function closeCourseMenuOutside(e) { if (courseMenuEl && !courseMenuEl.contains(e.target)) closeCourseMenu(); }
+function closeCourseMenuOutside(e) {
+    if (!courseMenuEl || courseMenuEl.contains(e.target)) return;
+    // (its own ⋯: left to the button, which closes it - closing here first
+    // made the button open it again)
+    const btn = e.target.closest && e.target.closest('.course-menu-btn');
+    if (btn && btn.closest('.folder-card') === courseMenuEl.parentElement) return;
+    closeCourseMenu();
+}
 function closeCourseMenuKey(e) { if (e.key === 'Escape') closeCourseMenu(); }
 function openCourseMenu(anchor, folder, folders) {
     const wasOpenHere = courseMenuEl && courseMenuEl.dataset.id === String(folder.id);
