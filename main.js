@@ -5060,8 +5060,9 @@ ipcMain.handle('delete-events', async (event, ids) => {
 // =====================================
 // Folders & Files
 // =====================================
-ipcMain.handle('get-folders', async () => {
-  try { return await api.getFolders(); } catch (err) { return []; }
+ipcMain.handle('get-folders', async (event, opts = {}) => {
+  // ({ strict: true }: a failure is { error }, not "no courses" - 23/10)
+  try { return await api.getFolders(); } catch (err) { return opts && opts.strict ? { error: err.message } : []; }
 });
 ipcMain.handle('save-folder', async (event, newFolder) => {
   try { return await api.createFolder(newFolder); } catch (err) { return { error: err.message }; }

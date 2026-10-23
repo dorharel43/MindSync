@@ -622,6 +622,7 @@
         'Choose the course to attach them to.': 'צריך לבחור לאיזה קורס לצרף אותן.', 'Could not move them: {e}': 'לא הצלחנו להעביר אותן: {e}',
         'The questions of "{c}" are in {d} now.': 'השאלות של "{c}" נמצאות עכשיו ב{d}.', '"{c}" is a course now.': '"{c}" הוא קורס עכשיו.',
         'Nothing to move.': 'אין מה להעביר.',
+        'That name is one of your courses - merge it instead.': 'השם הזה הוא אחד הקורסים שלך - כדאי למזג אותו במקום זה.',
         'Course options': 'אפשרויות הקורס', 'Rename': 'שינוי שם', 'Merge into another course…': 'מיזוג לתוך קורס אחר…',
         'Rename the course': 'שינוי שם הקורס', 'Its files, questions and exams go with it under the new name.': 'הקבצים, השאלות והמבחנים שלו עוברים איתו לשם החדש.',
         'Could not rename the course: {e}': 'לא הצלחנו לשנות את שם הקורס: {e}', 'Renamed to {c}.': 'השם שונה ל{c}.',

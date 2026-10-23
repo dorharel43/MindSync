@@ -2407,6 +2407,8 @@ function fileRoleSelect(role, label) {
 async function loadAndRenderFolders() {
     if (!materialsGrid) return;
     const folders = await ipcRenderer.invoke('get-folders');
+    // (the sidebar lists courses with no questions too - a new one shows at once)
+    if (Array.isArray(folders)) { knownFolders = folders; renderSidebarCourses(); }
     materialsGrid.innerHTML = '';
 
     const allFolder = document.createElement('div');
@@ -4171,10 +4173,13 @@ function sidebarCoursesCollapsed() {
 // none of them. These add it: knownFolders is the student's courses as last
 // loaded.
 let knownFolders = [];
+// The courses, or null when they didn't load (then nothing may be called
+// a "ghost" - every course would look like one).
 async function loadKnownFolders() {
-    const f = await ipcRenderer.invoke('get-folders').catch(() => null);
-    if (Array.isArray(f)) knownFolders = f;
-    return knownFolders;
+    const f = await ipcRenderer.invoke('get-folders', { strict: true }).catch(() => null);
+    if (!Array.isArray(f)) return null;
+    knownFolders = f;
+    return f;
 }
 // Courses no question is in yet.
 function coursesWithoutQuestions(subjects) {
@@ -6332,8 +6337,9 @@ async function loadStudyHome() {
     }
 
     renderStudyExams(stats.subjects || []);
-    const [, courseFiles] = await Promise.all([loadKnownFolders(), ipcRenderer.invoke('get-files-light').catch(() => [])]);
-    renderStudyOrphans(stats.subjects || []);
+    const [foldersNow, courseFiles] = await Promise.all([loadKnownFolders(), ipcRenderer.invoke('get-files-light').catch(() => [])]);
+    if (foldersNow) renderStudyOrphans(stats.subjects || []);
+    else { const c = document.getElementById('study-orphan'); if (c) c.hidden = true; }
     renderStudyCourses(stats.subjects || [], studyItemsCache || [], courseFiles);
     renderSidebarCourses(stats.subjects || []);
     const startBtn = document.getElementById('start-study-btn');
