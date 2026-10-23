@@ -603,6 +603,22 @@ body.dark-mode .day-column {
 .exam-course-new { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); }
 .exam-course-new .input-field { flex: 1; min-width: 0; }
 .exam-course-option--new { border-style: dashed; }
+/* A course's menu (23/10): ⋯ on its card. */
+.folder-card { position: relative; }
+.course-menu-btn { font-size: 1.1rem; line-height: 1; letter-spacing: 1px; }
+.course-menu {
+    position: absolute; top: calc(100% - 6px); inset-inline-end: 8px; z-index: 30;
+    min-width: 180px; padding: var(--space-1); display: flex; flex-direction: column;
+    background: var(--bg-card, var(--bg-main)); border: 1px solid var(--border-color);
+    border-radius: var(--radius-md); box-shadow: 0 8px 24px rgba(0, 0, 0, .12);
+}
+.course-menu__item {
+    text-align: start; padding: var(--space-2) var(--space-3); border: 0; background: none;
+    color: var(--text-primary); font: inherit; font-size: var(--text-sm); border-radius: var(--radius-sm, 6px); cursor: pointer;
+}
+.course-menu__item:hover, .course-menu__item:focus-visible { background: var(--accent-subtle, rgba(0,0,0,.05)); outline: none; }
+.course-menu__item.is-danger { color: var(--status-danger); }
+.merge-course-modal { width: min(460px, 92vw); }
 /* The course pickers of the review screen and the syllabus import (18/10). */
 .review-course__hint { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); margin-top: var(--space-1); }
 #review-course-new, #syllabus-course-new { margin-top: var(--space-2); }

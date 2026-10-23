@@ -5066,6 +5066,13 @@ ipcMain.handle('get-folders', async () => {
 ipcMain.handle('save-folder', async (event, newFolder) => {
   try { return await api.createFolder(newFolder); } catch (err) { return { error: err.message }; }
 });
+// A course renamed / merged into another (23/10) - see routes/folders.js.
+ipcMain.handle('rename-folder', async (event, id, name) => {
+  try { return await api.renameFolder(id, String(name || '').trim()); } catch (err) { return { error: err.message }; }
+});
+ipcMain.handle('merge-folder', async (event, id, intoId) => {
+  try { return await api.mergeFolder(id, intoId); } catch (err) { return { error: err.message }; }
+});
 ipcMain.handle('delete-folder', async (event, id) => {
   try { return await api.deleteFolder(id); } catch (err) { return { error: err.message }; }
 });

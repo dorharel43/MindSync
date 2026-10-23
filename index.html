@@ -1412,6 +1412,21 @@
         </div>
     </div>
 
+    <!-- Merge a course into another (23/10): renderer.js mergeCourseUI. -->
+    <div id="merge-course-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content card merge-course-modal">
+            <h3 id="merge-course-title" dir="auto"></h3>
+            <p class="smart-help" id="merge-course-text" dir="auto"></p>
+            <label class="form-label" for="merge-course-into">Merge into</label>
+            <select id="merge-course-into" class="input-field"></select>
+            <p class="settings-hint">If both have an exam map, the chosen course's is kept - it then offers a new analysis with all the past exams.</p>
+            <div class="smart-actions">
+                <button id="merge-course-confirm" class="btn-primary">Merge</button>
+                <button id="merge-course-cancel" class="btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 4. Upload File Modal -->
     <!-- Upload: one file, many files, or a whole folder. The list shows each
          file's status as it uploads, so a big batch never looks frozen. -->
