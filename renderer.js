@@ -4628,7 +4628,8 @@ function renderSidebarExam(events, todayIso) {
     const days = Math.round((new Date(y, m - 1, d) - today0) / 864e5);
     el.textContent = days === 0 ? t('{title} - today', { title: next.title })
         : days === 1 ? t('{title} - tomorrow', { title: next.title })
-            : t('{title} - in {n} days', { title: next.title, n: days });
+            : days === 2 ? t('{title} - in 2 days', { title: next.title })   // ("יומיים")
+                : t('{title} - in {n} days', { title: next.title, n: days });
     el.title = el.textContent;
 }
 let homeRenderTicket = 0;
@@ -4855,8 +4856,9 @@ const ONBOARDING_STEPS = [
         title: 'Upload a lecture - get practice questions',
         text: 'This week\'s lecture or your notes. MindSync writes practice questions from it - you look them over, then practice right away.',
         isDone: (st) => st.questions > 0,
-        // Uploaded already (before this order): make them from it.
-        actions: (st) => st.files > 0
+        // A lecture uploaded already (before this order): make them from it.
+        // (past exams alone don't count - questions come from the material)
+        actions: (st) => (st.files || 0) > (st.pastExams || 0)
             ? [{ label: 'Make questions', primary: true, run: () => goAndClick('nav-study', 'generate-study-btn') },
                 { label: 'Upload a lecture', run: () => uploadForQuestions() }]
             : [{ label: 'Upload a lecture', primary: true, run: () => uploadForQuestions() }]
@@ -8144,16 +8146,32 @@ async function showGenProgress(fileName) {
     const examBtn = document.getElementById('gen-progress-exam');
     examBtn.hidden = true;
     box.hidden = false;
+    placeToastsOverCard();
     const events = await ipcRenderer.invoke('get-events').catch(() => []);
     const today = localIsoDate(new Date());
     const hasExam = Array.isArray(events) && events.some(e => e.type === 'exam' && (!e.date || e.date >= today));
-    if (!box.hidden && Array.isArray(events) && !hasExam) examBtn.hidden = false;
+    if (!box.hidden && Array.isArray(events) && !hasExam) { examBtn.hidden = false; placeToastsOverCard(); }
 }
 function hideGenProgress() {
     clearInterval(genProgressTimer);
     const box = document.getElementById('gen-progress');
     if (box) box.hidden = true;
+    placeToastsOverCard();
 }
+// Toasts share the card's corner (review fix): while it's up they sit just
+// above it - a toast with a button ("Make practice questions from…?") was
+// under the card and couldn't be pressed.
+function placeToastsOverCard() {
+    const box = document.getElementById('gen-progress');
+    const h = box && !box.hidden ? box.offsetHeight : 0;
+    document.documentElement.style.setProperty('--gen-progress-h', h ? `${h + 12}px` : '0px');
+}
+const genProgressClose = document.getElementById('gen-progress-close');
+if (genProgressClose) genProgressClose.onclick = () => {
+    const box = document.getElementById('gen-progress');
+    if (box) box.hidden = true;   // (the timer runs on; the questions open when ready)
+    placeToastsOverCard();
+};
 const genProgressExamBtn = document.getElementById('gen-progress-exam');
 if (genProgressExamBtn) genProgressExamBtn.onclick = () => { genProgressExamBtn.hidden = true; goAndClick('nav-weekly', 'trigger-add-event'); };
 

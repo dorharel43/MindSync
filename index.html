@@ -1564,11 +1564,13 @@
 
     <!-- Writing questions from a file (23/10): a minute or two - said here,
          with how practice works, and the exam date to add meanwhile. -->
-    <div class="gen-progress" id="gen-progress" role="status" aria-live="polite" hidden>
+    <div class="gen-progress" id="gen-progress" hidden>
         <div class="gen-progress__head">
             <span class="gen-progress__spinner" aria-hidden="true"></span>
-            <strong class="gen-progress__title">Writing your questions…</strong>
-            <span class="gen-progress__time ms-tabular" id="gen-progress-time" translate="no">0:00</span>
+            <!-- (only the title is announced - not the clock every second) -->
+            <strong class="gen-progress__title" role="status" aria-live="polite">Writing your questions…</strong>
+            <span class="gen-progress__time ms-tabular" id="gen-progress-time" translate="no" aria-hidden="true">0:00</span>
+            <button class="gen-progress__close" id="gen-progress-close" type="button" aria-label="Hide - the questions still open when they're ready" title="Hide - the questions still open when they're ready">×</button>
         </div>
         <div class="gen-progress__file" id="gen-progress-file" dir="auto" translate="no"></div>
         <div class="settings-hint">Usually a minute or two. You can keep using MindSync - they open here when they're ready.</div>

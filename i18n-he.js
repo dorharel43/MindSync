@@ -577,9 +577,10 @@
         'Then everything you practice is timed for it. Write it the way you\'d say it, e.g. "מבחן בסטטיסטיקה ב-14.2 ב-9".': 'ואז כל התרגול מתוזמן אליו. כותבים כמו שאומרים, למשל "מבחן בסטטיסטיקה ב-14.2 ב-9".',
         'Add and start practicing': 'הוספה והתחלת תרגול', 'New questions': 'שאלות חדשות',
         'Writing your questions…': 'כותבת את השאלות שלך…', "Usually a minute or two. You can keep using MindSync - they open here when they're ready.": 'בדרך כלל דקה או שתיים. אפשר להמשיך להשתמש ב-MindSync - השאלות ייפתחו כשיהיו מוכנות.',
-        'How practice works': 'איך התרגול עובד', 'Before each answer you say how sure you are. What you were sure about and got wrong comes back first.': 'לפני כל תשובה בוחרים כמה בטוחים. מה שסימנת "בטוח" וטעית בו - חוזר ראשון.',
+        'How practice works': 'איך התרגול עובד', 'Before each answer you say how sure you are. What you were sure about and got wrong comes back first.': 'לפני כל תשובה בוחרים כמה בטוחים. מה שסימנת "בוודאות" וטעית בו - חוזר ראשון.',
         'Meanwhile: add your exam date': 'בינתיים: להוסיף את תאריך המבחן',
-        '{title} - today': '{title} - היום', '{title} - tomorrow': '{title} - מחר', '{title} - in {n} days': '{title} - בעוד {n} ימים',
+        '{title} - today': '{title} - היום', '{title} - tomorrow': '{title} - מחר', '{title} - in {n} days': '{title} - בעוד {n} ימים', '{title} - in 2 days': '{title} - בעוד יומיים',
+        "Hide - the questions still open when they're ready": 'הסתרה - השאלות עדיין ייפתחו כשיהיו מוכנות',
 
         // ---- "Explain it" (23/10) ----
         'Explain why': 'להסביר למה', "Didn't get it? Explain why": 'לא הצלחת? להסביר למה', 'Explaining…': 'מסבירה…',

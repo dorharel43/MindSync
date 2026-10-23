@@ -2217,3 +2217,11 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 .gen-progress .btn-sm { justify-self: start; }
 .gen-progress .btn-sm[hidden] { display: none; }
 @media (max-width: 600px) { .gen-progress { inset-inline: 16px; bottom: 16px; width: auto; } }
+/* (review fix) Under windows, over the page; toasts move up above it. */
+.gen-progress { z-index: 350; }
+.ms-toast-container { bottom: calc(var(--space-4) + var(--gen-progress-h, 0px)); }
+.gen-progress__close { background: none; border: 0; padding: 0 4px; font-size: 20px; line-height: 1; color: var(--text-secondary); cursor: pointer; }
+.gen-progress__close:hover { color: var(--text-primary); }
+/* Three buttons at the foot of the review (23/10): they wrap on a phone. */
+.review-footer { flex-wrap: wrap; }
+@media (max-width: 600px) { .review-footer > button { flex: 1 1 100%; } }
