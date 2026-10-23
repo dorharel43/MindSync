@@ -583,6 +583,14 @@
         'Try again': 'לנסות שוב', 'The AI did not return a summary.': 'ה-AI לא החזיר סיכום.', 'Copied': 'הועתק', 'No file was specified.': 'לא צוין קובץ.',
         'Could not load this file.': 'לא הצלחתי לטעון את הקובץ.', 'Saved': 'נשמר', 'KaTeX not installed - formulas will show as code.': 'KaTeX לא מותקן - נוסחאות יוצגו כקוד.',
 
+        // ---- "Explain it" (23/10) ----
+        'Explain why': 'להסביר למה', "Didn't get it? Explain why": 'לא הצלחת? להסביר למה', 'Explaining…': 'מסבירה…',
+        'Why this is the answer': 'למה זו התשובה', 'Where it went wrong': 'איפה זה השתבש', 'A common trap': 'מלכודת נפוצה',
+        'From your material': 'מהחומר שלך', 'Written by AI from your material - it can be wrong.': 'נכתב על ידי AI על סמך החומר שלך, ועלול לטעות.',
+        'Written by AI - it can be wrong.': 'נכתב על ידי AI ועלול לטעות.',
+        "Couldn't explain it right now. Try again in a moment.": 'לא הצלחתי להסביר כרגע. אפשר לנסות שוב בעוד רגע.',
+        'Last time ({date}) you wrote:': 'בפעם הקודמת ({date}) כתבת:', 'Last time ({date}), on another version of this question:': 'בפעם הקודמת ({date}), בגרסה אחרת של השאלה:', "Last time ({date}) you didn't get this one.": 'בפעם הקודמת ({date}) התשובה לא הייתה ידועה.',
+
         // ---- AI / server errors ----
         "You've used today's AI allowance. It resets at midnight.": 'נוצלה המכסה היומית של ה-AI. היא מתאפסת בחצות.',
         'The AI answer could not be read. Try again.': 'לא הצלחתי לקרוא את תשובת ה-AI. אפשר לנסות שוב.',
@@ -850,6 +858,7 @@
         // Settings / AI
         [/^(.+) will write your summaries and questions from now on\.$/, 'מעכשיו $1 יכתוב את הסיכומים והשאלות.'],
         [/^Saved \((.+)\)\. Paste a new one below to replace it\.$/, 'נשמר ($1). אפשר להדביק למטה מפתח חדש כדי להחליף.'],
+        [/^You've used today's (\d+) explanations - the count resets at midnight\. Your answers are still checked\.$/, 'נוצלו היום $1 ההסברים. המונה מתאפס בחצות, והתשובות ממשיכות להיבדק.'],
         [/^You've used today's (\d+) AI file actions \(questions, summaries, syllabi\)\. They reset at midnight\.$/, 'נוצלו היום $1 פעולות ה-AI על קבצים (שאלות, סיכומים, סילבוסים). הן מתאפסות בחצות.'],
         [/^Gemini did not respond within (\d+)s \(likely a Google outage or a network stall\)\. Try again in a few minutes\.$/, 'Gemini לא ענה תוך $1 שניות (כנראה תקלה אצל Google או ברשת). אפשר לנסות שוב בעוד כמה דקות.'],
         [/^Could not reach Gemini: (.+)$/, 'לא הצלחתי להגיע ל-Gemini: $1'],

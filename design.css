@@ -2181,3 +2181,22 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 .full-attempt[aria-pressed="true"] { border-color: var(--accent-purple); background: var(--accent-subtle); cursor: default; }
 .full-attempt__meta { color: var(--text-secondary); font-variant-numeric: tabular-nums; unicode-bidi: isolate; }
 .full-attempt__grade { font-weight: var(--font-semibold); font-variant-numeric: tabular-nums; }
+
+/* "Explain it" (23/10): why the answer is the answer, what went wrong, and
+   the line of the material it rests on - under the answer, in practice and
+   in the mock exam's results. "Last time…" sits above it, quieter. */
+.study-explain-row { margin: 12px 0 4px; }
+.study-explain-row[hidden] { display: none; }
+.explain-box { margin: 10px 0 14px; padding: 12px 14px; border-radius: var(--radius-md); background: var(--bg-subtle); line-height: 1.55; }
+.explain-box[hidden], .explain-box__part[hidden] { display: none; }
+.explain-box__part + .explain-box__part { margin-top: 10px; }
+.explain-box__label { font-size: var(--text-sm); font-weight: var(--font-semibold); color: var(--text-secondary); margin-bottom: 2px; }
+.explain-box__text { color: var(--text-primary); white-space: pre-line; overflow-wrap: anywhere; }
+.explain-box__quote blockquote { margin: 0; padding-inline-start: 10px; border-inline-start: 3px solid var(--border-strong); color: var(--text-secondary); font-style: italic; }
+.explain-box--error { color: var(--text-secondary); font-size: var(--text-sm); }
+.exam-answer__explain { margin-top: 8px; }
+.study-last-mistake { margin-bottom: 14px; padding: 10px 14px; border-radius: var(--radius-md); border: 1px dashed var(--border-strong); font-size: var(--text-sm); }
+.study-last-mistake[hidden] { display: none; }
+.study-last-mistake__title { color: var(--text-secondary); }
+.study-last-mistake__yours { color: var(--text-primary); }
+.study-last-mistake__slip { margin-top: 4px; color: var(--text-primary); overflow-wrap: anywhere; }

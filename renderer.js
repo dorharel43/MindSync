@@ -7246,8 +7246,138 @@ function revealAnswer(check = null) {
     if (overrideHint) overrideHint.hidden = dontKnow;
     if (dontKnow) outcomePrompt.textContent = 'Marked as "didn\'t know" - it comes back tomorrow.';
 
+    showLastMistake(item);
+    showStudyExplain(item, check, dontKnow);
     document.getElementById('study-confidence-step').hidden = true;
     document.getElementById('study-answer-step').hidden = false;
+}
+
+// ---- "Explain it" (23/10) ----------------------------------------------------
+// After a mistake: why the answer is the answer, what went wrong (in what was
+// typed - or, with nothing typed, the usual trap) and the line of the
+// material it rests on. The server saves it on the question; the next time
+// the question comes up, "Last time…" shows what went wrong (after answering,
+// never before). 20 a day on the web - asked only when pressed.
+const explainCache = new Map();   // question + what was typed -> its explanation (no second AI call)
+// Today's explanations are used up: said at once, no call - until the day
+// changes (a page left open overnight). Only the explanations' own cap: a
+// key's "quota … resets at 10:00" (desktop) mustn't turn them off all day.
+let explainOff = null;            // { msg, day }
+const explainOffNow = () => (explainOff && explainOff.day === new Date().toDateString() ? explainOff.msg : '');
+
+function renderExplanation(box, res, typed) {
+    box.innerHTML = `
+        <div class="explain-box__part"><div class="explain-box__label"></div><div class="explain-box__text" dir="auto" translate="no"></div></div>
+        <div class="explain-box__part explain-box__slip"><div class="explain-box__label"></div><div class="explain-box__text" dir="auto" translate="no"></div></div>
+        <div class="explain-box__part explain-box__quote"><div class="explain-box__label"></div><blockquote class="explain-box__text" dir="auto" translate="no"></blockquote></div>
+        <div class="ai-note"></div>`;
+    const parts = box.querySelectorAll('.explain-box__part');
+    parts[0].querySelector('.explain-box__label').textContent = t('Why this is the answer');
+    setMathText(parts[0].querySelector('.explain-box__text'), res.right || '');
+    parts[1].querySelector('.explain-box__label').textContent = t(typed ? 'Where it went wrong' : 'A common trap');
+    setMathText(parts[1].querySelector('.explain-box__text'), res.slip || '');
+    parts[1].hidden = !res.slip;
+    const label = parts[2].querySelector('.explain-box__label');
+    label.textContent = t('From your material');
+    if (res.file) {
+        // <bdi>: a Hebrew file name inside an English line keeps its order.
+        const b = document.createElement('bdi');
+        b.textContent = fileLabel(res.file);
+        label.append(' — ', b);
+    }
+    parts[2].querySelector('.explain-box__text').textContent = res.quote || '';
+    parts[2].hidden = !res.quote;
+    box.querySelector('.ai-note').textContent = t(res.grounded ? 'Written by AI from your material - it can be wrong.' : 'Written by AI - it can be wrong.');
+    box.classList.remove('explain-box--error');
+    box.hidden = false;
+}
+
+function showExplainError(box, msg) {
+    box.innerHTML = '';
+    box.classList.add('explain-box--error');
+    box.textContent = isAiLimit(msg) ? t(msg) : t('Couldn\'t explain it right now. Try again in a moment.');
+    box.hidden = false;
+}
+
+// item: the question as shown (a new version has its own text). Shared by
+// practice and the mock exam's results.
+async function explainMistake(item, typed, box, btn, course) {
+    const key = `${item.id}|${item.question}|${typed}`;
+    box.dataset.for = key;
+    if (explainOffNow()) { showExplainError(box, explainOffNow()); btn.hidden = true; return; }
+    let res = explainCache.get(key);
+    if (!res) {
+        const label = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = t('Explaining…');
+        // The student's own solution standing in for a missing answer is
+        // theirs, not the material's - it may be wrong.
+        const own = !String(item.answer || '').trim() && !!String(item.mySolution || '').trim();
+        res = await withTimeout(ipcRenderer.invoke('explain-mistake', {
+            itemId: item.id, question: item.question, expected: item.answer || item.mySolution || '', typed, mode: item.mode,
+            solutionSource: own ? 'user' : (item.solutionSource || 'document'), sourceFile: item.sourceFile || '', course: course || item.category || ''
+        }).catch(e => ({ error: e.message })), 75000);
+        if (res && res.right) explainCache.set(key, res);
+        if (res && res.error && /\bexplanations\b/.test(res.error) && isAiLimit(res.error)) explainOff = { msg: res.error, day: new Date().toDateString() };
+        // The button is this card's still (a practice card moved on resets it).
+        if (box.dataset.for === key) { btn.disabled = false; btn.textContent = label; }
+    }
+    if (!box.isConnected || box.dataset.for !== key) return;   // moved on meanwhile
+    if (!res || !res.right) {
+        showExplainError(box, res && res.error);
+        btn.hidden = !!explainOffNow();   // used up for today: no button that can only say so again
+        return;
+    }
+    renderExplanation(box, res, !!typed);
+    btn.hidden = true;
+}
+
+// Practice: offered after anything but a right answer - wrong, half right,
+// "I don't know", a check that couldn't run, or answered in the head (only
+// the student knows how that went; the outcome buttons move on at once).
+function showStudyExplain(item, check, dontKnow) {
+    const row = document.getElementById('study-explain-row');
+    const btn = document.getElementById('study-explain-btn');
+    const box = document.getElementById('study-explain');
+    if (!row || !btn || !box) return;
+    box.hidden = true;
+    box.innerHTML = '';
+    box.dataset.for = '';
+    const typed = !dontKnow && check && check.typed ? check.typed : '';
+    const offer = !studyState.checkOff && (!check || dontKnow || (check.verdict ? check.verdict !== 'correct' : !isAiLimit(check.failed)));
+    row.hidden = !offer;
+    btn.hidden = false;
+    btn.disabled = false;   // (the last card's explanation may still be on its way)
+    btn.textContent = t(check ? 'Explain why' : 'Didn\'t get it? Explain why');
+    btn.onclick = () => explainMistake(item, typed, box, btn, item.category || (studyState.session && studyState.session.category) || '');
+}
+
+// The last mistake explained on this question: what was written (or that it
+// wasn't known) and what went wrong - shown after answering, so the reason
+// sticks where it went wrong before.
+function showLastMistake(item) {
+    const box = document.getElementById('study-last-mistake');
+    if (!box) return;
+    const m = item.lastMistake;
+    box.hidden = !(m && (m.slip || m.right));
+    if (box.hidden) return;
+    const when = m.at ? new Date(m.at) : null;
+    const date = when && !isNaN(when) ? when.toLocaleDateString(I18N.lang === 'he' ? 'he-IL' : 'en-GB', { day: 'numeric', month: 'short' }) : '';
+    const title = document.getElementById('study-last-mistake-title');
+    // Another version of it last time (other numbers): what was written then
+    // would only confuse - what went wrong still holds.
+    const sameText = !m.question || String(item.question || '').trim().slice(0, 400).trim() === m.question;
+    title.textContent = !sameText ? t('Last time ({date}), on another version of this question:', { date })
+        : m.typed ? t('Last time ({date}) you wrote:', { date }) : t('Last time ({date}) you didn\'t get this one.', { date });
+    if (m.typed && sameText) {
+        const yours = document.createElement('span');
+        yours.className = 'study-last-mistake__yours';
+        yours.dir = 'auto';
+        yours.translate = false;
+        yours.textContent = ` "${m.typed.length > 160 ? `${m.typed.slice(0, 160)}…` : m.typed}"`;
+        title.append(yours);
+    }
+    setMathText(document.getElementById('study-last-mistake-slip'), m.slip || m.right);
 }
 
 // One answer is saved at a time (30/9): a double click on "Next" or an
@@ -7700,6 +7830,18 @@ function renderExamResult(saved, results, stopReason, run) {
         const right = r.answer || cutMathText(item.answer || '', 400);
         setMathText(el.querySelector('.exam-answer__correct'), right);
         el.querySelector('.exam-answer__right').hidden = !right || r.verdict === 'correct';
+        // "Explain it" (23/10): for what wasn't right - not when the check didn't run.
+        if (['wrong', 'partial', 'blank'].includes(r.verdict)) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn-secondary btn-sm exam-answer__explain';
+            btn.textContent = t('Explain why');
+            const box = document.createElement('div');
+            box.className = 'explain-box';
+            box.hidden = true;
+            btn.onclick = () => explainMistake(item, a.typed || '', box, btn, run.course);
+            el.append(btn, box);
+        }
         list.append(el);
     });
 
