@@ -550,6 +550,21 @@
                     </div>
                 </div>
 
+                <!-- "Ghost courses" (23/10): questions under a name that is none
+                     of the courses - attach them, or make the name a course.
+                     renderer.js renderStudyOrphans. -->
+                <div class="card study-orphan" id="study-orphan" hidden>
+                    <p class="study-orphan__text" id="study-orphan-text" dir="auto"></p>
+                    <div class="study-orphan__row" id="study-orphan-attach-row">
+                        <select id="study-orphan-into" class="input-field" aria-label="Attach them to"></select>
+                        <button class="btn-primary btn-sm" id="study-orphan-attach">Attach to this course</button>
+                    </div>
+                    <div class="study-orphan__row">
+                        <button class="btn-secondary btn-sm" id="study-orphan-make">Make it a course</button>
+                        <button class="btn-link" id="study-orphan-later">Not now</button>
+                    </div>
+                </div>
+
                 <div class="card study-courses" id="study-courses" hidden>
                     <div class="study-way__text">
                         <h3 class="section-title">Practice one course</h3>

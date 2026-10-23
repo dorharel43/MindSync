@@ -5070,6 +5070,10 @@ ipcMain.handle('save-folder', async (event, newFolder) => {
 ipcMain.handle('rename-folder', async (event, id, name) => {
   try { return await api.renameFolder(id, String(name || '').trim()); } catch (err) { return { error: err.message }; }
 });
+// A name that is no course into a course (23/10: the "ghost courses" card).
+ipcMain.handle('absorb-course-name', async (event, id, name) => {
+  try { return await api.absorbCourseName(id, String(name || '')); } catch (err) { return { error: err.message }; }
+});
 ipcMain.handle('merge-folder', async (event, id, intoId) => {
   try { return await api.mergeFolder(id, intoId); } catch (err) { return { error: err.message }; }
 });

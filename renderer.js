@@ -3932,7 +3932,7 @@ async function loadAndRenderProgress() {
 // Learning part of Progress (30/9): exam readiness per course, then the
 // panels about how well you judge what you know (moved here from Study).
 async function renderLearningProgress() {
-    const stats = await ipcRenderer.invoke('get-study-stats').catch(() => null);
+    const [stats] = await Promise.all([ipcRenderer.invoke('get-study-stats').catch(() => null), loadKnownFolders()]);
     if (!stats || stats.error) return;
     renderReadiness(stats.subjects || []);
     renderSidebarCourses(stats.subjects || []);
@@ -4050,6 +4050,7 @@ function renderReadiness(subjects) {
         btn.onclick = () => goAndClick('nav-study', 'generate-study-btn');
         empty.append(p, btn);
         list.append(empty);
+        appendCoursesWithoutQuestions(list, subjects);
         readinessFocus = null;
         return;
     }
@@ -4115,12 +4116,33 @@ function renderReadiness(subjects) {
         row.append(head, bar, foot);
         list.append(row);
     });
+    appendCoursesWithoutQuestions(list, subjects);
     if (focusRow) {
         focusRow.classList.add('is-focus');
         focusRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
         setTimeout(() => focusRow.classList.remove('is-focus'), 2200);
     }
     readinessFocus = null;
+}
+// "No questions yet: A, B" under the readiness list (23/10) - each opens the
+// course's files.
+function appendCoursesWithoutQuestions(list, subjects) {
+    const empties = coursesWithoutQuestions(subjects);
+    if (!empties.length) return;
+    const p = document.createElement('p');
+    p.className = 'readiness-empties ms-muted ms-text-sm';
+    p.append(document.createTextNode(t('No questions yet:') + ' '));
+    empties.forEach((f, i) => {
+        if (i) p.append(document.createTextNode(', '));
+        const a = document.createElement('button');
+        a.type = 'button';
+        a.className = 'btn-link';
+        a.dir = 'auto';
+        a.textContent = f.name;
+        a.onclick = () => goToCourseMaterials(f.name);
+        p.append(a);
+    });
+    list.append(p);
 }
 
 // Study -> a session of one course (from Progress and the sidebar).
@@ -4143,6 +4165,37 @@ function sidebarCoursesCollapsed() {
     try { return localStorage.getItem(sidebarCoursesKey) === '1'; } catch (e) { return false; }
 }
 
+// ---- One list of courses (23/10) ----
+// The screens built their course list from the questions only - a course
+// with no questions yet (made in Materials, or by the exam question) was in
+// none of them. These add it: knownFolders is the student's courses as last
+// loaded.
+let knownFolders = [];
+async function loadKnownFolders() {
+    const f = await ipcRenderer.invoke('get-folders').catch(() => null);
+    if (Array.isArray(f)) knownFolders = f;
+    return knownFolders;
+}
+// Courses no question is in yet.
+function coursesWithoutQuestions(subjects) {
+    const have = new Set((subjects || []).filter(s => (s.items || 0) > 0).map(s => s.category));
+    return knownFolders.filter(f => !have.has(f.name));
+}
+// Question names that are none of the courses ("ghost courses"): questions
+// whose course was typed by hand, or a deleted course's.
+function orphanCourseNames(subjects) {
+    const names = new Set(knownFolders.map(f => f.name));
+    return (subjects || []).filter(s => (s.items || 0) > 0 && s.category !== 'Uncategorized' && !names.has(s.category));
+}
+// To a course's files in Materials (and, with no files, the upload window).
+function goToCourseMaterials(name, upload) {
+    document.getElementById('nav-materials').click();
+    currentActiveFolder = name;
+    loadAndRenderFolders();
+    loadAndRenderFiles();
+    if (upload) setTimeout(() => openUploadPicker('files'), 80);
+}
+
 function renderSidebarCourses(subjects) {
     const box = document.getElementById('sidebar-courses');
     const list = document.getElementById('sidebar-courses-list');
@@ -4158,19 +4211,48 @@ function renderSidebarCourses(subjects) {
     list.innerHTML = '';
     if (collapsed) return;
 
-    if (courses.length === 0) {
+    // (and the courses with no questions yet - after those with them)
+    const empties = coursesWithoutQuestions(sidebarSubjects).map(f => ({ category: f.name, empty: true }));
+    const all = [...courses, ...empties];
+    if (all.length === 0) {
         const hint = document.createElement('button');
         hint.type = 'button';
         hint.className = 'sb-courses-empty';
-        hint.textContent = 'Your courses show up here once you make practice questions.';
-        hint.onclick = () => document.getElementById('nav-study').click();
+        hint.textContent = t('Your courses show up here - add one under Materials.');
+        hint.onclick = () => document.getElementById('nav-materials').click();
         list.append(hint);
         return;
     }
     if (!courses.some(s => s.category === sidebarCoursesOpen)) sidebarCoursesOpen = null;
 
-    const shown = sidebarCoursesAll ? courses : courses.slice(0, SIDEBAR_COURSES_SHOWN);
+    const shown = sidebarCoursesAll ? all : all.slice(0, SIDEBAR_COURSES_SHOWN);
     shown.forEach(s => {
+        if (s.empty) {
+            const item = document.createElement('div');
+            item.className = 'sb-course';
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'sb-course__row';
+            const dot = document.createElement('i');
+            dot.className = 'sb-dot sb-dot--empty';
+            dot.setAttribute('aria-hidden', 'true');
+            const textBox = document.createElement('span');
+            textBox.className = 'sb-course__text';
+            const name = document.createElement('span');
+            name.className = 'sb-course__name';
+            name.dir = 'auto';
+            name.textContent = s.category;
+            const meta = document.createElement('span');
+            meta.className = 'sb-course__meta';
+            meta.textContent = t('No questions yet');
+            textBox.append(name, meta);
+            row.title = t('Open its files in Materials');
+            row.append(dot, textBox);
+            row.onclick = () => goToCourseMaterials(s.category);
+            item.append(row);
+            list.append(item);
+            return;
+        }
         const r = s.readiness;
         const status = readinessStatus(r);
         const isOpen = sidebarCoursesOpen === s.category;
@@ -4241,11 +4323,11 @@ function renderSidebarCourses(subjects) {
         list.append(item);
     });
 
-    if (courses.length > SIDEBAR_COURSES_SHOWN) {
+    if (all.length > SIDEBAR_COURSES_SHOWN) {
         const more = document.createElement('button');
         more.type = 'button';
         more.className = 'sb-courses-more';
-        more.textContent = sidebarCoursesAll ? 'Show fewer' : `Show all (${courses.length})`;
+        more.textContent = sidebarCoursesAll ? 'Show fewer' : `Show all (${all.length})`;
         more.onclick = () => { sidebarCoursesAll = !sidebarCoursesAll; renderSidebarCourses(); };
         list.append(more);
     }
@@ -4268,8 +4350,8 @@ function sidebarNextStep(s) {
 let sidebarCoursesLoading = null;
 function refreshSidebarCourses() {
     if (sidebarCoursesLoading) return sidebarCoursesLoading;
-    sidebarCoursesLoading = ipcRenderer.invoke('get-study-stats')
-        .then(stats => { if (stats && !stats.error && Array.isArray(stats.subjects)) renderSidebarCourses(stats.subjects); })
+    sidebarCoursesLoading = Promise.all([ipcRenderer.invoke('get-study-stats'), loadKnownFolders()])
+        .then(([stats]) => { if (stats && !stats.error && Array.isArray(stats.subjects)) renderSidebarCourses(stats.subjects); })
         .catch(() => { /* leave the list as it was */ })
         .finally(() => { sidebarCoursesLoading = null; });
     return sidebarCoursesLoading;
@@ -6250,7 +6332,9 @@ async function loadStudyHome() {
     }
 
     renderStudyExams(stats.subjects || []);
-    renderStudyCourses(stats.subjects || [], studyItemsCache || []);
+    const [, courseFiles] = await Promise.all([loadKnownFolders(), ipcRenderer.invoke('get-files-light').catch(() => [])]);
+    renderStudyOrphans(stats.subjects || []);
+    renderStudyCourses(stats.subjects || [], studyItemsCache || [], courseFiles);
     renderSidebarCourses(stats.subjects || []);
     const startBtn = document.getElementById('start-study-btn');
     if (startBtn) startBtn.textContent = 'Start smart practice';   // the count is the panel's title now
@@ -6332,12 +6416,102 @@ const studyCourseOf = (i) => String(i.category || '').trim() || 'Uncategorized';
 function fileLabel(name) { return String(name || '').replace(/\.(pdf|txt|md|docx?|pptx?)$/i, ''); }
 const openStudyCourses = new Set();   // which courses have their files open
 
-function renderStudyCourses(subjects, items) {
+let lastCourseFiles = [];
+// ---- "Ghost courses" (23/10) ----
+// Questions under a name that is none of the courses: once, a card asks what
+// they are - attach them to a course (everything of that name moves, mock
+// exams and exam map too: POST /folders/:id/absorb) or make the name a course
+// (a course of that name takes them in by itself). "Not now" - not asked again
+// for that name on this device.
+const orphanLaterKey = () => `mindsync.orphanLater.${currentUserId || 'anon'}`;
+function orphanLater() {
+    try { return JSON.parse(localStorage.getItem(orphanLaterKey()) || '[]'); } catch (e) { return []; }
+}
+function renderStudyOrphans(subjects) {
+    const card = document.getElementById('study-orphan');
+    if (!card) return;
+    const later = new Set(orphanLater());
+    const o = orphanCourseNames(subjects).find(s => !later.has(s.category));
+    card.hidden = !o;
+    if (!o) return;
+    document.getElementById('study-orphan-text').textContent = o.items === 1
+        ? t('1 question is under "{c}" - a name that is none of your courses.', { c: o.category })
+        : t('{n} questions are under "{c}" - a name that is none of your courses.', { n: o.items, c: o.category });
+    const select = document.getElementById('study-orphan-into');
+    const attachRow = document.getElementById('study-orphan-attach-row');
+    select.innerHTML = '';
+    select.appendChild(new Option(t('Choose a course…'), ''));
+    knownFolders.forEach(f => select.appendChild(new Option(f.name, String(f.id || f._id))));
+    select.classList.remove('is-invalid');
+    attachRow.hidden = knownFolders.length === 0;
+    const buttons = [document.getElementById('study-orphan-attach'), document.getElementById('study-orphan-make'), document.getElementById('study-orphan-later')];
+    const busy = (on) => buttons.forEach(b => { b.disabled = on; });
+    const after = async (msg) => {
+        toast.success(msg);
+        await loadStudyHome();
+        if (typeof loadAndRenderFolders === 'function') loadAndRenderFolders();
+    };
+    buttons[0].onclick = async () => {
+        const id = select.value;
+        if (!id) { select.classList.add('is-invalid'); select.focus(); toast.warning(t('Choose the course to attach them to.')); return; }
+        const into = knownFolders.find(f => String(f.id || f._id) === id);
+        busy(true);
+        const r = await ipcRenderer.invoke('absorb-course-name', id, o.category).catch(e => ({ error: e.message }));
+        busy(false);
+        if (!r || r.error) { toast.error(t('Could not move them: {e}', { e: t(String((r && r.error) || '')) })); return; }
+        await after(t('The questions of "{c}" are in {d} now.', { c: o.category, d: into ? into.name : '' }));
+    };
+    buttons[1].onclick = async () => {
+        busy(true);
+        const r = await ipcRenderer.invoke('save-folder', { name: o.category }).catch(e => ({ error: e.message }));
+        busy(false);
+        if (r && r.error && !/duplicate|exists|E11000|already have a course/i.test(r.error)) {
+            toast.error(t('Could not create the course "{c}": {e}', { c: o.category, e: t(String(r.error)) }));
+            return;
+        }
+        await after(t('"{c}" is a course now.', { c: o.category }));
+    };
+    buttons[2].onclick = () => {
+        try { localStorage.setItem(orphanLaterKey(), JSON.stringify([...later, o.category])); } catch (e) { /* storage blocked */ }
+        renderStudyOrphans(subjects);
+    };
+}
+
+function renderStudyCourses(subjects, items, courseFiles) {
     const box = document.getElementById('study-courses');
     const list = document.getElementById('study-courses-list');
     if (!box || !list) return;
+    if (Array.isArray(courseFiles)) lastCourseFiles = courseFiles;
     list.innerHTML = '';
-    box.hidden = subjects.length === 0;
+    const empties = coursesWithoutQuestions(subjects);
+    box.hidden = subjects.length === 0 && empties.length === 0;
+    // A course with no questions yet (23/10): its files -> make questions;
+    // no files -> upload them. (After the courses with questions.)
+    const emptyRows = document.createDocumentFragment();
+    empties.forEach(f => {
+        const row = document.createElement('div');
+        row.className = 'study-course study-course--empty';
+        const top = document.createElement('div');
+        top.className = 'study-course__top';
+        const name = document.createElement('span');
+        name.className = 'study-course__name';
+        name.dir = 'auto';
+        name.textContent = f.name;
+        top.append(name);
+        const nFiles = lastCourseFiles.filter(x => (x.folder || '') === f.name).length;
+        const meta = document.createElement('div');
+        meta.className = 'study-course__meta';
+        meta.textContent = nFiles ? t('No questions yet · {n} files', { n: nFiles }) : t('No questions yet · no files');
+        const go = document.createElement('button');
+        go.className = 'btn-secondary btn-sm';
+        go.textContent = nFiles ? t('Make questions from its files') : t('Upload its files');
+        go.onclick = () => goToCourseMaterials(f.name, !nFiles);
+        const actions = document.createElement('div');
+        actions.className = 'study-course__actions';
+        actions.append(go);
+        row.append(top, meta, actions);
+        emptyRows.append(row);
+    });
 
     subjects.forEach(s => {
         const row = document.createElement('div');
@@ -6444,6 +6618,7 @@ function renderStudyCourses(subjects, items) {
         }
         list.append(row);
     });
+    list.append(emptyRows);
 }
 
 async function saveExamAnswer() {
