@@ -221,6 +221,7 @@ module.exports = {
   // New versions of questions (1/10)
   getVariantCandidates: (when) => request('GET', `/study/variant-candidates?when=${when === 'tomorrow' ? 'tomorrow' : 'today'}`),
   setStudyVariant: (id, variant) => request('PUT', `/study/${enc(id)}/variant`, variant),
+  saveStudyMistake: (id, mistake) => request('PUT', `/study/${enc(id)}/mistake`, mistake),
   // Full exams (1/10)
   saveFullExam: (exam) => request('POST', '/full-exams', exam),
   listFullExams: (course) => request('GET', `/full-exams${course ? `?course=${encodeURIComponent(course)}` : ''}`),

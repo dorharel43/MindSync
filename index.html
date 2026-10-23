@@ -699,6 +699,11 @@
                             <div class="study-verdict__yours" id="study-verdict-yours" translate="no" dir="auto"></div>
                             <div class="study-verdict__sure" id="study-verdict-sure" hidden>You were sure about this - so it comes back soon.</div>
                         </div>
+                        <!-- "Last time" (23/10): the last mistake explained on this question -->
+                        <div class="study-last-mistake" id="study-last-mistake" hidden>
+                            <div class="study-last-mistake__title" id="study-last-mistake-title"></div>
+                            <div class="study-last-mistake__slip" id="study-last-mistake-slip" translate="no" dir="auto"></div>
+                        </div>
                         <!-- The AI's short, direct answer - the stored one is a quote
                              from the material, which often opens with an intro. -->
                         <div class="study-short-answer" id="study-short-answer" hidden>
@@ -708,6 +713,11 @@
                         </div>
                         <div class="study-answer-label" id="study-material-label">Answer</div>
                         <div class="study-answer" id="study-answer" translate="no" dir="auto"></div>
+                        <!-- "Explain it" (23/10): why, what went wrong, the line of the material -->
+                        <div class="study-explain-row" id="study-explain-row" hidden>
+                            <button class="btn-secondary btn-sm" id="study-explain-btn" type="button">Explain why</button>
+                        </div>
+                        <div class="explain-box" id="study-explain" hidden></div>
 
                         <!-- Practice items have no model-written answer, so the
                              student's own working becomes the stored solution. -->
