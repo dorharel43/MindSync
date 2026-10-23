@@ -2468,19 +2468,35 @@ function closeCourseMenuOutside(e) {
     // (its own ⋯: left to the button, which closes it - closing here first
     // made the button open it again)
     const btn = e.target.closest && e.target.closest('.course-menu-btn');
-    if (btn && btn.closest('.folder-card') === courseMenuEl.parentElement) return;
+    if (btn && courseMenuEl.parentElement.contains(btn)) return;
     closeCourseMenu();
 }
-function closeCourseMenuKey(e) { if (e.key === 'Escape') closeCourseMenu(); }
-function openCourseMenu(anchor, folder, folders) {
-    const wasOpenHere = courseMenuEl && courseMenuEl.dataset.id === String(folder.id);
+let menuAnchor = null;
+function closeCourseMenuKey(e) {
+    if (e.key !== 'Escape') return;
+    const back = menuAnchor;
     closeCourseMenu();
-    if (wasOpenHere) return;   // (a second click on ⋯ closes it)
+    if (back && back.isConnected) back.focus();
+}
+function openCourseMenu(anchor, folder, folders) {
+    openActionMenu(anchor.closest('.folder-card'), `folder:${folder.id}`, anchor, [
+        ['Rename', () => renameCourseUI(folder)],
+        ['Merge into another course…', () => mergeCourseUI(folder, folders)],
+        ['Delete course', () => deleteCourseUI(folder), true]
+    ]);
+}
+// A small ⋯ menu inside `host` (23/10, shared: a course card in Materials, a
+// course row in Practice). items: [label, run, danger?]. One open at a time;
+// a second click on its ⋯ closes it; Escape closes it and goes back to ⋯.
+function openActionMenu(host, id, anchor, items) {
+    const wasOpenHere = courseMenuEl && courseMenuEl.dataset.id === id;
+    closeCourseMenu();
+    if (wasOpenHere) return;
     const menu = document.createElement('div');
     menu.className = 'course-menu';
     menu.setAttribute('role', 'menu');
-    menu.dataset.id = String(folder.id);
-    const item = (label, run, danger) => {
+    menu.dataset.id = id;
+    items.forEach(([label, run, danger]) => {
         const b = document.createElement('button');
         b.type = 'button';
         b.setAttribute('role', 'menuitem');
@@ -2488,12 +2504,10 @@ function openCourseMenu(anchor, folder, folders) {
         b.textContent = t(label);
         b.onclick = (e) => { e.stopPropagation(); closeCourseMenu(); run(); };
         menu.appendChild(b);
-    };
-    item('Rename', () => renameCourseUI(folder));
-    item('Merge into another course…', () => mergeCourseUI(folder, folders));
-    item('Delete course', () => deleteCourseUI(folder), true);
-    anchor.closest('.folder-card').appendChild(menu);
+    });
+    host.appendChild(menu);
     courseMenuEl = menu;
+    menuAnchor = anchor;
     setTimeout(() => {   // (not the click that opened it)
         document.addEventListener('click', closeCourseMenuOutside, true);
         document.addEventListener('keydown', closeCourseMenuKey);
@@ -2610,7 +2624,7 @@ async function loadAndRenderFiles() {
                 </div>
             </div>
             <div class="file-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
-                <button class="btn-secondary btn-sm btn-extract" title="Reads a syllabus or assignment sheet: exams go to the Planner, submissions to Tasks">Exams & deadlines</button>
+                <button class="btn-secondary btn-sm btn-extract" title="Reads a syllabus: exams go to the Planner, submissions to Tasks">Exams & deadlines</button>
                 <button class="btn-secondary btn-sm btn-ai">${file.summary ? 'View summary' : 'Summarize'}</button>
                 <button class="btn-secondary btn-sm btn-questions" title="Makes practice questions from this file - you check them before they go into Study">Questions</button>
                 <button class="btn-icon btn-icon--danger delete-file-btn" title="Delete file" aria-label="Delete file">${icon('trash')}</button>
@@ -2645,7 +2659,9 @@ async function loadAndRenderFiles() {
                 await loadAndRenderFiles();
             }
         };
-        roleSel.onchange = () => saveMeta(roleSel, { role: roleSel.value }, file.role || guessFileRole(file.name));
+        roleSel.onchange = async () => {
+            if (await saveMeta(roleSel, { role: roleSel.value }, file.role || guessFileRole(file.name))) showExtract();
+        };
         meta.append(courseSel, roleSel);
 
         // Opens (or brings to front) a separate, resizable summary window.
@@ -2664,7 +2680,16 @@ async function loadAndRenderFiles() {
             await loadAndRenderFiles();
         };
 
+        // "Exams & deadlines" only on a syllabus (23/10): on a lecture or a past
+        // exam it offered to read deadlines that aren't there.
         const extractBtn = fileItem.querySelector('.btn-extract');
+        // (a syllabus by its text too - the upload's offer finds those - unless marked otherwise)
+        const showExtract = () => {
+            if (!extractBtn) return;
+            const role = file.role || guessFileRole(file.name);
+            extractBtn.hidden = !(role === 'syllabus' || (!file.role || file.role === 'material') && looksLikeSyllabus(file.content));
+        };
+        showExtract();
         if (extractBtn) extractBtn.onclick = () => openSyllabusImport(file, extractBtn);
 
         filesListContainer.appendChild(fileItem);
@@ -3884,17 +3909,18 @@ loadAndRenderFiles();
 document.querySelectorAll('[data-go]').forEach((el) => {
     el.addEventListener('click', (e) => { e.preventDefault(); const nav = document.getElementById(el.dataset.go); if (nav) nav.click(); });
 });
-// Screen explanations (30/9): each grey help list is now a small foldable
-// "How this screen works" line. Open until the user closes it once - that
-// choice is remembered per screen, so the regulars get their space back.
+// Screen explanations (30/9): each grey help list is a small foldable
+// "How this screen works" line. Closed until the user opens it (23/10: open
+// by default, 2-4 lines on top of every screen nobody read) - and an opened
+// one stays open, per screen.
 document.querySelectorAll('ul.screen-help').forEach((list) => {
     const view = list.closest('.view-section');
     const key = `mindsync.help.${view ? view.id : 'screen'}`;
     const box = document.createElement('details');
     box.className = 'screen-help-box';
-    let closed = false;
-    try { closed = localStorage.getItem(key) === 'closed'; } catch (e) { /* no storage - stays open */ }
-    box.open = !closed;
+    let opened = false;
+    try { opened = localStorage.getItem(key) === 'open'; } catch (e) { /* no storage - stays closed */ }
+    box.open = opened;
     const summary = document.createElement('summary');
     summary.className = 'screen-help-box__toggle';
     summary.innerHTML = `${window.icon('info', { size: 15 })}<span>How this screen works</span>`;
@@ -3955,6 +3981,11 @@ async function renderLearningProgress() {
     const [stats] = await Promise.all([ipcRenderer.invoke('get-study-stats').catch(() => null), loadKnownFolders()]);
     if (!stats || stats.error) return;
     renderReadiness(stats.subjects || []);
+    // The exam map (moved here from Practice, 23/10): courses with questions,
+    // the nearest exam first (the stats' order). (not "No course": its past
+    // exams aren't a course's)
+    examMapCourses = (stats.subjects || []).filter(x => x.items > 0 && x.category !== 'Uncategorized').map(x => x.category);
+    renderExamMap();
     renderSidebarCourses(stats.subjects || []);
     renderCalibration(stats.calibration, stats.reviewsAllTime, stats.trendByConfidence);
     renderConfidentlyWrong(stats.confidentlyWrong);
@@ -4372,6 +4403,7 @@ function sidebarNextStep(s) {
 // theirs to renderSidebarCourses directly. One request at a time.
 let sidebarCoursesLoading = null;
 function refreshSidebarCourses() {
+    if (!document.getElementById('sidebar-courses')) return Promise.resolve();   // (23/10: no list in the sidebar)
     if (sidebarCoursesLoading) return sidebarCoursesLoading;
     sidebarCoursesLoading = Promise.all([ipcRenderer.invoke('get-study-stats'), loadKnownFolders()])
         .then(([stats]) => { if (stats && !stats.error && Array.isArray(stats.subjects)) renderSidebarCourses(stats.subjects); })
@@ -4646,29 +4678,9 @@ async function loadAndRenderHome() {
     const events = await ipcRenderer.invoke('get-events') || [];
     if (myTicket !== homeRenderTicket) return;
     
-    const statTasks = document.getElementById('home-stat-tasks');
-    const statExams = document.getElementById('home-stat-exams');
-    const statEvents = document.getElementById('home-stat-events');
-    const statLessons = document.getElementById('home-stat-lessons');
-
     // Dated events only count where they belong: an exam that's over isn't
-    // "upcoming", and 26/10 isn't "this week".
+    // "upcoming".
     const todayIso = localIsoDate(new Date());
-    const wkStart = localIsoDate(weekStartFor(0));
-    const wkEndDate = weekStartFor(0); wkEndDate.setDate(wkEndDate.getDate() + 6);
-    const wkEnd = localIsoDate(wkEndDate);
-    // A weekly class counts in a week it happens in - not after the semester
-    // ends (`until`), not before it starts (`from`).
-    const inThisWeek = (e) => {
-        if (e.date) return e.date >= wkStart && e.date <= wkEnd;
-        const on = weekStartFor(0); on.setDate(on.getDate() + WEEKDAY_NAMES.indexOf(e.day));
-        return eventOccursOn(e, on);
-    };
-
-    if (statTasks) statTasks.innerText = tasks.length;
-    if (statExams) statExams.innerText = events.filter(e => e.type === 'exam' && (!e.date || e.date >= todayIso)).length;
-    if (statEvents) statEvents.innerText = events.filter(inThisWeek).length;
-    if (statLessons) statLessons.innerText = events.filter(e => e.type === 'lesson' && inThisWeek(e)).length;
 
     // The next exam on the calendar, in the Today panel (30/9 redesign):
     // "Next exam  Statistics  In 2 days · Thu 2/10".
@@ -4692,66 +4704,32 @@ async function loadAndRenderHome() {
     renderSidebarExam(events, todayIso);
 
     
-    const todayEvents = events.filter(e => eventOccursOn(e, new Date())).sort((a, b) => a.time.localeCompare(b.time));
-    
-    const timelineList = document.getElementById('home-timeline-list');
+    // Today (23/10): the next thing still ahead on today's calendar - or,
+    // with none, the tasks due today. Nothing on a free day: "nothing on the
+    // calendar" used to be on Home three times.
+    const todayEvents = events.filter(e => eventOccursOn(e, new Date())).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+    const now = new Date();
+    const nowHm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    // (one with no time is "today" all day; a task's deadline is in `date`
+    // "DD/MM/YYYY" - parseTaskDueDate - and "due today" means today, not overdue)
+    const ahead = todayEvents.filter(e => !e.time || e.time >= nowHm);
+    const dueToday = tasks.filter(tk => { const d = parseTaskDueDate(tk); return d && localIsoDate(d) === todayIso; });
+    const nextLabel = document.getElementById('home-next-label');
     const nextTitle = document.getElementById('home-next-title');
     const nextTime = document.getElementById('home-next-time');
-    const sidebarNextTitle = document.getElementById('sidebar-next-title');
-    const sidebarNextMeta = document.getElementById('sidebar-next-meta');
-    
-    if (timelineList) timelineList.innerHTML = '';
-    
-    if (todayEvents.length === 0) {
-        if (timelineList) timelineList.innerHTML = '<div class="timeline-empty">Nothing on your calendar today.</div>';
-        if (nextTitle) nextTitle.innerText = t('Nothing scheduled');
-        if (nextTime) nextTime.innerText = 'No classes or exams on your calendar today.';
-        if (sidebarNextTitle) sidebarNextTitle.innerText = t('Nothing scheduled today');
-        if (sidebarNextMeta) sidebarNextMeta.innerText = tasks.length > 0 ? `${tasks.length} open task${tasks.length === 1 ? '' : 's'}` : '';
-    } else {
-        const now = new Date();
-        const currentTime = now.getHours().toString().padStart(2, '0') + ":" + now.getMinutes().toString().padStart(2, '0');
-        
-        let nextEventFound = false;
-
-        todayEvents.forEach((evt) => {
-            const isNext = !nextEventFound && evt.time >= currentTime;
-            if (isNext) {
-                nextEventFound = true;
-                if (nextTitle) nextTitle.innerText = evt.title;
-                if (nextTime) nextTime.innerText = `Today at ${evt.time}`;
-                if (sidebarNextTitle) sidebarNextTitle.innerText = evt.title;
-                if (sidebarNextMeta) sidebarNextMeta.innerText = `${evt.time} today`;
-            }
-            
-            let dotColor = 'var(--timeline-dot)';
-            if (evt.type === 'exam') dotColor = 'var(--event-exam)';
-            if (evt.type === 'lesson') dotColor = 'var(--event-lesson)';
-            if (evt.type === 'study') dotColor = 'var(--event-study)';
-            if (evt.type === 'personal') dotColor = 'var(--event-personal)';
-            
-            const div = document.createElement('div');
-            div.className = `timeline-item ${isNext ? 'active-task' : ''}`;
-            div.innerHTML = `
-                <div class="timeline-content">
-                    <div class="dot ${isNext ? 'active' : ''}" style="${isNext ? '' : `background-color: ${dotColor};`}"></div>
-                    <span class="timeline-title" dir="auto">${escapeHtml(evt.title)}</span>
-                    ${isNext ? '<span class="tag-active" style="margin-inline-start:8px;">Next</span>' : ''}
-                </div>
-                <div class="timeline-time">${escapeHtml(evt.time)}</div>
-            `;
-            if (timelineList) timelineList.appendChild(div);
-        });
-
-        if (!nextEventFound) {
-            // "Done for today" read oddly with open tasks on the same screen.
-            if (nextTitle) nextTitle.innerText = t('Nothing more on the calendar today');
-            if (nextTime) nextTime.innerText = "Today's classes and events are over.";
-            if (sidebarNextTitle) sidebarNextTitle.innerText = t('Nothing more on the calendar today');
-            if (sidebarNextMeta) sidebarNextMeta.innerText = tasks.length > 0 ? `${tasks.length} open task${tasks.length === 1 ? '' : 's'}` : '';
-        }
+    homeTodayHas = ahead.length > 0 || dueToday.length > 0;
+    if (nextLabel && ahead.length) {
+        nextLabel.textContent = t('Up next today');
+        nextTitle.textContent = ahead[0].title;
+        const when = ahead[0].time ? t('Today at {time}', { time: ahead[0].time }) : t('Today');
+        nextTime.textContent = ahead.length > 1 ? `${when} · ${t('and {n} more today', { n: ahead.length - 1 })}` : when;
+    } else if (nextLabel && dueToday.length) {
+        nextLabel.textContent = t('Today');
+        nextTitle.textContent = dueToday.length === 1 ? t('1 task due today') : t('{n} tasks due today', { n: dueToday.length });
+        nextTime.textContent = dueToday[0].title + (dueToday.length > 1 ? '…' : '');
     }
-    
+    updateHomeHero();
+
     const hour = new Date().getHours();
     // No "Good night" (review fix 30/9): in Hebrew "לילה טוב" is a goodbye.
     let greeting = "Good evening";
@@ -4956,6 +4934,7 @@ async function refreshOnboarding() {
     if (!status || status.error) return; // couldn't check - leave it as it was
     renderOnboarding(status);
     renderHomeStudy(status);
+    updateHomeHero();
 }
 
 // The Study line on Home - only when the guide is gone (while it's there,
@@ -4996,10 +4975,25 @@ function resetHomeReadiness() {
 // The Today panel's "Next exam" says again what the readiness panel says,
 // when it's the same exam - hidden then (whichever of the two is drawn last).
 let homeReadinessExam = '';
+// The panel's two halves (23/10): practice, and today - the today half only
+// with something on it (the next exam alone counts), the panel only with one.
+let homeTodayHas = false;
+function updateHomeHero() {
+    const next = document.getElementById('home-hero-next');
+    const study = document.getElementById('home-study');
+    const exam = document.getElementById('home-next-exam');
+    const hero = next && next.closest('.home-hero');
+    if (!next || !hero) return;
+    next.hidden = !homeTodayHas && !(exam && !exam.hidden);
+    document.getElementById('home-next-today').hidden = !homeTodayHas;
+    hero.hidden = next.hidden && (!study || study.hidden);
+}
+
 function hideRepeatedNextExam() {
     const box = document.getElementById('home-next-exam');
     if (box && box.dataset.exam && box.dataset.exam === homeReadinessExam) box.hidden = true;
     else if (box && box.dataset.exam) box.hidden = false;
+    updateHomeHero();
     // An earlier exam (of a course with no questions) is the Today panel's - here it's
     // the next one being practised for, said so.
     const label = document.getElementById('home-study-label');
@@ -5081,7 +5075,8 @@ function renderHomeReadiness(status) {
     // (no percentage before there's enough to judge by - "too early" means too early)
     sub.textContent = !r.practiced ? (r.total === 1 ? t('1 question is waiting - not answered yet.') : t('{n} questions are waiting - none answered yet.', { n: r.total }))
         : !r.enoughData ? t('Answered {p} of {n} questions so far.', { p: r.practiced, n: r.total })
-            : t('You know {k}% of what you practiced · covered {c}% of the questions.', { k: r.knowPercent == null ? 0 : r.knowPercent, c: r.coverage });
+            // (one percentage: "covered 83%" next to "know 80%" read as two scores)
+            : t('You know {k}% of what you practiced - {p} of {n} questions practiced.', { k: r.knowPercent == null ? 0 : r.knowPercent, p: r.practiced, n: r.total });
 
     // Today.
     const today = document.getElementById('home-ready-today');
@@ -5163,9 +5158,9 @@ function renderHomeStudy(status) {
     if (!status.questions) {
         title.textContent = 'No practice questions yet';
         if (!status.files) {
-            sub.textContent = 'Upload a course file first - the AI writes practice questions from it.';
-            btn.textContent = 'Upload files';
-            btn.onclick = () => { document.getElementById('nav-materials').click(); setTimeout(() => openUploadPicker('files'), 60); };
+            sub.textContent = 'Upload a lecture or your notes - MindSync writes practice questions from it.';
+            btn.textContent = 'Upload a lecture';
+            btn.onclick = () => uploadForQuestions();
         } else {
             sub.textContent = 'Pick one of your files and the AI writes questions from it. You look them over before they\'re added.';
             btn.textContent = 'Make questions';
@@ -6334,10 +6329,6 @@ async function loadStudyHome() {
     renderDailyGoal('study');
     dailyQAllowed = stats.totalItems > 0;
     renderDailyQuestion();
-    // The exam map: courses with questions, the nearest exam first (the stats' order).
-    // (not "No course": its past exams aren't a course's)
-    examMapCourses = (stats.subjects || []).filter(x => x.items > 0 && x.category !== 'Uncategorized').map(x => x.category);
-    renderExamMap();
     // Today's due questions get their new versions written now, while the
     // student looks at this screen (1/10).
     if (stats.dueCount > 0) prepareVersions('today');
@@ -6547,6 +6538,18 @@ function renderStudyCourses(subjects, items, courseFiles) {
         go.onclick = () => goToCourseMaterials(f.name, !nFiles);
         const actions = document.createElement('div');
         actions.className = 'study-course__actions';
+        // (its full exam is built from the material - no questions needed;
+        // with the Study screen's "Full exam" link gone, it's here)
+        if (nFiles) {
+            const more = document.createElement('button');
+            more.type = 'button';
+            more.className = 'btn-secondary btn-sm course-menu-btn';
+            more.textContent = '⋯';
+            more.title = t('More for this course');
+            more.setAttribute('aria-label', t('More for this course'));
+            more.onclick = (e) => { e.stopPropagation(); openActionMenu(actions, `study:${f.name}`, more, [['Full exam', () => openFullExam(f.name)]]); };
+            actions.append(more);
+        }
         actions.append(go);
         row.append(top, meta, actions);
         emptyRows.append(row);
@@ -6590,34 +6593,30 @@ function renderStudyCourses(subjects, items, courseFiles) {
         });
         const fileList = [...files.entries()].sort((a, b) => b[1] - a[1]);
 
+        // One button and a ⋯ (23/10): "Practice", and under ⋯ the course's
+        // exam(s) and its files - four buttons on every row read as four
+        // things to choose between before practicing at all.
         const actions = document.createElement('div');
         actions.className = 'study-course__actions';
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'btn-secondary btn-sm course-menu-btn';
+        more.textContent = '⋯';
+        more.title = t('More for this course');
+        more.setAttribute('aria-label', t('More for this course'));
+        const menuItems = [];
+        // Mock exam (30/9) - once there's enough to make an exam of.
+        if ((s.items || 0) >= 5) menuItems.push(['Mock exam', () => openExamSetup(s.category, name.textContent, s.items)]);
+        menuItems.push(['Full exam', () => openFullExam(s.category)]);
         if (fileList.length > 1 || (fileList.length === 1 && fileList[0][0])) {
-            const toggle = document.createElement('button');
-            toggle.className = 'study-course__files-btn';
-            const isOpen = openStudyCourses.has(s.category);
-            toggle.textContent = `${isOpen ? '▾' : '▸'} By file (${fileList.length})`;
-            toggle.setAttribute('aria-expanded', String(isOpen));
-            toggle.onclick = () => {
+            menuItems.push([openStudyCourses.has(s.category) ? 'Hide its files' : 'Practice one file', () => {
                 if (openStudyCourses.has(s.category)) openStudyCourses.delete(s.category); else openStudyCourses.add(s.category);
                 renderStudyCourses(subjects, items);
-            };
-            actions.append(toggle);
+            }]);
         }
-        // Mock exam (30/9) - once there's enough to make an exam of.
-        if ((s.items || 0) >= 5) {
-            const mock = document.createElement('button');
-            mock.className = 'btn-secondary btn-sm';
-            mock.textContent = t('Mock exam');
-            mock.onclick = () => openExamSetup(s.category, name.textContent, s.items);
-            actions.append(mock);
-        }
-        const full = document.createElement('button');
-        full.className = 'btn-secondary btn-sm';
-        full.textContent = t('Full exam');
-        full.onclick = () => openFullExam(s.category);
-        actions.append(full);
-        actions.append(practice);
+        // (the menu hangs from the buttons - not the row's bottom, under its file list)
+        more.onclick = (e) => { e.stopPropagation(); openActionMenu(actions, `study:${s.category}`, more, menuItems); };
+        actions.append(more, practice);
         if (s.lastMock) {
             const m = document.createElement('span');
             m.className = 'study-course__mock';
@@ -9175,7 +9174,7 @@ async function loadFullSetup() {
 document.getElementById('full-course').addEventListener('change', (e) => { fullState.course = e.target.value; loadFullSetup(); });
 document.getElementById('full-cancel-btn').onclick = leaveFullExam;
 document.getElementById('full-done-btn').onclick = leaveFullExam;
-document.getElementById('full-exam-link').onclick = () => openFullExam('');
+// (the Study screen's "Full exam" link is gone, 23/10 - a course's ⋯ opens it)
 document.getElementById('full-upload-btn').onclick = () => {
     const course = fullState.course;
     stopFullExam(false);
