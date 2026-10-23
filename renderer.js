@@ -2426,27 +2426,21 @@ async function loadAndRenderFolders() {
         folderCard.innerHTML = `
             <div class="folder-icon">${icon('graduation')}</div>
             <div class="folder-name" dir="auto">${escapeHtml(folder.name)}</div>
-            <button class="btn-icon btn-icon--danger delete-folder-btn" title="${escapeHtml(t('Delete course'))}" aria-label="${escapeHtml(t('Delete course'))}">${icon('trash')}</button>
+            <button class="btn-icon course-menu-btn" title="${escapeHtml(t('Course options'))}" aria-label="${escapeHtml(t('Course options'))}" aria-haspopup="menu">⋯</button>
         `;
-        
+
         folderCard.onclick = (e) => {
-            if (e.target.classList.contains('delete-folder-btn')) return;
+            if (e.target.closest('.course-menu-btn, .course-menu')) return;
             currentActiveFolder = folder.name;
             loadAndRenderFolders();
             loadAndRenderFiles();
         };
 
-        const delBtn = folderCard.querySelector('.delete-folder-btn');
-        delBtn.onclick = async (e) => {
+        // The course's menu (23/10): rename, merge into another, delete.
+        const menuBtn = folderCard.querySelector('.course-menu-btn');
+        menuBtn.onclick = (e) => {
             e.stopPropagation();
-            // Asked first (30/9) - it was one click, no undo.
-            if (!await confirmDialog(t('Delete the course "{name}"?', { name: folder.name }),
-                t('Its files are not deleted - they move to "No course". Its practice questions stay in Study.'), { confirmText: t('Delete course'), danger: true })) return;
-            const result = await ipcRenderer.invoke('delete-folder', folder.id); // Fixed: Pass ID instead of index
-            if (result && result.error) { toast.error(t('Could not delete the course: {e}', { e: t(String(result.error)) })); return; }
-            if (currentActiveFolder === folder.name) currentActiveFolder = 'All';
-            await loadAndRenderFolders();
-            await loadAndRenderFiles();
+            openCourseMenu(menuBtn, folder, folders);
         };
 
         materialsGrid.appendChild(folderCard);
@@ -2458,6 +2452,119 @@ async function loadAndRenderFolders() {
     addBtn.onclick = () => addFolderModal.style.display = 'flex';
     materialsGrid.appendChild(addBtn);
     // (the upload window builds its own list of courses when it opens)
+}
+
+// ---- A course's menu (23/10) ----
+let courseMenuEl = null;
+function closeCourseMenu() {
+    if (!courseMenuEl) return;
+    courseMenuEl.remove();
+    courseMenuEl = null;
+    document.removeEventListener('click', closeCourseMenuOutside, true);
+    document.removeEventListener('keydown', closeCourseMenuKey);
+}
+function closeCourseMenuOutside(e) {
+    if (!courseMenuEl || courseMenuEl.contains(e.target)) return;
+    // (its own ⋯: left to the button, which closes it - closing here first
+    // made the button open it again)
+    const btn = e.target.closest && e.target.closest('.course-menu-btn');
+    if (btn && btn.closest('.folder-card') === courseMenuEl.parentElement) return;
+    closeCourseMenu();
+}
+function closeCourseMenuKey(e) { if (e.key === 'Escape') closeCourseMenu(); }
+function openCourseMenu(anchor, folder, folders) {
+    const wasOpenHere = courseMenuEl && courseMenuEl.dataset.id === String(folder.id);
+    closeCourseMenu();
+    if (wasOpenHere) return;   // (a second click on ⋯ closes it)
+    const menu = document.createElement('div');
+    menu.className = 'course-menu';
+    menu.setAttribute('role', 'menu');
+    menu.dataset.id = String(folder.id);
+    const item = (label, run, danger) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.setAttribute('role', 'menuitem');
+        b.className = 'course-menu__item' + (danger ? ' is-danger' : '');
+        b.textContent = t(label);
+        b.onclick = (e) => { e.stopPropagation(); closeCourseMenu(); run(); };
+        menu.appendChild(b);
+    };
+    item('Rename', () => renameCourseUI(folder));
+    item('Merge into another course…', () => mergeCourseUI(folder, folders));
+    item('Delete course', () => deleteCourseUI(folder), true);
+    anchor.closest('.folder-card').appendChild(menu);
+    courseMenuEl = menu;
+    setTimeout(() => {   // (not the click that opened it)
+        document.addEventListener('click', closeCourseMenuOutside, true);
+        document.addEventListener('keydown', closeCourseMenuKey);
+    }, 0);
+    const first = menu.querySelector('button');
+    if (first) first.focus();
+}
+// After a course changed: the screens that list courses.
+async function refreshCourseViews() {
+    await loadAndRenderFolders();
+    await loadAndRenderFiles();
+    if (typeof refreshSidebarCourses === 'function') refreshSidebarCourses();
+}
+async function renameCourseUI(folder) {
+    const name = await promptDialog(t('Rename the course'), t('Its files, questions and exams go with it under the new name.'), folder.name, { confirmText: t('Rename') });
+    if (name == null) return;
+    const clean = name.trim();
+    if (!clean || clean === folder.name) return;
+    const r = await ipcRenderer.invoke('rename-folder', folder.id, clean).catch(e => ({ error: e.message }));
+    if (!r || r.error) { toast.error(t('Could not rename the course: {e}', { e: t(String((r && r.error) || '')) })); return; }
+    if (currentActiveFolder === folder.name) currentActiveFolder = clean;
+    toast.success(t('Renamed to {c}.', { c: clean }));
+    await refreshCourseViews();
+}
+async function deleteCourseUI(folder) {
+    // Asked first (30/9) - it was one click, no undo.
+    if (!await confirmDialog(t('Delete the course "{name}"?', { name: folder.name }),
+        t('Its files are not deleted - they move to "No course". Its practice questions stay in Study.'), { confirmText: t('Delete course'), danger: true })) return;
+    const result = await ipcRenderer.invoke('delete-folder', folder.id);
+    if (result && result.error) { toast.error(t('Could not delete the course: {e}', { e: t(String(result.error)) })); return; }
+    if (currentActiveFolder === folder.name) currentActiveFolder = 'All';
+    await refreshCourseViews();
+}
+// Merge (23/10): this course into another - everything of it moves, then
+// it is deleted. The server does it in one go (POST /folders/:id/merge).
+function mergeCourseUI(folder, folders) {
+    const others = (folders || []).filter(f => String(f.id) !== String(folder.id));
+    if (!others.length) { toast.info(t('There is no other course to merge it into.')); return; }
+    const modal = document.getElementById('merge-course-modal');
+    const select = document.getElementById('merge-course-into');
+    const go = document.getElementById('merge-course-confirm');
+    const cancel = document.getElementById('merge-course-cancel');
+    document.getElementById('merge-course-title').textContent = t('Merge "{name}" into another course', { name: folder.name });
+    document.getElementById('merge-course-text').textContent = t('Its files, practice questions, mock exams, full exams and exams in the Planner move to the course you choose, and "{name}" is deleted.', { name: folder.name });
+    select.innerHTML = '';
+    select.appendChild(new Option(t('Choose a course…'), ''));
+    others.forEach(f => select.appendChild(new Option(f.name, String(f.id))));
+    select.value = '';
+    select.classList.remove('is-invalid');
+    go.disabled = false;
+    cancel.disabled = false;
+    modal.style.display = 'flex';
+    select.focus();
+    cancel.onclick = () => { modal.style.display = 'none'; };
+    go.onclick = async () => {
+        const intoId = select.value;
+        if (!intoId) { select.classList.add('is-invalid'); select.focus(); toast.warning(t('Choose the course to merge it into.')); return; }
+        const into = others.find(f => String(f.id) === intoId);
+        go.disabled = true;
+        cancel.disabled = true;
+        modal.dataset.busy = '1';
+        const r = await ipcRenderer.invoke('merge-folder', folder.id, intoId).catch(e => ({ error: e.message }));
+        delete modal.dataset.busy;
+        go.disabled = false;
+        cancel.disabled = false;
+        if (!r || r.error) { toast.error(t('Could not merge the courses: {e}', { e: t(String((r && r.error) || '')) })); return; }
+        modal.style.display = 'none';
+        if (currentActiveFolder === folder.name) currentActiveFolder = into ? into.name : 'All';
+        toast.success(t('"{a}" was merged into {b}.', { a: folder.name, b: into ? into.name : '' }));
+        await refreshCourseViews();
+    };
 }
 
 async function loadAndRenderFiles() {
@@ -3787,6 +3894,7 @@ document.querySelectorAll('ul.screen-help').forEach((list) => {
 function modalIsBusy(modal) {
     if (modal === uploadModal && uploadBatch && uploadBatch.running) return true;
     if (modal === syllabusModal && syllabusCancel && syllabusCancel.disabled) return true;
+    if (modal.dataset && modal.dataset.busy) return true;   // (a merge being saved)
     return false;
 }
 function closeModalSafely(modal) {

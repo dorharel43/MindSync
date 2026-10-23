@@ -147,6 +147,8 @@ module.exports = {
   getFolders: async () => withIdAliases(await request('GET', '/folders')),
   createFolder: (folder) => request('POST', '/folders', folder).then(withIdAlias),
   deleteFolder: (id) => request('DELETE', `/folders/${enc(id)}`),
+  renameFolder: (id, name) => request('PUT', `/folders/${enc(id)}`, { name }).then(withIdAlias),
+  mergeFolder: (id, into) => request('POST', `/folders/${enc(id)}/merge`, { into }),
 
   // ---- Files ----
   getFiles: async () => withIdAliases(await request('GET', '/files')),
