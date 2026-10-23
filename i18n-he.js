@@ -584,12 +584,12 @@
         'Could not load this file.': 'לא הצלחתי לטעון את הקובץ.', 'Saved': 'נשמר', 'KaTeX not installed - formulas will show as code.': 'KaTeX לא מותקן - נוסחאות יוצגו כקוד.',
 
         // ---- "Explain it" (23/10) ----
-        'Explain why': 'הסבירי לי למה', "Didn't get it? Explain why": 'לא הצלחת? הסבירי לי למה', 'Explaining…': 'מסבירה…',
+        'Explain why': 'להסביר למה', "Didn't get it? Explain why": 'לא הצלחת? להסביר למה', 'Explaining…': 'מסבירה…',
         'Why this is the answer': 'למה זו התשובה', 'Where it went wrong': 'איפה זה השתבש', 'A common trap': 'מלכודת נפוצה',
         'From your material': 'מהחומר שלך', 'Written by AI from your material - it can be wrong.': 'נכתב על ידי AI על סמך החומר שלך, ועלול לטעות.',
         'Written by AI - it can be wrong.': 'נכתב על ידי AI ועלול לטעות.',
         "Couldn't explain it right now. Try again in a moment.": 'לא הצלחתי להסביר כרגע. אפשר לנסות שוב בעוד רגע.',
-        'Last time ({date}) you wrote:': 'בפעם הקודמת ({date}) כתבת:', "Last time ({date}) you didn't get this one.": 'בפעם הקודמת ({date}) התשובה לא הייתה ידועה.',
+        'Last time ({date}) you wrote:': 'בפעם הקודמת ({date}) כתבת:', 'Last time ({date}), on another version of this question:': 'בפעם הקודמת ({date}), בגרסה אחרת של השאלה:', "Last time ({date}) you didn't get this one.": 'בפעם הקודמת ({date}) התשובה לא הייתה ידועה.',
 
         // ---- AI / server errors ----
         "You've used today's AI allowance. It resets at midnight.": 'נוצלה המכסה היומית של ה-AI. היא מתאפסת בחצות.',

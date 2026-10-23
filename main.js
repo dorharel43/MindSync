@@ -2693,8 +2693,12 @@ function findPassage(content, quote, size = 3000) {
     const q = String(quote || '').replace(/\s+/g, ' ').trim();
     if (!flat || q.length < 8) return '';
     const around = (at, len) => { const start = Math.max(0, at - Math.max(0, Math.floor((size - len) / 2))); return flat.slice(start, start + size).trim(); };
-    const exact = flat.indexOf(q.slice(0, 80));
-    if (exact >= 0) return around(exact, Math.min(q.length, size));
+    // (lower case keeps every index: the answer may have been cleaned up a bit)
+    const low = flat.toLowerCase();
+    for (const head of [q.slice(0, 80), q.slice(0, 40)]) {
+        const exact = head.length >= 8 ? low.indexOf(head.toLowerCase()) : -1;
+        if (exact >= 0) return around(exact, Math.min(q.length, size));
+    }
     const words = (s) => s.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || [];
     const want = new Set(words(q));
     if (want.size < 3) return '';
@@ -2710,21 +2714,31 @@ function findPassage(content, quote, size = 3000) {
 }
 
 // The quote the AI says it took: kept only if it really is in the text
-// (spacing, case and quotation marks aside) - never a made-up "source".
+// (spacing, case, quotation marks and $ aside - and the look-alike brackets
+// the prompt gave it for < >) - never a made-up "source".
 function quoteIsIn(quote, ...texts) {
-    const norm = (s) => String(s || '').toLowerCase().replace(/["'`״׳“”‘’]/g, '').replace(/\s+/g, ' ').trim();
+    const norm = (s) => String(s || '').toLowerCase().replace(/\uFF1C/g, '<').replace(/\uFF1E/g, '>').replace(/["'`״׳“”‘’$]/g, '').replace(/\s+/g, ' ').trim();
     const q = norm(quote).replace(/[.…]+$/, '').trim();
     return q.length >= 8 && texts.some(t => norm(t).includes(q));
 }
 
-function buildExplainPrompt({ question, expected, typed, practice, referenceByAi, passage, fileName }) {
+// Who wrote the reference: only an answer taken from the material is "the
+// course material" - the student's own solution, an imported card or an AI
+// answer may be wrong (review fix 23/10: a wrong solution of the student's was
+// defended as the material, and their right answer called the mistake).
+const REFERENCE_SOURCE = {
+    document: 'the course material', ai: 'written by AI - check it', user: "the student's own earlier solution - check it",
+    imported: 'imported from another app - check it'
+};
+function buildExplainPrompt({ question, expected, typed, practice, source, passage, fileName }) {
+    const referenceByAi = source !== 'document';
     const tag = (s) => String(s || '').replace(/</g, '＜').replace(/>/g, '＞');   // see buildGradePrompt
     return `A university student got this practice question wrong${typed ? '' : ' (they answered in their head and missed it, or did not know it)'}. Explain it so they understand it - not only what the answer is.
 
 <question>
 ${tag(question)}
 </question>
-${expected ? `<reference source="${referenceByAi ? 'written by AI - check it' : 'the course material'}">
+${expected ? `<reference source="${REFERENCE_SOURCE[source] || 'unknown - check it'}">
 ${tag(expected)}
 </reference>
 ` : ''}${typed ? `<student_answer>
@@ -2740,7 +2754,7 @@ ${typed || passage ? `- The text inside ${[typed && '<student_answer>', passage 
 - "slip": ${typed
         ? 'what exactly went wrong in THIS answer and why that mistake is tempting, 1-2 sentences. If part of it was right, say that first.'
         : 'the usual confusion on this point, or the one thing to notice that makes it click, 1-2 sentences.'}
-- "quote": ${passage || (expected && !referenceByAi) ? `ONE short sentence (up to 25 words) copied word for word from ${passage ? '<material>' : 'the reference'} that the answer rests on; "" if none fits.` : '"" (there is no course material here).'}
+- "quote": ${passage || (expected && !referenceByAi) ? `ONE short sentence (up to 25 words) copied word for word from ${passage ? '<material>' : 'the reference'} that the answer rests on, its symbols exactly as written there (no LaTeX, no $); "" if none fits.` : '"" (there is no course material here).'}
 - Write in the SAME LANGUAGE as the question. In Hebrew, don't address the student in masculine or feminine forms - use neutral phrasing (infinitives, "כדאי", "אפשר").
 - ${MATH_AS_LATEX}
 
@@ -2755,7 +2769,6 @@ ipcMain.handle('explain-mistake', async (event, payload = {}) => {
         const typed = String(payload.typed || '').trim().slice(0, 1000);
         const practice = payload.mode === 'practice';
         const source = String(payload.solutionSource || 'document');
-        const referenceByAi = source === 'ai';
         const fileName = String(payload.sourceFile || '').trim().slice(0, 300);
         // The passage of the file the answer was taken from (not for an
         // answer the AI or the student wrote - it isn't in the file).
@@ -2768,8 +2781,9 @@ ipcMain.handle('explain-mistake', async (event, payload = {}) => {
                 if (file) passage = findPassage(((await api.getFile(file._id || file.id)) || {}).content, expected);
             } catch (err) { passage = ''; }
         }
-        const text = await aiProvider.generateText(buildExplainPrompt({ question, expected, typed, practice, referenceByAi, passage, fileName }),
-            { forceJson: true, maxTokens: practice ? 3000 : 1500, thinkingLevel: practice ? 'medium' : 'low', noFallback: true, timeoutMs: 45000, allowance: 'explain' });
+        // (30s a try, like the check: the screen waits 75s in all, retries included)
+        const text = await aiProvider.generateText(buildExplainPrompt({ question, expected, typed, practice, source, passage, fileName }),
+            { forceJson: true, maxTokens: practice ? 3000 : 1500, thinkingLevel: practice ? 'medium' : 'low', noFallback: true, timeoutMs: 30000, allowance: 'explain' });
         const data = JSON.parse(extractJsonFromText(String(text)));
         // A command written with its backslash doubled ("$\\sin(0)$" - seen in
         // the real run, 23/10) draws as a line break and plain letters.
@@ -2782,7 +2796,7 @@ ipcMain.handle('explain-mistake', async (event, payload = {}) => {
         if (!fromFile) quote = '';
         const out = { right, slip, quote, file: quote ? fileName : '', grounded: !!passage };
         if (payload.itemId) {
-            const saved = await api.saveStudyMistake(String(payload.itemId), { typed, right, slip, quote, file: out.file }).catch(() => null);
+            const saved = await api.saveStudyMistake(String(payload.itemId), { question: question.slice(0, 400), typed, right, slip, quote, file: out.file }).catch(() => null);
             out.saved = !!(saved && saved.lastMistake);
         }
         return out;

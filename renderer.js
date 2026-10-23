@@ -7259,7 +7259,11 @@ function revealAnswer(check = null) {
 // the question comes up, "Last time…" shows what went wrong (after answering,
 // never before). 20 a day on the web - asked only when pressed.
 const explainCache = new Map();   // question + what was typed -> its explanation (no second AI call)
-let explainOff = '';              // today's explanations are used up: said at once, no call
+// Today's explanations are used up: said at once, no call - until the day
+// changes (a page left open overnight). Only the explanations' own cap: a
+// key's "quota … resets at 10:00" (desktop) mustn't turn them off all day.
+let explainOff = null;            // { msg, day }
+const explainOffNow = () => (explainOff && explainOff.day === new Date().toDateString() ? explainOff.msg : '');
 
 function renderExplanation(box, res, typed) {
     box.innerHTML = `
@@ -7300,25 +7304,28 @@ function showExplainError(box, msg) {
 async function explainMistake(item, typed, box, btn, course) {
     const key = `${item.id}|${item.question}|${typed}`;
     box.dataset.for = key;
-    if (explainOff) { showExplainError(box, explainOff); btn.hidden = true; return; }
+    if (explainOffNow()) { showExplainError(box, explainOffNow()); btn.hidden = true; return; }
     let res = explainCache.get(key);
     if (!res) {
         const label = btn.textContent;
         btn.disabled = true;
         btn.textContent = t('Explaining…');
+        // The student's own solution standing in for a missing answer is
+        // theirs, not the material's - it may be wrong.
+        const own = !String(item.answer || '').trim() && !!String(item.mySolution || '').trim();
         res = await withTimeout(ipcRenderer.invoke('explain-mistake', {
             itemId: item.id, question: item.question, expected: item.answer || item.mySolution || '', typed, mode: item.mode,
-            solutionSource: item.solutionSource || 'document', sourceFile: item.sourceFile || '', course: course || item.category || ''
-        }).catch(e => ({ error: e.message })), 50000);
-        btn.disabled = false;
-        btn.textContent = label;
+            solutionSource: own ? 'user' : (item.solutionSource || 'document'), sourceFile: item.sourceFile || '', course: course || item.category || ''
+        }).catch(e => ({ error: e.message })), 75000);
         if (res && res.right) explainCache.set(key, res);
-        if (res && res.error && isAiLimit(res.error)) explainOff = res.error;
+        if (res && res.error && /\bexplanations\b/.test(res.error) && isAiLimit(res.error)) explainOff = { msg: res.error, day: new Date().toDateString() };
+        // The button is this card's still (a practice card moved on resets it).
+        if (box.dataset.for === key) { btn.disabled = false; btn.textContent = label; }
     }
     if (!box.isConnected || box.dataset.for !== key) return;   // moved on meanwhile
     if (!res || !res.right) {
         showExplainError(box, res && res.error);
-        btn.hidden = !!explainOff;   // used up for today: no button that can only say so again
+        btn.hidden = !!explainOffNow();   // used up for today: no button that can only say so again
         return;
     }
     renderExplanation(box, res, !!typed);
@@ -7340,6 +7347,7 @@ function showStudyExplain(item, check, dontKnow) {
     const offer = !studyState.checkOff && (!check || dontKnow || (check.verdict ? check.verdict !== 'correct' : !isAiLimit(check.failed)));
     row.hidden = !offer;
     btn.hidden = false;
+    btn.disabled = false;   // (the last card's explanation may still be on its way)
     btn.textContent = t(check ? 'Explain why' : 'Didn\'t get it? Explain why');
     btn.onclick = () => explainMistake(item, typed, box, btn, item.category || (studyState.session && studyState.session.category) || '');
 }
@@ -7356,8 +7364,12 @@ function showLastMistake(item) {
     const when = m.at ? new Date(m.at) : null;
     const date = when && !isNaN(when) ? when.toLocaleDateString(I18N.lang === 'he' ? 'he-IL' : 'en-GB', { day: 'numeric', month: 'short' }) : '';
     const title = document.getElementById('study-last-mistake-title');
-    title.textContent = m.typed ? t('Last time ({date}) you wrote:', { date }) : t('Last time ({date}) you didn\'t get this one.', { date });
-    if (m.typed) {
+    // Another version of it last time (other numbers): what was written then
+    // would only confuse - what went wrong still holds.
+    const sameText = !m.question || String(item.question || '').trim().slice(0, 400).trim() === m.question;
+    title.textContent = !sameText ? t('Last time ({date}), on another version of this question:', { date })
+        : m.typed ? t('Last time ({date}) you wrote:', { date }) : t('Last time ({date}) you didn\'t get this one.', { date });
+    if (m.typed && sameText) {
         const yours = document.createElement('span');
         yours.className = 'study-last-mistake__yours';
         yours.dir = 'auto';
