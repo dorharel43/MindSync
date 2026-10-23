@@ -2471,9 +2471,15 @@ function closeCourseMenuOutside(e) {
     if (btn && courseMenuEl.parentElement.contains(btn)) return;
     closeCourseMenu();
 }
-function closeCourseMenuKey(e) { if (e.key === 'Escape') closeCourseMenu(); }
+let menuAnchor = null;
+function closeCourseMenuKey(e) {
+    if (e.key !== 'Escape') return;
+    const back = menuAnchor;
+    closeCourseMenu();
+    if (back && back.isConnected) back.focus();
+}
 function openCourseMenu(anchor, folder, folders) {
-    openActionMenu(anchor.closest('.folder-card'), `folder:${folder.id}`, [
+    openActionMenu(anchor.closest('.folder-card'), `folder:${folder.id}`, anchor, [
         ['Rename', () => renameCourseUI(folder)],
         ['Merge into another course…', () => mergeCourseUI(folder, folders)],
         ['Delete course', () => deleteCourseUI(folder), true]
@@ -2481,8 +2487,8 @@ function openCourseMenu(anchor, folder, folders) {
 }
 // A small ⋯ menu inside `host` (23/10, shared: a course card in Materials, a
 // course row in Practice). items: [label, run, danger?]. One open at a time;
-// a second click on its ⋯ closes it.
-function openActionMenu(host, id, items) {
+// a second click on its ⋯ closes it; Escape closes it and goes back to ⋯.
+function openActionMenu(host, id, anchor, items) {
     const wasOpenHere = courseMenuEl && courseMenuEl.dataset.id === id;
     closeCourseMenu();
     if (wasOpenHere) return;
@@ -2501,6 +2507,7 @@ function openActionMenu(host, id, items) {
     });
     host.appendChild(menu);
     courseMenuEl = menu;
+    menuAnchor = anchor;
     setTimeout(() => {   // (not the click that opened it)
         document.addEventListener('click', closeCourseMenuOutside, true);
         document.addEventListener('keydown', closeCourseMenuKey);
@@ -2617,7 +2624,7 @@ async function loadAndRenderFiles() {
                 </div>
             </div>
             <div class="file-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
-                <button class="btn-secondary btn-sm btn-extract" title="Reads a syllabus or assignment sheet: exams go to the Planner, submissions to Tasks">Exams & deadlines</button>
+                <button class="btn-secondary btn-sm btn-extract" title="Reads a syllabus: exams go to the Planner, submissions to Tasks">Exams & deadlines</button>
                 <button class="btn-secondary btn-sm btn-ai">${file.summary ? 'View summary' : 'Summarize'}</button>
                 <button class="btn-secondary btn-sm btn-questions" title="Makes practice questions from this file - you check them before they go into Study">Questions</button>
                 <button class="btn-icon btn-icon--danger delete-file-btn" title="Delete file" aria-label="Delete file">${icon('trash')}</button>
@@ -2676,7 +2683,12 @@ async function loadAndRenderFiles() {
         // "Exams & deadlines" only on a syllabus (23/10): on a lecture or a past
         // exam it offered to read deadlines that aren't there.
         const extractBtn = fileItem.querySelector('.btn-extract');
-        const showExtract = () => { if (extractBtn) extractBtn.hidden = (file.role || guessFileRole(file.name)) !== 'syllabus'; };
+        // (a syllabus by its text too - the upload's offer finds those - unless marked otherwise)
+        const showExtract = () => {
+            if (!extractBtn) return;
+            const role = file.role || guessFileRole(file.name);
+            extractBtn.hidden = !(role === 'syllabus' || (!file.role || file.role === 'material') && looksLikeSyllabus(file.content));
+        };
         showExtract();
         if (extractBtn) extractBtn.onclick = () => openSyllabusImport(file, extractBtn);
 
@@ -4698,8 +4710,10 @@ async function loadAndRenderHome() {
     const todayEvents = events.filter(e => eventOccursOn(e, new Date())).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
     const now = new Date();
     const nowHm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const ahead = todayEvents.filter(e => (e.time || '') >= nowHm);
-    const dueToday = tasks.filter(tk => tk.dueDate && localIsoDate(new Date(tk.dueDate)) <= todayIso);
+    // (one with no time is "today" all day; a task's deadline is in `date`
+    // "DD/MM/YYYY" - parseTaskDueDate - and "due today" means today, not overdue)
+    const ahead = todayEvents.filter(e => !e.time || e.time >= nowHm);
+    const dueToday = tasks.filter(tk => { const d = parseTaskDueDate(tk); return d && localIsoDate(d) === todayIso; });
     const nextLabel = document.getElementById('home-next-label');
     const nextTitle = document.getElementById('home-next-title');
     const nextTime = document.getElementById('home-next-time');
@@ -4707,7 +4721,8 @@ async function loadAndRenderHome() {
     if (nextLabel && ahead.length) {
         nextLabel.textContent = t('Up next today');
         nextTitle.textContent = ahead[0].title;
-        nextTime.textContent = ahead.length > 1 ? t('Today at {time} · and {n} more today', { time: ahead[0].time, n: ahead.length - 1 }) : t('Today at {time}', { time: ahead[0].time });
+        const when = ahead[0].time ? t('Today at {time}', { time: ahead[0].time }) : t('Today');
+        nextTime.textContent = ahead.length > 1 ? `${when} · ${t('and {n} more today', { n: ahead.length - 1 })}` : when;
     } else if (nextLabel && dueToday.length) {
         nextLabel.textContent = t('Today');
         nextTitle.textContent = dueToday.length === 1 ? t('1 task due today') : t('{n} tasks due today', { n: dueToday.length });
@@ -6523,6 +6538,18 @@ function renderStudyCourses(subjects, items, courseFiles) {
         go.onclick = () => goToCourseMaterials(f.name, !nFiles);
         const actions = document.createElement('div');
         actions.className = 'study-course__actions';
+        // (its full exam is built from the material - no questions needed;
+        // with the Study screen's "Full exam" link gone, it's here)
+        if (nFiles) {
+            const more = document.createElement('button');
+            more.type = 'button';
+            more.className = 'btn-secondary btn-sm course-menu-btn';
+            more.textContent = '⋯';
+            more.title = t('More for this course');
+            more.setAttribute('aria-label', t('More for this course'));
+            more.onclick = (e) => { e.stopPropagation(); openActionMenu(actions, `study:${f.name}`, more, [['Full exam', () => openFullExam(f.name)]]); };
+            actions.append(more);
+        }
         actions.append(go);
         row.append(top, meta, actions);
         emptyRows.append(row);
@@ -6587,7 +6614,8 @@ function renderStudyCourses(subjects, items, courseFiles) {
                 renderStudyCourses(subjects, items);
             }]);
         }
-        more.onclick = (e) => { e.stopPropagation(); openActionMenu(row, `study:${s.category}`, menuItems); };
+        // (the menu hangs from the buttons - not the row's bottom, under its file list)
+        more.onclick = (e) => { e.stopPropagation(); openActionMenu(actions, `study:${s.category}`, more, menuItems); };
         actions.append(more, practice);
         if (s.lastMock) {
             const m = document.createElement('span');

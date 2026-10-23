@@ -139,7 +139,7 @@
         '.study-exam-row__course', '.file-name', '.folder-name', '.syllabus-row__title', '.upload-row__name',
         '.manage-item__q', '.review-item__q', '.review-item__a', '.summary-surewrong__list',
         '#sidebar-profile-name', '#sidebar-profile-exam', '#home-greeting-name', '#settings-profile-name', '#settings-profile-email',
-        '#home-next-title', '#sidebar-next-title', '.sum-toolbar__name', '.sb-course__name', '.home-hero__exam-name', '.home-ready__oname'
+        '#home-next-title', '#home-next-time',  '.sum-toolbar__name', '.sb-course__name', '.home-hero__exam-name', '.home-ready__oname'
     ].join(', ');
     // Placeholders the app itself puts in those spots before real content
     // arrives (or when there's none) - always translated.

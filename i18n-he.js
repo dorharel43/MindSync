@@ -551,7 +551,7 @@
 
         // ---- tooltips ----
         'Go to related content': 'למקום הקשור', 'Delete file': 'מחיקת קובץ', 'Delete question': 'מחיקת שאלה',
-        'Reads a syllabus or assignment sheet: exams go to the Planner, submissions to Tasks': 'קורא סילבוס או דף עבודה: מבחנים נכנסים ללוח השבועי, הגשות למשימות',
+        'Reads a syllabus: exams go to the Planner, submissions to Tasks': 'קורא סילבוס: מבחנים נכנסים ללוח השבועי, הגשות למשימות',
         'Makes practice questions from this file - you check them before they go into Study': 'יוצר שאלות תרגול מהקובץ - אפשר לבדוק אותן לפני שהן נכנסות לתרגול',
 
         // ---- dialogs (ui.js) ----
@@ -565,7 +565,7 @@
         'No text could be read from that file, so no questions were made.': 'לא הצלחתי לקרוא טקסט מהקובץ, אז לא נוצרו שאלות.', 'That looks like a syllabus - questions are made from lectures and notes.': 'זה נראה כמו סילבוס - שאלות נוצרות מהרצאות ומסיכומים.', 'No questions yet': 'עוד אין שאלות',
         'Pick a lecture or notes - the questions are made from it as soon as it uploads.': 'בוחרים הרצאה או סיכום - השאלות נוצרות ממנו מיד כשהוא עולה.', 'Upload a file first': 'קודם מעלים קובץ',
         // ---- Simpler screens (23/10) ----
-        'Up next today': 'הבא בתור היום', 'Today at {time}': 'היום ב-{time}', 'Today at {time} · and {n} more today': 'היום ב-{time} · ועוד {n} היום',
+        'Up next today': 'הבא בתור היום', 'Today at {time}': 'היום ב-{time}', 'and {n} more today': 'ועוד {n} היום',
         '1 task due today': 'משימה אחת להיום', '{n} tasks due today': '{n} משימות להיום',
         'Upload a lecture or your notes - MindSync writes practice questions from it.': 'מעלים הרצאה או סיכום - MindSync כותבת ממנו שאלות תרגול.',
         'You know {k}% of what you practiced - {p} of {n} questions practiced.': 'ידוע לך {k}% ממה שתרגלת - תרגלת {p} מתוך {n} שאלות.',
