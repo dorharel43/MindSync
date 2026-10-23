@@ -619,6 +619,16 @@ body.dark-mode .day-column {
 .course-menu__item:hover, .course-menu__item:focus-visible { background: var(--accent-subtle, rgba(0,0,0,.05)); outline: none; }
 .course-menu__item.is-danger { color: var(--status-danger); }
 .merge-course-modal { width: min(460px, 92vw); }
+/* One list of courses (23/10): a course with no questions yet, and the
+   "ghost courses" card. */
+.study-course--empty .study-course__name { color: var(--text-secondary); }
+.sb-dot--empty { background: transparent; border: 1.5px dashed var(--text-tertiary, var(--text-secondary)); }
+.readiness-empties { margin-top: var(--space-3); }
+.study-orphan { border-inline-start: 3px solid var(--status-warning, #d97706); }
+.study-orphan__text { margin: 0 0 var(--space-3); }
+.study-orphan__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+.study-orphan__row[hidden] { display: none; }
+.study-orphan__row .input-field { width: auto; min-width: 180px; flex: 1; }
 /* The course pickers of the review screen and the syllabus import (18/10). */
 .review-course__hint { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); margin-top: var(--space-1); }
 #review-course-new, #syllabus-course-new { margin-top: var(--space-2); }

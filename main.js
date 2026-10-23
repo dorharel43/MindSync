@@ -5060,8 +5060,9 @@ ipcMain.handle('delete-events', async (event, ids) => {
 // =====================================
 // Folders & Files
 // =====================================
-ipcMain.handle('get-folders', async () => {
-  try { return await api.getFolders(); } catch (err) { return []; }
+ipcMain.handle('get-folders', async (event, opts = {}) => {
+  // ({ strict: true }: a failure is { error }, not "no courses" - 23/10)
+  try { return await api.getFolders(); } catch (err) { return opts && opts.strict ? { error: err.message } : []; }
 });
 ipcMain.handle('save-folder', async (event, newFolder) => {
   try { return await api.createFolder(newFolder); } catch (err) { return { error: err.message }; }
@@ -5069,6 +5070,10 @@ ipcMain.handle('save-folder', async (event, newFolder) => {
 // A course renamed / merged into another (23/10) - see routes/folders.js.
 ipcMain.handle('rename-folder', async (event, id, name) => {
   try { return await api.renameFolder(id, String(name || '').trim()); } catch (err) { return { error: err.message }; }
+});
+// A name that is no course into a course (23/10: the "ghost courses" card).
+ipcMain.handle('absorb-course-name', async (event, id, name) => {
+  try { return await api.absorbCourseName(id, String(name || '')); } catch (err) { return { error: err.message }; }
 });
 ipcMain.handle('merge-folder', async (event, id, intoId) => {
   try { return await api.mergeFolder(id, intoId); } catch (err) { return { error: err.message }; }

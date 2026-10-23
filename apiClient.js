@@ -149,6 +149,7 @@ module.exports = {
   deleteFolder: (id) => request('DELETE', `/folders/${enc(id)}`),
   renameFolder: (id, name) => request('PUT', `/folders/${enc(id)}`, { name }).then(withIdAlias),
   mergeFolder: (id, into) => request('POST', `/folders/${enc(id)}/merge`, { into }),
+  absorbCourseName: (id, name) => request('POST', `/folders/${enc(id)}/absorb`, { name }),
 
   // ---- Files ----
   getFiles: async () => withIdAliases(await request('GET', '/files')),
