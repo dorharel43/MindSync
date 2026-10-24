@@ -240,28 +240,36 @@
                     <button class="btn-primary home-hero__btn" id="home-study-btn"></button>
                     <ul class="home-ready__others" id="home-ready-others" hidden></ul>
                 </div>
-                <!-- Today (23/10): the next thing on today's calendar, or the
-                     tasks due today - hidden on a free day. -->
-                <div class="home-hero__next" id="home-hero-next" hidden>
-                    <div id="home-next-today">
-                        <div class="home-hero__label" id="home-next-label">Up next today</div>
-                        <div class="home-hero__title home-hero__title--next" id="home-next-title" dir="auto"></div>
-                        <div class="home-hero__text" id="home-next-time" dir="auto"></div>
-                    </div>
-                    <div class="home-hero__exam" id="home-next-exam" hidden>
-                        <span class="home-hero__exam-label">Next exam</span>
-                        <bdi class="home-hero__exam-name" id="home-next-exam-name"></bdi>
-                        <span class="home-hero__exam-when" id="home-next-exam-when"></span>
-                    </div>
-                    <div class="home-focus-actions">
-                        <button class="home-hero__link" data-go="nav-weekly">See my week</button>
-                    </div>
-                </div>
             </section>
 
-            <!-- (23/10) "Today's timeline" and "This week" (four counts) are gone:
-                 the first said what the panel above says, the second gave
-                 numbers with nothing to do about them. -->
+            <!-- Today and Coming up (24/10): what's on today, and what's next -
+                 by name, not counts (stage A left Home with just the panel above,
+                 and "how many tasks / exams" is what a student looks for here).
+                 Each card only with something in it. renderHomeCards(). -->
+            <div class="dashboard-grid home-cards" id="home-cards" hidden>
+                <section class="card home-card" id="home-today" hidden>
+                    <div class="home-card__head">
+                        <h2 class="home-card__title">Today</h2>
+                        <a href="#" class="link-text" data-go="nav-weekly">My week</a>
+                    </div>
+                    <ul class="home-list" id="home-today-list"></ul>
+                    <p class="home-card__empty" id="home-today-empty" hidden></p>
+                </section>
+                <section class="card home-card" id="home-week" hidden>
+                    <div class="home-card__head">
+                        <h2 class="home-card__title">Coming up</h2>
+                    </div>
+                    <div class="home-week__group" id="home-week-exams-box" hidden>
+                        <h3 class="home-week__sub">Exams</h3>
+                        <ul class="home-list" id="home-week-exams"></ul>
+                    </div>
+                    <div class="home-week__group" id="home-week-tasks-box" hidden>
+                        <h3 class="home-week__sub">Tasks</h3>
+                        <ul class="home-list" id="home-week-tasks"></ul>
+                        <button type="button" class="btn-link home-week__all" id="home-week-all" hidden></button>
+                    </div>
+                </section>
+            </div>
         </div>
 
         <!-- Planner View (was "Weekly Plan"; ids stay nav-weekly / view-weekly

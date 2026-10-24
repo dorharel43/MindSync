@@ -2331,40 +2331,7 @@ function renderTasksList() {
                 return;
             }
 
-            // Guard: finishing a task that still has unchecked steps is
-            // usually a misclick, so confirm rather than silently discarding
-            // the remaining checklist.
-            const p = computeProgress(task);
-            if (p.total > 0 && p.done < p.total) {
-                const proceed = await confirmDialog("Finish this task?", `It still has ${p.total - p.done} unfinished step(s).`, { confirmText: "Mark as done" });
-                if (!proceed) return;
-            }
-
-            taskCard.classList.add('is-completing');
-            completeBtn.disabled = true;
-
-            // Archive rather than delete. Completing a task used to remove it
-            // permanently, which threw away all history - you could never see
-            // what you'd finished, and "Done this week" could never count
-            // anything. The schema already had status:'completed'; it just
-            // wasn't being used.
-            const res = await ipcRenderer.invoke('update-task', task.id, { status: 'completed' });
-            if (res && res.error) {
-                toast.error(res.error, 'Could not complete task');
-                taskCard.classList.remove('is-completing');
-                completeBtn.disabled = false;
-                return;
-            }
-
-            showUndoToast(
-                'Task marked as done.',
-                async () => {
-                    await ipcRenderer.invoke('update-task', task.id, { status: 'open' });
-                    await refreshTaskViews();
-                }
-            );
-
-            await refreshTaskViews();
+            await completeTask(task, (on) => { taskCard.classList.toggle('is-completing', on); completeBtn.disabled = on; });
         };
 
         tasksListContainer.appendChild(taskCard);
@@ -4586,6 +4553,182 @@ function renderSidebarExam(events, todayIso) {
 }
 let homeRenderTicket = 0;
 
+// Done on a task (24/10: from its row in My week, or from Home): steps
+// still open -> ask first; archived (not deleted), with Undo. `busy(on)`
+// greys the button while it saves.
+async function completeTask(task, busy = () => {}) {
+    const p = computeProgress(task);
+    if (p.total > 0 && p.done < p.total) {
+        const proceed = await confirmDialog("Finish this task?", `It still has ${p.total - p.done} unfinished step(s).`, { confirmText: "Mark as done" });
+        if (!proceed) return false;
+    }
+    busy(true);
+    const res = await ipcRenderer.invoke('update-task', task.id, { status: 'completed' });
+    if (res && res.error) {
+        toast.error(res.error, 'Could not complete task');
+        busy(false);
+        return false;
+    }
+    showUndoToast('Task marked as done.', async () => {
+        await ipcRenderer.invoke('update-task', task.id, { status: 'open' });
+        await refreshTaskViews();
+    });
+    await refreshTaskViews();
+    return true;
+}
+
+// Home's two cards (24/10): "Today" - today's classes and exams by the hour,
+// then the tasks due today or late, each with Done; "Coming up" - the next
+// exams by name and the nearest tasks. Names and dates, not counts.
+const HOME_TODAY_TASKS = 5;
+const HOME_NEXT_EXAMS = 3;
+const HOME_NEXT_TASKS = 3;
+function homeDayLabel(date) {
+    return t(`${WEEKDAY_NAMES[date.getDay()].slice(0, 3)} ${date.getDate()}/${date.getMonth() + 1}`);
+}
+function homeDaysFrom(today0, date) {
+    const d0 = new Date(date); d0.setHours(0, 0, 0, 0);
+    return Math.round((d0 - today0) / 864e5);
+}
+function homeItem({ when, whenClass = '', title, tag = '', tagClass = '', past = false, task = null }) {
+    const li = document.createElement('li');
+    li.className = 'home-list__item' + (past ? ' is-past' : '');
+    const w = document.createElement('span');
+    w.className = 'home-list__when ms-tabular' + (whenClass ? ' ' + whenClass : '');
+    w.textContent = when;
+    const name = document.createElement('span');
+    name.className = 'home-list__title';
+    name.dir = 'auto';
+    name.textContent = title;
+    li.append(w, name);
+    if (tag) {
+        const tg = document.createElement('span');
+        tg.className = 'home-list__tag' + (tagClass ? ' ' + tagClass : '');
+        tg.textContent = t(tag);
+        li.append(tg);
+    }
+    if (task) {
+        const done = document.createElement('button');
+        done.type = 'button';
+        done.className = 'btn-secondary btn-sm home-list__done';
+        done.innerHTML = `${icon('check')} <span>${escapeHtml(t('Done'))}</span>`;
+        done.setAttribute('aria-label', `${t('Done')}: ${task.title}`);
+        done.onclick = () => completeTask(task, (on) => { done.disabled = on; });
+        li.append(done);
+    }
+    return li;
+}
+function renderHomeCards(tasks, events, todayIso) {
+    const box = document.getElementById('home-cards');
+    if (!box) return;
+    const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const byTime = (a, b) => (a.time || '').localeCompare(b.time || '');
+
+    // ---- Today: the calendar by the hour (what's over is greyed), then tasks.
+    const todayList = document.getElementById('home-today-list');
+    const todayEmpty = document.getElementById('home-today-empty');
+    todayList.innerHTML = '';
+    const todayEvents = events.filter(e => eventOccursOn(e, now)).sort(byTime);
+    todayEvents.forEach(e => todayList.append(homeItem({
+        when: e.time || t('All day'),
+        title: e.title,
+        tag: EVENT_TYPE_LABELS[e.type] || '',
+        tagClass: e.type === 'exam' ? 'is-exam' : '',
+        // (over once it ends - an hour when its length isn't known, like the planner)
+        past: !!e.time && timeToMin(e.time) + (e.durationMinutes || 60) <= nowMin,
+    })));
+    // A task's deadline is in `date` ("DD/MM/YYYY", parseTaskDueDate): late ones
+    // first, then today's.
+    const dueOf = (tk) => { const d = parseTaskDueDate(tk); return d ? localIsoDate(d) : ''; };
+    const late = tasks.filter(tk => { const d = dueOf(tk); return d && d < todayIso; }).sort((a, b) => dueOf(a).localeCompare(dueOf(b)));
+    const dueToday = tasks.filter(tk => dueOf(tk) === todayIso);
+    const todayTasks = [...late, ...dueToday];
+    todayTasks.slice(0, HOME_TODAY_TASKS).forEach(tk => todayList.append(homeItem({
+        when: dueOf(tk) < todayIso ? t('Overdue') : t('Task'),
+        whenClass: dueOf(tk) < todayIso ? 'is-late' : '',
+        title: tk.title,
+        task: tk,
+    })));
+    if (todayTasks.length > HOME_TODAY_TASKS) {
+        const li = document.createElement('li');
+        li.className = 'home-list__more';
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'btn-link';
+        more.textContent = t('{n} more - in My week', { n: todayTasks.length - HOME_TODAY_TASKS });
+        more.onclick = goToTasks;
+        li.append(more);
+        todayList.append(li);
+    }
+    // A free day: say so, and what's next on the calendar (the coming week).
+    const freeDay = !todayEvents.length && !todayTasks.length;
+    todayEmpty.hidden = !freeDay;
+    if (freeDay) {
+        let next = null;
+        for (let i = 1; i <= 7 && !next; i++) {
+            const day = new Date(today0); day.setDate(day.getDate() + i);
+            const first = events.filter(e => eventOccursOn(e, day)).sort(byTime)[0];
+            if (first) next = { e: first, day, i };
+        }
+        todayEmpty.textContent = '';
+        todayEmpty.append(t('Nothing on today.'));
+        if (next) {
+            const when = next.i === 1 ? t('Tomorrow') : homeDayLabel(next.day);
+            const line = document.createElement('span');
+            line.className = 'home-card__next';
+            const label = document.createElement('span');
+            label.textContent = `${t('Next:')} `;
+            const name = document.createElement('bdi');
+            name.className = 'home-list__title';
+            name.textContent = next.e.title;
+            line.append(label, name, ` - ${when}${next.e.time ? ` ${next.e.time}` : ''}`);
+            todayEmpty.append(' ', line);
+        }
+    }
+    // (the card only for someone with a calendar or tasks at all)
+    document.getElementById('home-today').hidden = freeDay && !events.length && !tasks.length;
+
+    // ---- Coming up: exams after today, by name; the nearest other tasks.
+    const exams = events.filter(e => e.type === 'exam' && e.date && e.date >= todayIso)
+        .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
+    homeNextExam = exams[0] ? `${exams[0].title}|${exams[0].date}` : '';
+    hideRepeatedNextExam();   // (the panel's label: "Next exam you're practicing for" when it isn't this one)
+    const later = exams.filter(e => e.date > todayIso).slice(0, HOME_NEXT_EXAMS);
+    const examList = document.getElementById('home-week-exams');
+    examList.innerHTML = '';
+    later.forEach(e => {
+        const [y, m, d] = e.date.split('-').map(Number);
+        const date = new Date(y, m - 1, d);
+        const n = homeDaysFrom(today0, date);
+        examList.append(homeItem({ when: homeDayLabel(date), title: e.title, tag: n === 1 ? 'Tomorrow' : `In ${n} days`, tagClass: n <= 7 ? 'is-soon' : '' }));
+    });
+    document.getElementById('home-week-exams-box').hidden = !later.length;
+
+    const shown = new Set(todayTasks.slice(0, HOME_TODAY_TASKS).map(tk => tk.id));
+    const nextTasks = tasks.filter(tk => !todayTasks.includes(tk))
+        .sort((a, b) => (dueOf(a) || '9999').localeCompare(dueOf(b) || '9999'))
+        .slice(0, HOME_NEXT_TASKS);
+    const taskList = document.getElementById('home-week-tasks');
+    taskList.innerHTML = '';
+    nextTasks.forEach(tk => {
+        const d = parseTaskDueDate(tk);
+        const n = d ? homeDaysFrom(today0, d) : null;
+        taskList.append(homeItem({ when: d ? (n === 1 ? t('Tomorrow') : homeDayLabel(d)) : t('No date'), title: tk.title, task: tk }));
+        shown.add(tk.id);
+    });
+    const all = document.getElementById('home-week-all');
+    all.hidden = tasks.length <= shown.size;
+    all.textContent = t('All tasks ({n})', { n: tasks.length });
+    all.onclick = goToTasks;
+    document.getElementById('home-week-tasks-box').hidden = !nextTasks.length && all.hidden;
+    document.getElementById('home-week').hidden = !later.length && !nextTasks.length && all.hidden;
+
+    box.hidden = document.getElementById('home-today').hidden && document.getElementById('home-week').hidden;
+    if (window.hydrateIcons) hydrateIcons(box);
+}
+
 async function loadAndRenderHome() {
     const myTicket = ++homeRenderTicket;
     refreshSidebarCourses();   // the sidebar's "My courses" - doesn't hold Home up
@@ -4602,52 +4745,8 @@ async function loadAndRenderHome() {
     // "upcoming".
     const todayIso = localIsoDate(new Date());
 
-    // The next exam on the calendar, in the Today panel (30/9 redesign):
-    // "Next exam  Statistics  In 2 days · Thu 2/10".
-    const examBox = document.getElementById('home-next-exam');
-    if (examBox) {
-        const nextExam = events
-            .filter(e => e.type === 'exam' && e.date && e.date >= todayIso)
-            .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')))[0];
-        examBox.hidden = !nextExam;
-        examBox.dataset.exam = nextExam ? `${nextExam.title}|${nextExam.date}` : '';
-        hideRepeatedNextExam();
-        if (nextExam) {
-            const [y, m, d] = nextExam.date.split('-').map(Number);
-            const today0 = new Date(); today0.setHours(0, 0, 0, 0);
-            const daysLeft = Math.round((new Date(y, m - 1, d) - today0) / 864e5);
-            document.getElementById('home-next-exam-name').textContent = nextExam.title;
-            const when = daysLeft === 0 ? 'Today' : daysLeft === 1 ? 'Tomorrow' : `In ${daysLeft} days`;
-            document.getElementById('home-next-exam-when').textContent = `${when} · ${WEEKDAY_NAMES[new Date(y, m - 1, d).getDay()].slice(0, 3)} ${d}/${m}`;
-        }
-    }
+    renderHomeCards(tasks, events, todayIso);
     renderSidebarExam(events, todayIso);
-
-    
-    // Today (23/10): the next thing still ahead on today's calendar - or,
-    // with none, the tasks due today. Nothing on a free day: "nothing on the
-    // calendar" used to be on Home three times.
-    const todayEvents = events.filter(e => eventOccursOn(e, new Date())).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
-    const now = new Date();
-    const nowHm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    // (one with no time is "today" all day; a task's deadline is in `date`
-    // "DD/MM/YYYY" - parseTaskDueDate - and "due today" means today, not overdue)
-    const ahead = todayEvents.filter(e => !e.time || e.time >= nowHm);
-    const dueToday = tasks.filter(tk => { const d = parseTaskDueDate(tk); return d && localIsoDate(d) === todayIso; });
-    const nextLabel = document.getElementById('home-next-label');
-    const nextTitle = document.getElementById('home-next-title');
-    const nextTime = document.getElementById('home-next-time');
-    homeTodayHas = ahead.length > 0 || dueToday.length > 0;
-    if (nextLabel && ahead.length) {
-        nextLabel.textContent = t('Up next today');
-        nextTitle.textContent = ahead[0].title;
-        const when = ahead[0].time ? t('Today at {time}', { time: ahead[0].time }) : t('Today');
-        nextTime.textContent = ahead.length > 1 ? `${when} · ${t('and {n} more today', { n: ahead.length - 1 })}` : when;
-    } else if (nextLabel && dueToday.length) {
-        nextLabel.textContent = t('Today');
-        nextTitle.textContent = dueToday.length === 1 ? t('1 task due today') : t('{n} tasks due today', { n: dueToday.length });
-        nextTime.textContent = dueToday[0].title + (dueToday.length > 1 ? '…' : '');
-    }
     updateHomeHero();
 
     const hour = new Date().getHours();
@@ -4899,32 +4998,20 @@ function resetHomeReadiness() {
     hideRepeatedNextExam();
 }
 
-// The Today panel's "Next exam" says again what the readiness panel says,
-// when it's the same exam - hidden then (whichever of the two is drawn last).
+// The exam the practice panel is about, and the nearest exam on the calendar
+// (24/10): when they differ, the panel says "Next exam you're practicing for".
 let homeReadinessExam = '';
-// The panel's two halves (23/10): practice, and today - the today half only
-// with something on it (the next exam alone counts), the panel only with one.
-let homeTodayHas = false;
+let homeNextExam = '';
 function updateHomeHero() {
-    const next = document.getElementById('home-hero-next');
     const study = document.getElementById('home-study');
-    const exam = document.getElementById('home-next-exam');
-    const hero = next && next.closest('.home-hero');
-    if (!next || !hero) return;
-    next.hidden = !homeTodayHas && !(exam && !exam.hidden);
-    document.getElementById('home-next-today').hidden = !homeTodayHas;
-    hero.hidden = next.hidden && (!study || study.hidden);
+    const hero = study && study.closest('.home-hero');
+    if (hero) hero.hidden = study.hidden;
 }
 
 function hideRepeatedNextExam() {
-    const box = document.getElementById('home-next-exam');
-    if (box && box.dataset.exam && box.dataset.exam === homeReadinessExam) box.hidden = true;
-    else if (box && box.dataset.exam) box.hidden = false;
     updateHomeHero();
-    // An earlier exam (of a course with no questions) is the Today panel's - here it's
-    // the next one being practised for, said so.
     const label = document.getElementById('home-study-label');
-    if (label && homeReadinessExam) label.textContent = box && box.dataset.exam && box.dataset.exam !== homeReadinessExam ? t('Next exam you\'re practicing for') : t('Upcoming exam');
+    if (label && homeReadinessExam) label.textContent = homeNextExam && homeNextExam !== homeReadinessExam ? t('Next exam you\'re practicing for') : t('Upcoming exam');
 }
 
 // The newest real evidence of the last week: a mock exam (score ± margin) or a full exam.
