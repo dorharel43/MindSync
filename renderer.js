@@ -1658,8 +1658,7 @@ if (saveSmartTaskBtn) {
         }
 
         closeAddTaskModal();
-        await refreshTasksData();
-        await loadAndRenderHome();
+        await refreshTaskViews();
         showUndoToast(`Added: ${describeTask({ ...preview, category: preview.category || category })}`, async () => {
             if (created && created.id) await ipcRenderer.invoke('delete-task', created.id);
             await refreshTaskViews();
@@ -1718,7 +1717,9 @@ async function refreshTasksData() {
 async function refreshTaskViews() {
     await refreshTasksData();
     await loadAndRenderHome();
-    await loadAndRenderProgress();
+    // The board is right above the list now (23/10) - "Show tasks" and Coming
+    // up show the same tasks. (Progress no longer shows tasks.)
+    await loadAndRenderWeeklyBoard();
 }
 
 // A toast with one action button ("Add exams & deadlines", "Make
@@ -2113,8 +2114,12 @@ function renderTasksList() {
         // "Done" on the row, the rest under ⋯ (23/10): five icons on every row
         // read as five things to decide. The buttons stay (hidden) - ⋯ presses them.
         const actionsCol = taskCard.querySelector('.task-actions-col');
+        // (the steps' label is worked out when ⋯ opens: the box may be open, or
+        // a first step added since the row was drawn)
+        const stepsLabel = () => taskCard.querySelector('.checklist-panel').style.display !== 'none' ? 'Hide the steps'
+            : taskCard.querySelector('.progress-row') ? 'Show the steps' : 'Split into steps';
         const inMenu = [['.go-to-related-btn', 'Go to related content'], ['.edit-task-btn', 'Edit task'],
-            ['.toggle-checklist-btn', hasChecklist ? 'Show the steps' : 'Split into steps'], ['.delete-task-btn', 'Delete task', true]]
+            ['.toggle-checklist-btn', stepsLabel], ['.delete-task-btn', 'Delete task', true]]
             .map(([sel, label, danger]) => [actionsCol.querySelector(sel), label, danger]).filter(([b]) => b);
         inMenu.forEach(([b]) => { b.hidden = true; });
         const moreBtn = document.createElement('button');
@@ -2123,7 +2128,7 @@ function renderTasksList() {
         moreBtn.textContent = '⋯';
         moreBtn.title = t('More');
         moreBtn.setAttribute('aria-label', t('More'));
-        moreBtn.onclick = (e) => { e.stopPropagation(); openActionMenu(actionsCol, `task:${task.id}`, moreBtn, inMenu.map(([b, label, danger]) => [label, () => b.click(), danger])); };
+        moreBtn.onclick = (e) => { e.stopPropagation(); openActionMenu(actionsCol, `task:${task.id}`, moreBtn, inMenu.map(([b, label, danger]) => [typeof label === 'function' ? label() : label, () => b.click(), danger])); };
         actionsCol.insertBefore(moreBtn, actionsCol.querySelector('.complete-task-btn'));
 
         const checklistPanel = taskCard.querySelector('.checklist-panel');
@@ -3930,7 +3935,8 @@ document.querySelectorAll('[data-go]').forEach((el) => {
 // by default, 2-4 lines on top of every screen nobody read) - and an opened
 // one stays open, per screen.
 document.querySelectorAll('ul.screen-help').forEach((list) => {
-    const view = list.closest('.view-section');
+    // (a section of its own - the tasks in My week - keeps its own open/closed)
+    const view = list.closest('section[id], .view-section');
     const key = `mindsync.help.${view ? view.id : 'screen'}`;
     const box = document.createElement('details');
     box.className = 'screen-help-box';
@@ -4036,11 +4042,11 @@ function readinessStatus(r) {
     if (r.status && READINESS_STATUS[r.status]) return r.status;
     return r.unseen === r.total ? 'not_started' : 'building';
 }
-// "Practiced 12 of 40 · you know 9 of them." (known includes fading ones -
-// they were answered right; the fading ones are said separately).
+// "Practiced 12 of 40 · you know 9 of them." (just "know it" - the same
+// number as the bar's green part; the fading ones are under "needs work", 23/10).
 function readinessFacts(r) {
     const practiced = r.practiced != null ? r.practiced : r.total - r.unseen;
-    const know = (r.known || 0) + (r.fading || 0);
+    const know = r.known || 0;
     return `Practiced ${practiced} of ${r.total} · you know ${know} of them.`;
 }
 
@@ -4061,10 +4067,11 @@ function readinessSentence(s) {
         if (r.sureWrong) parts.push(r.sureWrong === 1
             ? '1 you were sure about turned out wrong - it comes first in practice.'
             : `${r.sureWrong} you were sure about turned out wrong - they come first in practice.`);
-        if (r.shaky) parts.push(`${r.shaky} ${r.shaky === 1 ? 'is' : 'are'} shaky (partly right, or right by guessing).`);
-        if (r.fading) parts.push(r.fading === 1
-            ? '1 needs a refresh (answered right, but a while ago).'
-            : `${r.fading} need a refresh (answered right, but a while ago).`);
+        // One "needs work", like the bar (23/10): shaky, fading and not known yet.
+        const work = (r.shaky || 0) + (r.fading || 0) + (r.notKnown || 0);
+        if (work) parts.push(work === 1
+            ? '1 needs work - wrong, partly right, guessed, or right a while ago.'
+            : `${work} need work - wrong, partly right, guessed, or right a while ago.`);
         if (r.unseen) {
             // A pace only when it says something ("about 1 a day" for 1 left doesn't).
             if (s.exam && r.perDay > 1 && days > 1) parts.push(`${r.unseen} not practiced yet - about ${r.perDay} a day before the exam.`);
@@ -5474,9 +5481,7 @@ async function runBulk(actionFn, successMessage) {
 
     selectedTaskIds.clear();
     updateBulkBar();
-    await refreshTasksData();
-    await loadAndRenderHome();
-    await loadAndRenderProgress();
+    await refreshTaskViews();
 
     if (failed > 0) toast.warning(`${failed} of ${ids.length} did not update.`, 'Partly finished');
     else toast.success(successMessage);
@@ -5691,8 +5696,9 @@ document.addEventListener('keydown', (e) => {
         return;
     }
 
-    // Escape clears any bulk selection.
-    if (e.key === 'Escape' && selectedTaskIds.size > 0) {
+    // Escape clears any bulk selection. (A ⋯ menu open: Escape closes just
+    // that, and goes back to its ⋯ - which a redraw here would remove.)
+    if (e.key === 'Escape' && selectedTaskIds.size > 0 && !courseMenuEl) {
         selectedTaskIds.clear();
         updateBulkBar();
         // No data changed - just the selection.
@@ -9098,7 +9104,7 @@ document.getElementById('full-upload-btn').onclick = () => {
     const course = fullState.course;
     stopFullExam(false);
     document.getElementById('nav-materials').click();
-    if (course) toast.info(t('Upload the past exams to the course "{c}" and mark them "Past exam" - then come back to Full exam.').replace('{c}', course));
+    if (course) toast.info(t('Upload the past exams to the course "{c}" and mark them "Past exam" - then try the exam again.').replace('{c}', course));
 };
 
 function leaveFullExam() {
