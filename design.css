@@ -1783,14 +1783,6 @@ html[dir="rtl"] .home-hero__title { letter-spacing: 0; }
 }
 .home-hero__link:hover { text-decoration-color: currentColor; }
 .home-hero__link svg { width: 15px; height: 15px; }
-.home-hero__exam {
-    display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px;
-    margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hero-line);
-    width: 100%; font-size: var(--text-sm);
-}
-.home-hero__exam[hidden] { display: none; }
-.home-hero__exam-label, .home-hero__exam-when { color: var(--hero-muted); }
-.home-hero__exam-name { font-weight: 600; color: var(--hero-ink); }
 .home-hero :focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
 /* Home: the upcoming exam's readiness (3/10). */
@@ -2231,8 +2223,8 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 /* A course row's ⋯ menu (23/10) opens just under the row, by its button. */
 .study-course { position: relative; }
 .study-course > .course-menu { top: calc(100% - 4px); }
-/* (review fix) Home on a free day: the practice card alone, full width. */
-.home-hero:has(> .home-hero__next[hidden]) { grid-template-columns: 1fr; }
+/* Home's panel is practice only (24/10) - today moved to its own card below. */
+#view-home .home-hero { grid-template-columns: 1fr; }
 /* A course row's ⋯ menu hangs from its buttons. */
 .study-course__actions { position: relative; }
 .study-course__actions > .course-menu { top: calc(100% + 4px); }
@@ -2246,3 +2238,39 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 .task-more-btn:hover { color: var(--text-primary); }
 /* Readiness: three states. */
 .rd-work { background: var(--status-warning); }
+
+/* Home: "Today" and "Coming up" (24/10) - items by name, a time or date
+   column, and Done on a task. */
+#view-home .home-cards { grid-template-columns: 1fr 1fr; }
+/* (review fix) one card alone takes the full width, not half */
+#view-home .home-cards:has(> .home-card[hidden]) { grid-template-columns: 1fr; }
+.home-cards[hidden], .home-card[hidden], .home-week__group[hidden], .home-card__empty[hidden] { display: none; }
+.home-list { list-style: none; margin: 0; padding: 0; }
+.home-list__item {
+    display: grid; grid-template-columns: minmax(64px, auto) 1fr auto auto;
+    align-items: center; gap: 4px 12px; padding: 9px 0; min-height: 44px;
+}
+.home-list__item + .home-list__item { border-top: 1px solid var(--border-color); }
+.home-list__when { font-size: var(--text-sm); color: var(--text-secondary); white-space: nowrap; }
+.home-list__when.is-late { color: var(--status-danger); font-weight: 600; }
+.home-list__title { min-width: 0; overflow-wrap: anywhere; font-weight: 500; color: var(--text-primary); }
+.home-list__tag { font-size: var(--text-xs, 12px); color: var(--text-secondary); white-space: nowrap; }
+.home-list__tag.is-exam, .home-list__tag.is-soon { color: var(--status-warning); font-weight: 600; }
+.home-list__item.is-past .home-list__title, .home-list__item.is-past .home-list__when { color: var(--text-tertiary, var(--text-secondary)); }
+.home-list__done { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.home-list__done svg { width: 14px; height: 14px; }
+.home-list__more { padding-top: 8px; }
+.home-week__group + .home-week__group { margin-top: 16px; }
+.home-week__sub { margin: 0 0 2px; font-size: var(--text-sm); font-weight: 600; color: var(--text-secondary); }
+.home-week__all { margin-top: 6px; }
+.home-card__empty { margin: 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.6; }
+.home-card__next { display: block; margin-top: 4px; color: var(--text-primary); }
+@media (max-width: 860px) {
+    #view-home .home-cards { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+    /* a phone: the tag goes under the name, Done stays on the line */
+    .home-list__item { grid-template-columns: minmax(52px, auto) 1fr auto; }
+    .home-list__tag { grid-column: 2; grid-row: 2; }
+    .home-list__done { grid-column: 3; grid-row: 1 / span 2; }
+}
