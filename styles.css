@@ -1610,7 +1610,6 @@ svg { vertical-align: -0.125em; flex-shrink: 0; }
 [dir="rtl"] .search-box__input { padding-left: 32px; padding-right: 38px; }
 [dir="rtl"] .search-box__clear { right: auto; left: var(--space-2); }
 
-#view-tasks .page-header { align-items: center; }
 
 
 /* ==========================================================================
