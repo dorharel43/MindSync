@@ -5241,7 +5241,9 @@ function renderHomeStudy(status) {
     if (!box) return;
     box.hidden = !onboardingEl.hidden;
     resetHomeReadiness();
-    if (box.hidden) return;
+    // (the guide open: no goal - also not the chip in the numbers row, which is
+    // outside this box)
+    if (box.hidden) { homeGoalAllowed = false; renderHomeGoalStat(); return; }
     // The daily goal only once there are questions to answer.
     homeGoalAllowed = !!status.questions;
     if (homeGoalAllowed) loadDailyGoal();
