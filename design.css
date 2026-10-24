@@ -2293,3 +2293,5 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 .study-hero__btns { display: flex; flex-wrap: wrap; gap: 0 10px; }
 .study-hero__btns .home-hero__btn { display: inline-flex; align-items: center; gap: 6px; }
 @media (max-width: 760px) { .study-hero__btns { flex-direction: column; width: 100%; gap: 0; } }
+.home-stat--done { border-color: var(--status-success); color: var(--status-success); }
+.home-stat--done .home-stat__num { color: var(--status-success); }

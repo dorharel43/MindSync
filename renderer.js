@@ -4657,11 +4657,35 @@ function renderHomeStats(allTasks, events, todayIso) {
         b.querySelector('.home-stat__label').textContent = t(n === 1 ? one : many);
         b.onclick = go;
     };
-    set('home-stat-open', open.length, 'open task', 'open tasks', true, () => goToTasks());
+    const base = allTasks.length > 0 || exams > 0;   // (tasks or exams at all)
+    set('home-stat-open', open.length, 'open task', 'open tasks', base, () => goToTasks());
     set('home-stat-late', late, 'overdue', 'overdue', late > 0, () => goToTasks());
-    set('home-stat-exams', exams, 'exam ahead', 'exams ahead', true, () => document.getElementById('nav-weekly').click());
+    set('home-stat-exams', exams, 'exam ahead', 'exams ahead', base, () => document.getElementById('nav-weekly').click());
     set('home-stat-done', done, 'task done this week', 'tasks done this week', done > 0, () => goToTasks('done'));
-    box.hidden = !allTasks.length && !exams;
+    updateHomeStatsRow();
+}
+
+// The daily goal's chip (24/10): "5/15 questions today", green once done -
+// opens practice. Only with questions to answer (like the panel's line).
+function renderHomeGoalStat() {
+    const b = document.getElementById('home-stat-goal');
+    if (!b) return;
+    const g = dailyGoalState;
+    b.hidden = !g || !g.goal || !homeGoalAllowed;
+    if (!b.hidden) {
+        const done = g.answered >= g.goal;
+        b.classList.toggle('home-stat--done', done);
+        b.querySelector('.home-stat__num').textContent = `${done ? '✓ ' : ''}${g.answered}/${g.goal}`;
+        b.querySelector('.home-stat__label').textContent = t('questions today');
+        b.setAttribute('aria-label', done ? t('Today\'s goal is done: {n} questions', { n: g.answered }) : t('Today: {n} of {g} questions', { n: g.answered, g: g.goal }));
+        b.onclick = () => goAndClick('nav-study', 'start-study-btn');
+    }
+    updateHomeStatsRow();
+}
+// The row only with a number in it.
+function updateHomeStatsRow() {
+    const box = document.getElementById('home-stats');
+    if (box) box.hidden = ![...box.querySelectorAll('.home-stat')].some(b => !b.hidden);
 }
 
 function renderHomeCards(tasks, events, todayIso) {
@@ -5221,7 +5245,7 @@ function renderHomeStudy(status) {
     // The daily goal only once there are questions to answer.
     homeGoalAllowed = !!status.questions;
     if (homeGoalAllowed) loadDailyGoal();
-    else { const g = document.getElementById('home-goal'); if (g) g.hidden = true; }
+    else { const g = document.getElementById('home-goal'); if (g) g.hidden = true; renderHomeGoalStat(); }
     const title = document.getElementById('home-study-title');
     const sub = document.getElementById('home-study-sub');
     const btn = document.getElementById('home-study-btn');
@@ -5995,6 +6019,7 @@ async function loadDailyGoal() {
     if (res && Number.isFinite(res.answered) && res.goal) { dailyGoalState = { answered: res.answered, goal: res.goal }; lastKnownGoal = res.goal; }
     renderDailyGoal('study');
     renderDailyGoal('home');
+    renderHomeGoalStat();
     renderGoalPicker();
     return dailyGoalState;
 }

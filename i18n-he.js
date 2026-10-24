@@ -559,7 +559,7 @@
         'My week': 'השבוע שלי',
         // Home: Today and Coming up (24/10)
         'All day': 'כל היום', 'Nothing on today.': 'היום פנוי.', 'Next:': 'הבא:', 'No date': 'בלי תאריך',
-        '{n} more - in My week': 'ועוד {n} - בשבוע שלי', 'All tasks': 'לכל המשימות',
+        '{n} more - in My week': 'ועוד {n} - בשבוע שלי', 'All tasks': 'לכל המשימות', 'questions today': 'שאלות היום',
         "Nothing is due right now - spacing questions out is what makes you remember them. You can still go over some now.": 'אין כרגע שאלות שהגיע זמנן - הפיזור לאורך זמן הוא מה שגורם לזכור. אפשר בכל זאת לעבור על חלק מהן עכשיו.',
         'open task': 'משימה פתוחה', 'open tasks': 'משימות פתוחות', 'overdue': 'באיחור',
         'exam ahead': 'מבחן קרוב', 'exams ahead': 'מבחנים קרובים',
