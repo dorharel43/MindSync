@@ -3380,16 +3380,126 @@ function examTotals(exam) {
 
 // Course material as one text, a fair share of each file (the exam covers
 // the whole course, not the first lecture).
-function courseMaterialText(files, budget = 90000) {
+// Course material for the AI, within `budget` characters (24/10). Each file
+// gets a share - what a file doesn't use goes on to the next (shortest
+// first) - and a file longer than its share no longer gives just its
+// beginning (the end of every long lecture never reached an exam): its parts
+// - a presentation's slides, a document's pages and paragraphs - are taken
+// from all along it, the ones that name a topic the course's past exams keep
+// asking first (`topics`). In the file's order, with "[…]" where parts were
+// left out.
+function courseMaterialText(files, budget = 90000, topics = []) {
     const withText = files.filter(f => String(f.content || '').trim());
     if (!withText.length) return '';
-    const share = Math.max(4000, Math.floor(budget / withText.length));
-    let out = '';
-    for (const f of withText) {
-        if (out.length >= budget) break;
-        out += `\n\n=== ${f.name} ===\n${String(f.content).slice(0, share)}`;
+    const head = (f) => `\n\n=== ${f.name} ===\n`;
+    const keys = topicKeys(topics);
+    const body = new Map();
+    let left = budget - withText.reduce((n, f) => n + head(f).length, 0);
+    let rest = withText.length;
+    for (const f of [...withText].sort((a, b) => String(a.content).length - String(b.content).length)) {
+        const share = Math.max(0, Math.floor(left / rest));
+        const text = String(f.content);
+        body.set(f, text.length <= share ? text : excerptMaterial(text, share, keys));
+        left -= body.get(f).length;
+        rest -= 1;
     }
-    return out.slice(0, budget);
+    return withText.map(f => head(f) + body.get(f)).join('').slice(0, budget);
+}
+
+// A file's parts: its slides ("--- Slide 3 ---", officeExtract), else its
+// pages and paragraphs, joined into pieces of about `size` characters. None
+// longer than `max` - a longer slide or paragraph is split at a line break
+// or a space, not dropped.
+function materialParts(text, max = 3000) {
+    const size = Math.min(1200, max);
+    const cut = (piece) => {
+        const out = [];
+        let rest = piece;
+        while (rest.length > max) {
+            let at = Math.max(rest.lastIndexOf('\n', max), rest.lastIndexOf(' ', max));
+            if (at < max / 2) at = max;
+            out.push(rest.slice(0, at));
+            rest = rest.slice(at).replace(/^\s+/, '');
+        }
+        if (rest.trim()) out.push(rest);
+        return out;
+    };
+    const slides = String(text).split(/(?=^--- Slide \d+ ---\r?$)/m).filter(p => p.trim());
+    if (slides.length > 1) return slides.flatMap(cut);
+    const parts = [];
+    let cur = '';
+    for (const para of String(text).split(/\r?\n\s*\n/).flatMap(cut)) {
+        if (cur && cur.length + para.length + 2 > size) { parts.push(cur); cur = ''; }
+        cur += (cur ? '\n\n' : '') + para;
+    }
+    if (cur.trim()) parts.push(cur);
+    return parts.flatMap(cut);
+}
+
+// Words of a topic, for finding it in the material: lower case, without
+// punctuation, niqqud or geresh, only the ones of 3 letters and up.
+const TOPIC_STOP = new Set(['של', 'את', 'עם', 'על', 'או', 'גם', 'כל', 'בין', 'לפי', 'the', 'and', 'for', 'with', 'from', 'of', 'a', 'an', 'in', 'on', 'to']);
+function topicWords(text) {
+    return String(text || '').toLowerCase()
+        .replace(/[\p{M}׳״'"`]/gu, '')
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+        .split(/\s+/)
+        .filter(w => w.length >= 2 && !TOPIC_STOP.has(w));
+}
+function topicKeys(topics) {
+    return (Array.isArray(topics) ? topics : []).map(t => [...new Set(topicWords(t).filter(w => w.length >= 3))]).filter(k => k.length);
+}
+// A part's words, each also without one or two prefix letters (ו ב כ ל מ ש ה):
+// "בגרפים" is found by "גרפים" - while a topic's own words are kept whole
+// ("משוואה" stays "משוואה").
+function partWords(text) {
+    const set = new Set();
+    for (const w of topicWords(text)) {
+        set.add(w);
+        if (w.length > 3 && /^[ובכלמשה]/.test(w)) set.add(w.slice(1));
+        if (w.length > 4 && /^[ובכלמשה]{2}/.test(w)) set.add(w.slice(2));
+    }
+    return set;
+}
+
+// Up to `share` characters of a long file: first the parts that name the most
+// topics (up to half the share), then parts spread evenly over the whole
+// file - start, middle and end alike. Pieces are made small enough for
+// several to fit, and if none does, the file's start is given cut to size.
+function excerptMaterial(text, share, keys) {
+    const GAP = '\n[…]\n'.length;
+    const parts = materialParts(text, Math.max(300, Math.min(3000, Math.floor(share / 3))));
+    if (!parts.length) return '';
+    const chosen = new Set();
+    let used = GAP;   // (a trailing "[…]")
+    const take = (i) => {
+        if (chosen.has(i) || used + parts[i].length + GAP > share) return false;
+        chosen.add(i);
+        used += parts[i].length + GAP;
+        return true;
+    };
+    if (keys.length) {
+        const scored = parts.map((p, i) => {
+            const words = partWords(p);
+            const n = keys.filter(k => k.filter(w => words.has(w)).length >= Math.ceil(k.length / 2)).length;
+            return { i, n };
+        }).filter(x => x.n > 0).sort((a, b) => b.n - a.n || a.i - b.i);
+        for (const { i } of scored) { if (used >= share / 2) break; take(i); }
+    }
+    // Evenly over the file: as many as fit, at equal steps; then any that still fit.
+    const avg = parts.reduce((n, p) => n + p.length, 0) / parts.length;
+    const fit = Math.max(1, Math.floor((share - used) / (avg + GAP)));
+    const step = parts.length / fit;
+    for (let j = 0; j < fit; j++) take(Math.min(parts.length - 1, Math.floor(j * step)));
+    for (let i = 0; i < parts.length; i++) take(i);
+    if (!chosen.size) return parts[0].slice(0, Math.max(0, share - GAP)) + '\n[…]';
+    let out = '';
+    let last = -1;
+    for (const i of [...chosen].sort((a, b) => a - b)) {
+        out += (out ? (i === last + 1 ? '\n' : '\n[…]\n') : (i > 0 ? '[…]\n' : '')) + parts[i];
+        last = i;
+    }
+    return out + (last < parts.length - 1 ? '\n[…]' : '');
 }
 
 const isPdfFile = (f) => /\.pdf$/i.test(f.name || '') || /\.pdf$/i.test(f.sourcePath || '');
@@ -3399,6 +3509,12 @@ const PAST_EXAM_FILE = /מבחן|בחינה|מועד|בוחן|(?:^|[^a-z])exams?
 // from before has none - then its name decides.
 const SYLLABUS_FILE = /סילבוס|syllabus|תוכנית הקורס|course outline/i;   // (the same guess as the upload window's)
 const isPastExam = (f) => !!f && (f.role ? f.role === 'past_exam' : PAST_EXAM_FILE.test(f.name || '') && !SYLLABUS_FILE.test(f.name || ''));
+const isSyllabusFile = (f) => !!f && (f.role ? f.role === 'syllabus' : SYLLABUS_FILE.test(f.name || ''));
+// The course's material without its syllabus - unless the syllabus is all there is.
+const withoutSyllabus = (files) => {
+    const rest = files.filter(f => !isSyllabusFile(f));
+    return rest.some(f => String(f.content || '').trim()) ? rest : files;
+};
 
 // ---- The stages of a full exam. Each one takes its inputs directly, so the
 // owner's exam check (the server's tools/exam-check.js) can run the SAME code
@@ -3696,7 +3812,10 @@ async function buildFullExam({ course, pastIds, durationMin }, stage) {
     const files = await api.getFiles();
     const all = Array.isArray(files) ? files : [];
     const past = all.filter(f => pastIds.includes(String(f.id || f._id))).slice(0, 6);
-    const material = all.filter(f => (f.folder || '') === course && !pastIds.includes(String(f.id || f._id)));
+    // (not the syllabus: it says what the course is about, not the material
+    // itself - 24/10; unless it's all there is)
+    const notPast = all.filter(f => (f.folder || '') === course && !pastIds.includes(String(f.id || f._id)));
+    const material = withoutSyllabus(notPast);
     if (!past.length && !material.some(f => String(f.content || '').trim())) {
         throw new Error('There is no material for this course yet. Upload its lectures (and past exams, if you have them) under Materials.');
     }
@@ -3720,7 +3839,8 @@ async function buildFullExam({ course, pastIds, durationMin }, stage) {
 
     // 2. The exam itself, with answers and marking schemes.
     stage('writing');
-    const materialText = courseMaterialText(material) ||
+    const topics = blueprint && Array.isArray(blueprint.recurring) ? blueprint.recurring.map(r => r.topic) : [];
+    const materialText = courseMaterialText(material, 90000, topics) ||
         past.map(f => `=== ${f.name} ===\n${String(f.content || '').slice(0, 20000)}`).join('\n\n').slice(0, 60000);
     const usable = blueprint && blueprint.questions ? blueprint : null;
     const exam = await writeExam(course, usable, materialText);
@@ -3761,7 +3881,7 @@ async function buildDailyQuestion(stage) {
     const files = await api.getFiles();
     const mine = (Array.isArray(files) ? files : []).filter(f => (f.folder || '') === course);
     const isPast = isPastExam;
-    const materialText = courseMaterialText(mine.filter(f => !isPast(f)), 30000);
+    const materialText = courseMaterialText(withoutSyllabus(mine.filter(f => !isPast(f))), 30000, [topic]);
     const pastText = mine.filter(isPast).filter(f => String(f.content || '').trim()).slice(0, 3)
         .map(f => `=== ${f.name} ===\n${String(f.content).slice(0, 6000)}`).join('\n\n');
     if (!materialText && !pastText) throw new Error('There is no course material to write a question from yet. Upload your course files under Materials.');
@@ -4057,7 +4177,7 @@ async function solveExamParts(course, question) {
 
 // The stages above, for the owner's exam check on the server (exported by
 // tools/port-main.py; unused in the desktop app).
-const EXAM_STAGES = { examBlueprint, countRecurring, verifyBlueprintRules, writeExam, writeDailyQuestion, linkExamTopics, checkExam, replaceBrokenParts, autoMarkPart, reasonedChoicePoints, gradeExamQuestion, marksFromAi, pointsFromAi, solveExamParts, normaliseExam, answerIsBlank, cleanExamText, cleanMathNotation, cutText, extractJsonFromText, FORMULA_STATS };
+const EXAM_STAGES = { courseMaterialText, materialParts, excerptMaterial, withoutSyllabus, examBlueprint, countRecurring, verifyBlueprintRules, writeExam, writeDailyQuestion, linkExamTopics, checkExam, replaceBrokenParts, autoMarkPart, reasonedChoicePoints, gradeExamQuestion, marksFromAi, pointsFromAi, solveExamParts, normaliseExam, answerIsBlank, cleanExamText, cleanMathNotation, cutText, extractJsonFromText, FORMULA_STATS };
 
 // Graded sittings whose save failed: a retry only saves again, it doesn't
 // pay for the AI grading twice.
