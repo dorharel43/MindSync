@@ -559,7 +559,10 @@
         'My week': 'השבוע שלי',
         // Home: Today and Coming up (24/10)
         'All day': 'כל היום', 'Nothing on today.': 'היום פנוי.', 'Next:': 'הבא:', 'No date': 'בלי תאריך',
-        '{n} more - in My week': 'ועוד {n} - בשבוע שלי', 'All tasks ({n})': 'לכל המשימות ({n})', 'Classes, exams and study time, week by week - and your tasks below.': 'שיעורים, מבחנים וזמני לימוד, שבוע אחרי שבוע - והמשימות שלך למטה.',
+        '{n} more - in My week': 'ועוד {n} - בשבוע שלי', 'All tasks': 'לכל המשימות',
+        'open task': 'משימה פתוחה', 'open tasks': 'משימות פתוחות', 'overdue': 'באיחור',
+        'exam ahead': 'מבחן קרוב', 'exams ahead': 'מבחנים קרובים',
+        'task done this week': 'משימה בוצעה השבוע', 'tasks done this week': 'משימות בוצעו השבוע', 'Classes, exams and study time, week by week - and your tasks below.': 'שיעורים, מבחנים וזמני לימוד, שבוע אחרי שבוע - והמשימות שלך למטה.',
         'Delete task': 'מחיקת המשימה', 'More': 'עוד', 'Needs work': 'צריך חיזוק',
         'Take an exam': 'לעשות מבחן', 'An exam this week gives the truest picture.': 'מבחן השבוע ייתן את התמונה הכי אמיתית.',
         'Upload a lecture or your notes - MindSync writes practice questions from it.': 'מעלים הרצאה או סיכום - MindSync כותבת ממנו שאלות תרגול.',

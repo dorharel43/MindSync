@@ -2274,3 +2274,17 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
     .home-list__tag { grid-column: 2; grid-row: 2; }
     .home-list__done { grid-column: 3; grid-row: 1 / span 2; }
 }
+
+/* Home: the four numbers (24/10) - a thin row of chips, each a way in. */
+.home-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
+.home-stats[hidden], .home-stat[hidden] { display: none; }
+.home-stat {
+    display: inline-flex; align-items: baseline; gap: 6px;
+    padding: 8px 14px; min-height: 40px; border-radius: 999px;
+    background: var(--bg-card, var(--card-bg)); border: 1px solid var(--border-color);
+    color: var(--text-secondary); font: inherit; font-size: var(--text-sm); cursor: pointer;
+}
+.home-stat:hover { border-color: var(--text-secondary); color: var(--text-primary); }
+.home-stat__num { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+.home-stat--late { border-color: var(--status-danger); color: var(--status-danger); }
+.home-stat--late .home-stat__num { color: var(--status-danger); }

@@ -4618,6 +4618,33 @@ function homeItem({ when, whenClass = '', title, tag = '', tagClass = '', past =
     }
     return li;
 }
+// Home's numbers (24/10): open tasks, late ones (only when there are), exams
+// ahead, tasks done in the last 7 days (only when there are) - each opens
+// where they are. Hidden for someone with no tasks and no exams at all.
+function renderHomeStats(allTasks, events, todayIso) {
+    const box = document.getElementById('home-stats');
+    if (!box) return;
+    const open = allTasks.filter(tk => tk.status !== 'completed');
+    const late = open.filter(tk => { const d = parseTaskDueDate(tk); return d && localIsoDate(d) < todayIso; }).length;
+    const exams = events.filter(e => e.type === 'exam' && e.date && e.date >= todayIso).length;
+    // (completedAt is stamped by the server; older tasks have only updatedAt)
+    const weekAgo = Date.now() - 7 * 864e5;
+    const done = allTasks.filter(tk => tk.status === 'completed' && (tk.completedAt || tk.updatedAt) && new Date(tk.completedAt || tk.updatedAt).getTime() >= weekAgo).length;
+    const set = (id, n, one, many, show, go) => {
+        const b = document.getElementById(id);
+        b.hidden = !show;
+        b.querySelector('.home-stat__num').textContent = n;
+        b.querySelector('.home-stat__label').textContent = t(n === 1 ? one : many);
+        b.onclick = go;
+    };
+    const tasksDone = () => { goToTasks(); const chip = document.querySelector('#task-status-filters [data-filter="done"]'); if (chip && !chip.classList.contains('active')) chip.click(); };
+    set('home-stat-open', open.length, 'open task', 'open tasks', true, goToTasks);
+    set('home-stat-late', late, 'overdue', 'overdue', late > 0, goToTasks);
+    set('home-stat-exams', exams, 'exam ahead', 'exams ahead', true, () => document.getElementById('nav-weekly').click());
+    set('home-stat-done', done, 'task done this week', 'tasks done this week', done > 0, tasksDone);
+    box.hidden = !allTasks.length && !exams;
+}
+
 function renderHomeCards(tasks, events, todayIso) {
     const box = document.getElementById('home-cards');
     if (!box) return;
@@ -4722,7 +4749,7 @@ function renderHomeCards(tasks, events, todayIso) {
     // (only under tasks of its own - with every task already in Today, Today's
     // "N more" link is the way there)
     all.hidden = !nextTasks.length || tasks.length <= shown.size;
-    all.textContent = t('All tasks ({n})', { n: tasks.length });
+    all.textContent = t('All tasks');   // (how many: the numbers above)
     all.onclick = goToTasks;
     document.getElementById('home-week-tasks-box').hidden = !nextTasks.length && all.hidden;
     document.getElementById('home-week').hidden = !later.length && !nextTasks.length && all.hidden;
@@ -4747,6 +4774,7 @@ async function loadAndRenderHome() {
     // "upcoming".
     const todayIso = localIsoDate(new Date());
 
+    renderHomeStats(allTasks, events, todayIso);
     renderHomeCards(tasks, events, todayIso);
     renderSidebarExam(events, todayIso);
     updateHomeHero();
