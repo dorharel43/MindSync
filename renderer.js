@@ -2758,6 +2758,7 @@ async function openUploadPicker(mode, opts = {}) {
         name.className = 'upload-row__name';
         name.dir = 'auto';
         name.textContent = f.name;
+        name.title = f.name;
         // (opts.role: opened for past exams - "Upload past exams" on the exam screen)
         const role = fileRoleSelect(opts.role || guessFileRole(f.name), 'What this file is');
         role.classList.add('upload-row__role');
@@ -2937,8 +2938,12 @@ async function runUploadBatch() {
     if (typeof refreshOnboarding === 'function') refreshOnboarding();
     // Uploaded for an exam (24/10): back to the exam, with them ticked.
     if (batch.forExam && uploaded > 0 && folder !== NO_COURSE) {
+        // (still on the exam's first screen, going to Study reads it again - for
+        // this course; one call, not two racing to set the course)
+        fullState.course = folder;
+        const onSetup = !document.getElementById('study-full').hidden && !document.getElementById('full-setup').hidden;
         document.getElementById('nav-study').click();
-        setTimeout(() => openFullExam(folder), 60);
+        if (!onSetup) setTimeout(() => openFullExam(folder), 60);
         // (a file marked "Syllabus" here still gets its "Add exams & deadlines")
         const syllabi = uploadedNow.filter(f => f.role === 'syllabus');
         if (syllabi.length) offerNextStepsAfterUpload(syllabi, {}).catch(err => console.warn('upload suggestions failed:', err));
@@ -8339,7 +8344,15 @@ if (generateStudyBtn) {
 }
 
 const navStudyBtn = document.getElementById('nav-study');
-if (navStudyBtn) navStudyBtn.addEventListener('click', loadStudyHome);
+if (navStudyBtn) navStudyBtn.addEventListener('click', () => {
+    loadStudyHome();
+    // Back on an exam's first screen (24/10): its courses and files read again -
+    // files uploaded in Materials meanwhile were missing until a page reload.
+    // (Only that screen: an exam being written or taken is left alone.)
+    const full = document.getElementById('study-full');
+    const setup = document.getElementById('full-setup');
+    if (full && !full.hidden && setup && !setup.hidden && !fullState.starting) openFullExam(fullState.course);
+});
 
 loadStudyHome();
 
@@ -9203,7 +9216,13 @@ async function stopFullExam(ask = true) {
     return true;
 }
 
+// Only the latest open / setup load is drawn (24/10): two can overlap (Study
+// re-reads the exam screen while a button opens it for another course), and
+// an older one's files must not land under the newer course.
+let fullOpenSeq = 0;
+let fullSetupSeq = 0;
 async function openFullExam(course) {
+    const seq = ++fullOpenSeq;
     if (!(await stopExam())) return false;
     pruneFullPhotos();
     ['study-home', 'study-session', 'study-summary', 'study-review', 'study-manage', 'study-exam'].forEach(id => {
@@ -9213,6 +9232,7 @@ async function openFullExam(course) {
     document.getElementById('study-full').hidden = false;
     const select = document.getElementById('full-course');
     const courses = await knownCourses();
+    if (seq !== fullOpenSeq) return false;   // a newer open took over
     if (course && !courses.includes(course)) courses.unshift(course);
     select.textContent = '';
     for (const c of courses) {
@@ -9228,10 +9248,11 @@ async function openFullExam(course) {
 }
 
 async function loadFullSetup() {
+    const seq = ++fullSetupSeq;
     const course = fullState.course;
     const list = document.getElementById('full-past-list');
     list.textContent = '';
-    document.getElementById('full-build-btn').disabled = !course;
+    document.getElementById('full-build-btn').disabled = !course || !!fullState.starting;
     if (!course) {
         const p = document.createElement('div');
         p.className = 'full-past__empty';
@@ -9240,6 +9261,7 @@ async function loadFullSetup() {
         return;
     }
     const files = await ipcRenderer.invoke('get-files').catch(() => []);
+    if (seq !== fullSetupSeq) return;
     const mine = (Array.isArray(files) ? files : []).filter(f => (f.folder || '') === course);
     if (!mine.length) {
         const p = document.createElement('div');
@@ -9263,6 +9285,7 @@ async function loadFullSetup() {
     }
     // Exams already written for this course.
     const existing = await ipcRenderer.invoke('full-exam-list', course).catch(() => []);
+    if (seq !== fullSetupSeq) return;
     const wrap = document.getElementById('full-existing');
     const rows = document.getElementById('full-existing-list');
     rows.textContent = '';
@@ -9350,7 +9373,9 @@ document.getElementById('full-build-btn').onclick = async () => {
     const pastIds = [...document.querySelectorAll('#full-past-list input[type="checkbox"]:checked')].map(b => b.value);
     const btn = document.getElementById('full-build-btn');
     btn.disabled = true;
+    fullState.starting = true;   // (Study doesn't re-read this screen meanwhile)
     const start = await ipcRenderer.invoke('full-exam-build', { course, pastIds }).catch(err => ({ error: err.message }));
+    fullState.starting = false;
     btn.disabled = false;
     if (!start || start.error || !start.jobId) { toast.error((start && start.error) || t('Couldn\'t start writing the exam. Try again.')); return; }
     const token = ++fullState.token;
