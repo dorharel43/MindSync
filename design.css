@@ -2293,3 +2293,14 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 .study-hero__btns { display: flex; flex-wrap: wrap; gap: 0 10px; }
 .study-hero__btns .home-hero__btn { display: inline-flex; align-items: center; gap: 6px; }
 @media (max-width: 760px) { .study-hero__btns { flex-direction: column; width: 100%; gap: 0; } }
+.home-stat--done { border-color: var(--status-success); color: var(--status-success); }
+.home-stat--done .home-stat__num { color: var(--status-success); }
+
+/* Upload: the whole file name (24/10) - long names from the same course share
+   their start ("מתמטיקה דיסקרטית 2 - ..."), so cutting the end hid the part
+   that tells them apart, and the role couldn't be chosen right. Wraps instead;
+   a wider window and a narrower status give it room. */
+.upload-modal { width: min(720px, 94vw); max-width: none; }   /* (styles.css caps .modal-content at 480px) */
+.upload-list { max-height: min(420px, 50vh); }
+.upload-row__name { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.4; }
+.upload-row__status { width: auto; min-width: 64px; }

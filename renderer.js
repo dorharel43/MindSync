@@ -2758,6 +2758,7 @@ async function openUploadPicker(mode, opts = {}) {
         name.className = 'upload-row__name';
         name.dir = 'auto';
         name.textContent = f.name;
+        name.title = f.name;
         // (opts.role: opened for past exams - "Upload past exams" on the exam screen)
         const role = fileRoleSelect(opts.role || guessFileRole(f.name), 'What this file is');
         role.classList.add('upload-row__role');
@@ -2937,8 +2938,12 @@ async function runUploadBatch() {
     if (typeof refreshOnboarding === 'function') refreshOnboarding();
     // Uploaded for an exam (24/10): back to the exam, with them ticked.
     if (batch.forExam && uploaded > 0 && folder !== NO_COURSE) {
+        // (still on the exam's first screen, going to Study reads it again - for
+        // this course; one call, not two racing to set the course)
+        fullState.course = folder;
+        const onSetup = !document.getElementById('study-full').hidden && !document.getElementById('full-setup').hidden;
         document.getElementById('nav-study').click();
-        setTimeout(() => openFullExam(folder), 60);
+        if (!onSetup) setTimeout(() => openFullExam(folder), 60);
         // (a file marked "Syllabus" here still gets its "Add exams & deadlines")
         const syllabi = uploadedNow.filter(f => f.role === 'syllabus');
         if (syllabi.length) offerNextStepsAfterUpload(syllabi, {}).catch(err => console.warn('upload suggestions failed:', err));
@@ -4657,11 +4662,35 @@ function renderHomeStats(allTasks, events, todayIso) {
         b.querySelector('.home-stat__label').textContent = t(n === 1 ? one : many);
         b.onclick = go;
     };
-    set('home-stat-open', open.length, 'open task', 'open tasks', true, () => goToTasks());
+    const base = allTasks.length > 0 || exams > 0;   // (tasks or exams at all)
+    set('home-stat-open', open.length, 'open task', 'open tasks', base, () => goToTasks());
     set('home-stat-late', late, 'overdue', 'overdue', late > 0, () => goToTasks());
-    set('home-stat-exams', exams, 'exam ahead', 'exams ahead', true, () => document.getElementById('nav-weekly').click());
+    set('home-stat-exams', exams, 'exam ahead', 'exams ahead', base, () => document.getElementById('nav-weekly').click());
     set('home-stat-done', done, 'task done this week', 'tasks done this week', done > 0, () => goToTasks('done'));
-    box.hidden = !allTasks.length && !exams;
+    updateHomeStatsRow();
+}
+
+// The daily goal's chip (24/10): "5/15 questions today", green once done -
+// opens practice. Only with questions to answer (like the panel's line).
+function renderHomeGoalStat() {
+    const b = document.getElementById('home-stat-goal');
+    if (!b) return;
+    const g = dailyGoalState;
+    b.hidden = !g || !g.goal || !homeGoalAllowed;
+    if (!b.hidden) {
+        const done = g.answered >= g.goal;
+        b.classList.toggle('home-stat--done', done);
+        b.querySelector('.home-stat__num').textContent = `${done ? '✓ ' : ''}${g.answered}/${g.goal}`;
+        b.querySelector('.home-stat__label').textContent = t('questions today');
+        b.setAttribute('aria-label', done ? t('Today\'s goal is done: {n} questions', { n: g.answered }) : t('Today: {n} of {g} questions', { n: g.answered, g: g.goal }));
+        b.onclick = () => goAndClick('nav-study', 'start-study-btn');
+    }
+    updateHomeStatsRow();
+}
+// The row only with a number in it.
+function updateHomeStatsRow() {
+    const box = document.getElementById('home-stats');
+    if (box) box.hidden = ![...box.querySelectorAll('.home-stat')].some(b => !b.hidden);
 }
 
 function renderHomeCards(tasks, events, todayIso) {
@@ -5217,11 +5246,13 @@ function renderHomeStudy(status) {
     if (!box) return;
     box.hidden = !onboardingEl.hidden;
     resetHomeReadiness();
-    if (box.hidden) return;
+    // (the guide open: no goal - also not the chip in the numbers row, which is
+    // outside this box)
+    if (box.hidden) { homeGoalAllowed = false; renderHomeGoalStat(); return; }
     // The daily goal only once there are questions to answer.
     homeGoalAllowed = !!status.questions;
     if (homeGoalAllowed) loadDailyGoal();
-    else { const g = document.getElementById('home-goal'); if (g) g.hidden = true; }
+    else { const g = document.getElementById('home-goal'); if (g) g.hidden = true; renderHomeGoalStat(); }
     const title = document.getElementById('home-study-title');
     const sub = document.getElementById('home-study-sub');
     const btn = document.getElementById('home-study-btn');
@@ -5995,6 +6026,7 @@ async function loadDailyGoal() {
     if (res && Number.isFinite(res.answered) && res.goal) { dailyGoalState = { answered: res.answered, goal: res.goal }; lastKnownGoal = res.goal; }
     renderDailyGoal('study');
     renderDailyGoal('home');
+    renderHomeGoalStat();
     renderGoalPicker();
     return dailyGoalState;
 }
@@ -8312,7 +8344,15 @@ if (generateStudyBtn) {
 }
 
 const navStudyBtn = document.getElementById('nav-study');
-if (navStudyBtn) navStudyBtn.addEventListener('click', loadStudyHome);
+if (navStudyBtn) navStudyBtn.addEventListener('click', () => {
+    loadStudyHome();
+    // Back on an exam's first screen (24/10): its courses and files read again -
+    // files uploaded in Materials meanwhile were missing until a page reload.
+    // (Only that screen: an exam being written or taken is left alone.)
+    const full = document.getElementById('study-full');
+    const setup = document.getElementById('full-setup');
+    if (full && !full.hidden && setup && !setup.hidden && !fullState.starting) openFullExam(fullState.course);
+});
 
 loadStudyHome();
 
@@ -9176,7 +9216,13 @@ async function stopFullExam(ask = true) {
     return true;
 }
 
+// Only the latest open / setup load is drawn (24/10): two can overlap (Study
+// re-reads the exam screen while a button opens it for another course), and
+// an older one's files must not land under the newer course.
+let fullOpenSeq = 0;
+let fullSetupSeq = 0;
 async function openFullExam(course) {
+    const seq = ++fullOpenSeq;
     if (!(await stopExam())) return false;
     pruneFullPhotos();
     ['study-home', 'study-session', 'study-summary', 'study-review', 'study-manage', 'study-exam'].forEach(id => {
@@ -9186,6 +9232,7 @@ async function openFullExam(course) {
     document.getElementById('study-full').hidden = false;
     const select = document.getElementById('full-course');
     const courses = await knownCourses();
+    if (seq !== fullOpenSeq) return false;   // a newer open took over
     if (course && !courses.includes(course)) courses.unshift(course);
     select.textContent = '';
     for (const c of courses) {
@@ -9201,10 +9248,11 @@ async function openFullExam(course) {
 }
 
 async function loadFullSetup() {
+    const seq = ++fullSetupSeq;
     const course = fullState.course;
     const list = document.getElementById('full-past-list');
     list.textContent = '';
-    document.getElementById('full-build-btn').disabled = !course;
+    document.getElementById('full-build-btn').disabled = !course || !!fullState.starting;
     if (!course) {
         const p = document.createElement('div');
         p.className = 'full-past__empty';
@@ -9213,6 +9261,7 @@ async function loadFullSetup() {
         return;
     }
     const files = await ipcRenderer.invoke('get-files').catch(() => []);
+    if (seq !== fullSetupSeq) return;
     const mine = (Array.isArray(files) ? files : []).filter(f => (f.folder || '') === course);
     if (!mine.length) {
         const p = document.createElement('div');
@@ -9236,6 +9285,7 @@ async function loadFullSetup() {
     }
     // Exams already written for this course.
     const existing = await ipcRenderer.invoke('full-exam-list', course).catch(() => []);
+    if (seq !== fullSetupSeq) return;
     const wrap = document.getElementById('full-existing');
     const rows = document.getElementById('full-existing-list');
     rows.textContent = '';
@@ -9323,7 +9373,9 @@ document.getElementById('full-build-btn').onclick = async () => {
     const pastIds = [...document.querySelectorAll('#full-past-list input[type="checkbox"]:checked')].map(b => b.value);
     const btn = document.getElementById('full-build-btn');
     btn.disabled = true;
+    fullState.starting = true;   // (Study doesn't re-read this screen meanwhile)
     const start = await ipcRenderer.invoke('full-exam-build', { course, pastIds }).catch(err => ({ error: err.message }));
+    fullState.starting = false;
     btn.disabled = false;
     if (!start || start.error || !start.jobId) { toast.error((start && start.error) || t('Couldn\'t start writing the exam. Try again.')); return; }
     const token = ++fullState.token;

@@ -242,10 +242,13 @@
                 </div>
             </section>
 
-            <!-- How much (24/10): four numbers, each a way in - open tasks, late
-                 ones (only when there are), exams ahead, done in the last 7 days.
+            <!-- How much (24/10): the daily goal, open tasks, late ones (only when
+                 there are), exams ahead, done this week - each a way in.
                  renderHomeStats(). -->
             <div class="home-stats" id="home-stats" hidden>
+                <!-- (24/10) the daily goal too: "5/15 questions today" - it was only a
+                     line inside the practice panel, easy to miss -->
+                <button type="button" class="home-stat home-stat--goal" id="home-stat-goal" hidden><span class="home-stat__num ms-tabular"></span> <span class="home-stat__label"></span></button>
                 <button type="button" class="home-stat" id="home-stat-open"><span class="home-stat__num ms-tabular"></span> <span class="home-stat__label"></span></button>
                 <button type="button" class="home-stat home-stat--late" id="home-stat-late"><span class="home-stat__num ms-tabular"></span> <span class="home-stat__label"></span></button>
                 <button type="button" class="home-stat" id="home-stat-exams"><span class="home-stat__num ms-tabular"></span> <span class="home-stat__label"></span></button>
