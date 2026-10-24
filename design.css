@@ -2288,3 +2288,8 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 .home-stat__num { font-size: 18px; font-weight: 700; color: var(--text-primary); }
 .home-stat--late { border-color: var(--status-danger); color: var(--status-danger); }
 .home-stat--late .home-stat__num { color: var(--status-danger); }
+
+/* Practice: "Start smart practice" and "Take an exam" side by side (24/10). */
+.study-hero__btns { display: flex; flex-wrap: wrap; gap: 0 10px; }
+.study-hero__btns .home-hero__btn { display: inline-flex; align-items: center; gap: 6px; }
+@media (max-width: 760px) { .study-hero__btns { flex-direction: column; width: 100%; gap: 0; } }

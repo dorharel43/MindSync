@@ -2740,7 +2740,7 @@ async function openUploadPicker(mode, opts = {}) {
         return;
     }
 
-    uploadBatch = { files: picked.files, folderName: picked.folderName, running: false, stopRequested: false, done: false, makeQuestions: !!opts.makeQuestions };
+    uploadBatch = { files: picked.files, folderName: picked.folderName, running: false, stopRequested: false, done: false, makeQuestions: !!opts.makeQuestions, forExam: !!opts.forExam };
 
     uploadTitle.textContent = picked.folderName ? `Upload folder "${picked.folderName}"` : 'Upload files';
     uploadSummary.textContent = `${picked.files.length} file${picked.files.length === 1 ? '' : 's'} ready to upload.`
@@ -2758,7 +2758,8 @@ async function openUploadPicker(mode, opts = {}) {
         name.className = 'upload-row__name';
         name.dir = 'auto';
         name.textContent = f.name;
-        const role = fileRoleSelect(guessFileRole(f.name), 'What this file is');
+        // (opts.role: opened for past exams - "Upload past exams" on the exam screen)
+        const role = fileRoleSelect(opts.role || guessFileRole(f.name), 'What this file is');
         role.classList.add('upload-row__role');
         const status = document.createElement('span');
         status.className = 'upload-row__status';
@@ -2784,6 +2785,8 @@ async function openUploadPicker(mode, opts = {}) {
         uploadFolderSelect.value = opt.value;
     } else if (existingMatch) {
         uploadFolderSelect.value = existingMatch.name;
+    } else if (opts.course && folders.some(f => f.name === opts.course)) {
+        uploadFolderSelect.value = opts.course;
     } else {
         uploadFolderSelect.value = currentActiveFolder !== 'All' && folders.some(f => f.name === currentActiveFolder) ? currentActiveFolder : '';
     }
@@ -2932,6 +2935,12 @@ async function runUploadBatch() {
     await loadAndRenderFolders();
     await loadAndRenderFiles();
     if (typeof refreshOnboarding === 'function') refreshOnboarding();
+    // Uploaded for an exam (24/10): back to the exam, with them ticked.
+    if (batch.forExam && uploaded > 0 && folder !== NO_COURSE) {
+        document.getElementById('nav-study').click();
+        setTimeout(() => openFullExam(folder), 60);
+        return;
+    }
     offerNextStepsAfterUpload(uploadedNow, { makeQuestions: batch.makeQuestions }).catch(err => console.warn('upload suggestions failed:', err));
 }
 
@@ -6382,6 +6391,7 @@ async function loadStudyHome() {
     ]);
     if (Array.isArray(items)) studyItemsCache = items;
     if (!stats) return;
+    lastStudyStats = stats;   // (the exam button's course - studyExamCourse)
     studyGoalAllowed = stats.totalItems > 0;
     renderDailyGoal('study');
     dailyQAllowed = stats.totalItems > 0;
@@ -6497,6 +6507,7 @@ function renderStudyExams(subjects) {
 // and its files (practice just one). Courses come from the server's stats
 // (nearest exam first); files from the question list.
 let studyItemsCache = null;
+let lastStudyStats = null;
 const studyCourseOf = (i) => String(i.category || '').trim() || 'Uncategorized';
 // "תרגול 2.pdf" -> "תרגול 2". Hebrew next to ".pdf" flips on screen
 // ("pdf.2 תרגול"), and the extension says nothing anyway.
@@ -7000,6 +7011,19 @@ async function startStudySession(resume = null, scope = null) {
                 { confirmText: 'Practice anyway', cancelText: 'Not now' });
             if (!ok) return;
             items = await ipcRenderer.invoke('get-due-study-items', { limit: 20, all: true, strict: true, ...filter }).catch(e => ({ error: e.message }));
+            if (!Array.isArray(items)) {
+                toast.error(t('Couldn\'t load your questions right now. Check the connection and try again.'));
+                return;
+            }
+        }
+        // Smart practice with nothing due (24/10): ask, with a way on - not a
+        // message to read and close.
+        if (!scope && Array.isArray(items) && items.length === 0) {
+            const ok = await confirmDialog(t('All caught up'),
+                t('Nothing is due right now - spacing questions out is what makes you remember them. You can still go over some now.'),
+                { confirmText: t('Practice anyway'), cancelText: t('Not now') });
+            if (!ok) return;
+            items = await ipcRenderer.invoke('get-due-study-items', { limit: smartPracticeLimit(), all: true, strict: true }).catch(e => ({ error: e.message }));
             if (!Array.isArray(items)) {
                 toast.error(t('Couldn\'t load your questions right now. Check the connection and try again.'));
                 return;
@@ -8060,7 +8084,27 @@ const startStudyBtn = document.getElementById('start-study-btn');
 // Wrapped, not passed directly: onclick hands the handler a MouseEvent, which
 // would arrive as the `resume` argument and send a fresh session down the
 // resume path with no ids - throwing, so the button appeared to do nothing.
-if (startStudyBtn) startStudyBtn.onclick = () => startStudySession();
+// No questions at all (24/10): straight to making some - from a new file
+// (the picker opens from this click; a browser allows it only right after
+// one), or from a file already uploaded - instead of a message.
+if (startStudyBtn) startStudyBtn.onclick = () => {
+    if (Array.isArray(studyItemsCache) && studyItemsCache.length === 0 && !studyState.queue.length) {
+        if (knownFileCount === 0) { uploadForQuestions(); return; }
+        if (generateStudyBtn) { generateStudyBtn.click(); return; }
+    }
+    startStudySession();
+};
+
+// The exam (24/10): the full exam, its course chosen on its first screen.
+const startExamBtn = document.getElementById('start-exam-btn');
+if (startExamBtn) startExamBtn.onclick = () => openFullExam(studyExamCourse());
+// The course an exam is most likely wanted for: the nearest exam's, else the
+// first course with files.
+function studyExamCourse() {
+    const subjects = (lastStudyStats && lastStudyStats.subjects) || [];
+    const withExam = subjects.filter(s => s.exam && s.exam.daysLeft != null && s.exam.daysLeft >= 0).sort((a, b) => a.exam.daysLeft - b.exam.daysLeft)[0];
+    return withExam ? withExam.category : '';
+}
 
 const studyNextBtn = document.getElementById('study-next-btn');
 if (studyNextBtn) studyNextBtn.onclick = () => { if (studyState.aiOutcome) submitReview(studyState.aiOutcome); };
@@ -9232,11 +9276,11 @@ document.getElementById('full-course').addEventListener('change', (e) => { fullS
 document.getElementById('full-cancel-btn').onclick = leaveFullExam;
 document.getElementById('full-done-btn').onclick = leaveFullExam;
 // (the Study screen's "Full exam" link is gone, 23/10 - a course's ⋯ opens it)
+// Straight to choosing the files (24/10), marked "Past exam" and in this
+// course - and back here once they're in. (Was: off to Materials with a
+// message saying what to do there.) The picker opens from this click.
 document.getElementById('full-upload-btn').onclick = () => {
-    const course = fullState.course;
-    stopFullExam(false);
-    document.getElementById('nav-materials').click();
-    if (course) toast.info(t('Upload the past exams to the course "{c}" and mark them "Past exam" - then try the exam again.').replace('{c}', course));
+    openUploadPicker('files', { role: 'past_exam', course: fullState.course, forExam: true });
 };
 
 function leaveFullExam() {
