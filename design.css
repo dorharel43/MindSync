@@ -2242,6 +2242,8 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 /* Home: "Today" and "Coming up" (24/10) - items by name, a time or date
    column, and Done on a task. */
 #view-home .home-cards { grid-template-columns: 1fr 1fr; }
+/* (review fix) one card alone takes the full width, not half */
+#view-home .home-cards:has(> .home-card[hidden]) { grid-template-columns: 1fr; }
 .home-cards[hidden], .home-card[hidden], .home-week__group[hidden], .home-card__empty[hidden] { display: none; }
 .home-list { list-style: none; margin: 0; padding: 0; }
 .home-list__item {

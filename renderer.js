@@ -4719,7 +4719,9 @@ function renderHomeCards(tasks, events, todayIso) {
         shown.add(tk.id);
     });
     const all = document.getElementById('home-week-all');
-    all.hidden = tasks.length <= shown.size;
+    // (only under tasks of its own - with every task already in Today, Today's
+    // "N more" link is the way there)
+    all.hidden = !nextTasks.length || tasks.length <= shown.size;
     all.textContent = t('All tasks ({n})', { n: tasks.length });
     all.onclick = goToTasks;
     document.getElementById('home-week-tasks-box').hidden = !nextTasks.length && all.hidden;
