@@ -126,8 +126,7 @@
             </div>
             <div class="menu">
                 <div class="menu-item active" id="nav-home"><span data-icon="home"></span> Home</div>
-                <div class="menu-item" id="nav-weekly"><span data-icon="week"></span> Planner</div>
-                <div class="menu-item" id="nav-tasks"><span data-icon="checkCircle"></span> Tasks</div>
+                <div class="menu-item" id="nav-weekly"><span data-icon="week"></span> My week</div>
                 <div class="menu-item" id="nav-materials"><span data-icon="library"></span> Materials</div>
                 <div class="menu-item" id="nav-study"><span data-icon="cards"></span> Study <span class="nav-badge" id="study-due-badge" hidden>0</span></div>
                 <div class="menu-item" id="nav-progress"><span data-icon="chart"></span> Progress</div>
@@ -276,8 +275,8 @@
 
             <div class="page-header">
                 <div>
-                    <h2 class="page-title">Planner</h2>
-                    <div class="page-subtitle">Classes, exams, deadlines and study time - week by week, plus your tasks on the day they're due.</div>
+                    <h2 class="page-title">My week</h2>
+                    <div class="page-subtitle">Classes, exams and study time, week by week - and your tasks below.</div>
                 </div>
             </div>
 
@@ -340,17 +339,11 @@
                 <div class="day-column"><div class="day-header">Friday</div></div>
                 <div class="day-column"><div class="day-header">Saturday</div></div>
             </div>
-        </div>
 
-        <!-- Tasks View -->
-        <div id="view-tasks" class="view-section" style="display: none; width: 100%; max-width: 1000px;">
-            <div class="page-header">
-                <div>
-                    <h2 class="page-title">Tasks</h2>
-                    <div class="page-subtitle">Everything you need to do, and when it's due.</div>
-                </div>
-            </div>
-
+            <!-- Tasks (23/10): here, under the week - "Planner" and "Tasks" were two
+                 screens for one question (what do I have to do this week). -->
+            <section class="week-tasks" id="week-tasks">
+                <h3 class="section-title week-tasks__title">Tasks</h3>
             <div class="tasks-toolbar">
                 <div class="tasks-filters">
                     <!-- Filters are toggles, so they read as a segmented group. -->
@@ -380,6 +373,7 @@
 <ul class="screen-help"><li><strong>New task</strong> - write it in your own words; a date or <bdi dir="rtl">"מחר"</bdi> is enough, the rest is worked out for you.</li><li>On each task: the colour word is how urgent it is (tap to change), <strong>+</strong> splits it into steps, <strong>Done</strong> finishes it.</li><li><strong>Today</strong>, <strong>Urgent</strong> and <strong>Done</strong> above show only those.</li></ul>
             <div class="tasks-list">
             </div>
+            </section>
         </div>
 
         <!-- Materials View -->
@@ -943,12 +937,11 @@
                  once there are enough answers. Filled by renderReadiness(). -->
             <h3 class="section-title progress-section-title">Exam readiness</h3>
             <div class="card readiness" id="readiness-card">
-                <p class="settings-hint card-help">Where each course stands: how much of it you practiced, and how much of that you know - by your last answer to each question. A right answer while guessing doesn't count, and one you haven't answered in a while needs a refresh.</p>
+                <p class="settings-hint card-help">Where each course stands: how much of it you practiced, and how much of that you know - by your last answer to each question. A right answer while guessing doesn't count, and one you haven't answered in a while needs work again.</p>
                 <div class="readiness-legend" id="readiness-legend">
+                    <!-- three, not five (23/10): "needs a refresh", "shaky" and "don't know yet" are one thing to do -->
                     <span><i class="rd-dot rd-known"></i>Know it</span>
-                    <span><i class="rd-dot rd-fading"></i>Needs a refresh</span>
-                    <span><i class="rd-dot rd-shaky"></i>Shaky</span>
-                    <span><i class="rd-dot rd-not"></i>Don't know yet</span>
+                    <span><i class="rd-dot rd-work"></i>Needs work</span>
                     <span><i class="rd-dot rd-unseen"></i>Not practiced</span>
                 </div>
                 <div id="readiness-list"></div>
@@ -1024,49 +1017,8 @@
                     </div>
                 </div>
 
-            <h3 class="section-title progress-section-title">Tasks</h3>
-            <div class="progress-top">
-            <!-- BUG FIX: this whole section (level, XP bar, Total XP, Streak)
-                 depended on /api/stats, which was removed server-side along
-                 with XP/levels/streak as a deliberate product decision - so
-                 it always came back empty. Worse, the old code did
-                 `if (!stats) return` before reaching anything else, so it
-                 silently blocked the category breakdown and "needs
-                 attention" list below from ever rendering too, even though
-                 neither of those needs stats at all. Removed the dead
-                 gamification UI; the metrics that actually work are below. -->
-            <div class="metric-grid">
-                <div class="card metric">
-                    <div class="metric__label">Open tasks</div>
-                    <div class="metric__value ms-tabular" id="metric-open-tasks">0</div>
-                </div>
-                <div class="card metric">
-                    <div class="metric__label">Done this week</div>
-                    <div class="metric__value ms-tabular" id="metric-week-done">0</div>
-                </div>
-            </div>
-            </div>
-
-            <div class="progress-columns">
-                <!-- Workload by category: turns the category field into an
-                     actual insight instead of just a filter. -->
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="section-title">Workload by category</h3>
-                    </div>
-                    <p class="settings-hint card-help">How your tasks split between courses, and how much of each is done.</p>
-                    <div id="category-breakdown"></div>
-                </div>
-
-                <!-- Upcoming deadlines, sorted by urgency -->
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="section-title">Needs attention</h3>
-                    </div>
-                    <p class="settings-hint card-help">Open tasks - the most urgent and the nearest deadline first.</p>
-                    <div id="attention-list"></div>
-                </div>
-            </div>
+            <!-- (23/10) The tasks' counts and lists left Progress - it's about the
+                 exams; the tasks are in My week. -->
         </div>
 
         <!-- Settings View -->
@@ -1121,7 +1073,7 @@
                 <div class="settings-row">
                     <div>
                         <div class="settings-row__title">Daily goal</div>
-                        <div class="settings-hint settings-hint--inline">Questions a day - in practice, mock exams and full exams. Shown on Home and Study.</div>
+                        <div class="settings-hint settings-hint--inline">Questions a day - in practice and in exams. Shown on Home and Study.</div>
                     </div>
                     <div class="filter-group" id="daily-goal-picker" role="group" aria-label="Daily goal">
                         <button class="filter-chip ms-tabular" data-goal="10">10</button>

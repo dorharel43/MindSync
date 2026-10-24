@@ -446,7 +446,7 @@ menuItems.forEach(item => {
         // screens has to take them down explicitly or they hover over
         // whatever comes next.
         if (typeof clearManageSelection === 'function') clearManageSelection();
-        if (typeof selectedTaskIds !== 'undefined' && item.id !== 'nav-tasks') {
+        if (typeof selectedTaskIds !== 'undefined' && item.id !== 'nav-weekly') {
             selectedTaskIds.clear();
             const taskBar = document.getElementById('bulk-action-bar');
             if (taskBar) taskBar.remove();
@@ -1267,7 +1267,7 @@ function renderWeeklyBoard() {
                         <span class="board-task__title" dir="auto">${escapeHtml(t.title)}</span>
                         ${overdue ? `<span class="board-task__meta">Overdue · ${due.getDate()}/${due.getMonth() + 1}</span>` : ''}
                     </span>`;
-                card.onclick = () => document.getElementById('nav-tasks').click();
+                card.onclick = () => goToTasks();
                 column.appendChild(card);
             });
         }
@@ -2110,6 +2110,22 @@ function renderTasksList() {
             </div>
         `;
 
+        // "Done" on the row, the rest under ⋯ (23/10): five icons on every row
+        // read as five things to decide. The buttons stay (hidden) - ⋯ presses them.
+        const actionsCol = taskCard.querySelector('.task-actions-col');
+        const inMenu = [['.go-to-related-btn', 'Go to related content'], ['.edit-task-btn', 'Edit task'],
+            ['.toggle-checklist-btn', hasChecklist ? 'Show the steps' : 'Split into steps'], ['.delete-task-btn', 'Delete task', true]]
+            .map(([sel, label, danger]) => [actionsCol.querySelector(sel), label, danger]).filter(([b]) => b);
+        inMenu.forEach(([b]) => { b.hidden = true; });
+        const moreBtn = document.createElement('button');
+        moreBtn.type = 'button';
+        moreBtn.className = 'course-menu-btn task-more-btn';
+        moreBtn.textContent = '⋯';
+        moreBtn.title = t('More');
+        moreBtn.setAttribute('aria-label', t('More'));
+        moreBtn.onclick = (e) => { e.stopPropagation(); openActionMenu(actionsCol, `task:${task.id}`, moreBtn, inMenu.map(([b, label, danger]) => [label, () => b.click(), danger])); };
+        actionsCol.insertBefore(moreBtn, actionsCol.querySelector('.complete-task-btn'));
+
         const checklistPanel = taskCard.querySelector('.checklist-panel');
         const checklistItems = taskCard.querySelector('.checklist-items');
 
@@ -2551,7 +2567,7 @@ function mergeCourseUI(folder, folders) {
     const go = document.getElementById('merge-course-confirm');
     const cancel = document.getElementById('merge-course-cancel');
     document.getElementById('merge-course-title').textContent = t('Merge "{name}" into another course', { name: folder.name });
-    document.getElementById('merge-course-text').textContent = t('Its files, practice questions, mock exams, full exams and exams in the Planner move to the course you choose, and "{name}" is deleted.', { name: folder.name });
+    document.getElementById('merge-course-text').textContent = t('Its files, practice questions, full exams and exams in the Planner move to the course you choose, and "{name}" is deleted.', { name: folder.name });
     select.innerHTML = '';
     select.appendChild(new Option(t('Choose a course…'), ''));
     others.forEach(f => select.appendChild(new Option(f.name, String(f.id))));
@@ -3972,7 +3988,7 @@ document.querySelectorAll('.modal-overlay').forEach(modal => {
 async function loadAndRenderProgress() {
     const progressView = document.getElementById('view-progress');
     if (!progressView) return;
-    await Promise.all([renderLearningProgress(), renderProgressInsights()]);
+    await renderLearningProgress();   // (the tasks' part left Progress, 23/10)
 }
 
 // Learning part of Progress (30/9): exam readiness per course, then the
@@ -4130,14 +4146,16 @@ function renderReadiness(subjects) {
 
         const bar = document.createElement('div');
         bar.className = 'readiness-bar';
-        [['known', 'rd-known', 'Know it'], ['fading', 'rd-fading', 'Needs a refresh'], ['shaky', 'rd-shaky', 'Shaky'],
-         ['notKnown', 'rd-not', 'Don\'t know yet'], ['unseen', 'rd-unseen', 'Not practiced']]
-            .forEach(([key, cls, label]) => {
-                if (!r[key]) return;
+        // Three states (23/10): know it / needs work (a refresh, shaky or not
+        // known yet - the same thing to do) / not practiced.
+        const work = (r.fading || 0) + (r.shaky || 0) + (r.notKnown || 0);
+        [[r.known, 'rd-known', 'Know it'], [work, 'rd-work', 'Needs work'], [r.unseen, 'rd-unseen', 'Not practiced']]
+            .forEach(([n, cls, label]) => {
+                if (!n) return;
                 const seg = document.createElement('span');
                 seg.className = `readiness-bar__seg ${cls}`;
-                seg.style.width = `${(r[key] / r.total) * 100}%`;
-                seg.title = `${label}: ${r[key]}`;
+                seg.style.width = `${(n / r.total) * 100}%`;
+                seg.title = `${t(label)}: ${n}`;
                 bar.append(seg);
             });
 
@@ -4158,8 +4176,8 @@ function renderReadiness(subjects) {
         if ((r.total || 0) >= 5) {
             const mock = document.createElement('button');
             mock.className = 'btn-secondary btn-sm';
-            mock.textContent = t('Mock exam');
-            mock.onclick = () => { document.getElementById('nav-study').click(); setTimeout(() => openExamSetup(s.category, name.textContent, r.total), 60); };
+            mock.textContent = t('Exam');   // (the full exam - the mock exam is off the screens, 23/10)
+            mock.onclick = () => { document.getElementById('nav-study').click(); setTimeout(() => openFullExam(s.category), 60); };
             buttons.append(mock);
         }
         buttons.append(practice);
@@ -4419,111 +4437,6 @@ if (sidebarCoursesToggle) sidebarCoursesToggle.onclick = () => {
     renderSidebarCourses();
 };
 
-// Builds the two lower panels of the Progress view from the task list. This
-// is what turns the page from three lonely numbers into something worth
-// opening: where the workload actually sits, and what needs attention first.
-async function renderProgressInsights() {
-    const tasks = (await ipcRenderer.invoke('get-tasks')) || [];
-
-    const openTasks = tasks.filter(t => t.status !== 'completed');
-    const openEl = document.getElementById('metric-open-tasks');
-    if (openEl) openEl.textContent = openTasks.length;
-
-    // "Done this week" = completed in the last 7 days. completedAt is stamped
-    // by the server (30/9); updatedAt was used before, so renaming an old
-    // finished task counted it again. Older tasks have no completedAt yet.
-    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const weekDone = tasks.filter(t => {
-        if (t.status !== 'completed') return false;
-        const when = t.completedAt || t.updatedAt;
-        return when && new Date(when).getTime() >= weekAgo;
-    }).length;
-    const weekEl = document.getElementById('metric-week-done');
-    if (weekEl) weekEl.textContent = weekDone;
-
-    // ---- Workload by category ----
-    // Courses that still have open tasks. "Done" counts the course's finished
-    // tasks too (it used to look at open tasks only, so it said "0% done" for
-    // a course with 9 of 10 finished), plus ticked steps of open ones. The bar
-    // is how much is done, matching the words next to it.
-    const catEl = document.getElementById('category-breakdown');
-    if (catEl) {
-        const keyOf = t => (t.category || '').trim() || 'Uncategorized';
-        const groups = {};
-        tasks.forEach(t => {
-            const key = keyOf(t);
-            if (!groups[key]) groups[key] = { total: 0, open: 0, done: 0 };
-            const g = groups[key];
-            g.total++;
-            if (t.status === 'completed') g.done += 1;
-            else {
-                g.open++;
-                if (t.subtasks && t.subtasks.length) {
-                    g.done += t.subtasks.filter(st => st.completed).length / t.subtasks.length;
-                }
-            }
-        });
-
-        const entries = Object.entries(groups).filter(([, v]) => v.open > 0)
-            .sort((a, b) => b[1].open - a[1].open || a[0].localeCompare(b[0]));
-        if (entries.length === 0) {
-            catEl.innerHTML = '<div class="ms-muted ms-text-sm">No open tasks to break down yet.</div>';
-        } else {
-            catEl.innerHTML = entries.map(([name, v]) => {
-                const pct = Math.round((v.done / v.total) * 100);
-                return `
-                    <div class="cat-row">
-                        <div class="cat-row__head">
-                            <span class="cat-row__name" dir="auto">${escapeHtml(name === 'Uncategorized' ? t(name) : name)}</span>
-                            <span class="cat-row__count">${v.open} open of ${v.total} · ${pct}% done</span>
-                        </div>
-                        <div class="cat-row__track">
-                            <div class="cat-row__fill" style="width: ${pct}%"></div>
-                        </div>
-                    </div>`;
-            }).join('');
-        }
-    }
-
-    // ---- Needs attention ----
-    // Most urgent first, then the nearest deadline (the help text always
-    // promised this; it used to sort by urgency only). Past deadlines say so.
-    const attEl = document.getElementById('attention-list');
-    if (attEl) {
-        const rank = { Urgent: 0, High: 1, Medium: 2, Normal: 3 };
-        const colors = {
-            Urgent: 'var(--status-danger)',
-            High: 'var(--status-warning)',
-            Medium: 'var(--status-info)',
-            Normal: 'var(--text-tertiary)'
-        };
-        const today = new Date(); today.setHours(0, 0, 0, 0);
-        const dueOf = t => { const d = parseTaskDueDate(t); return d ? d.getTime() : Infinity; };
-        const top = [...openTasks]
-            .sort((a, b) => (rank[a.urgency] ?? 3) - (rank[b.urgency] ?? 3) || dueOf(a) - dueOf(b))
-            .slice(0, 6);
-
-        if (top.length === 0) {
-            attEl.innerHTML = '<div class="ms-muted ms-text-sm">Nothing pending. Nice work.</div>';
-        } else {
-            attEl.innerHTML = top.map(t => {
-                const due = parseTaskDueDate(t);
-                const overdue = due && due < today;
-                const meta = [t.urgency, t.date && t.date !== 'Not set' ? t.date : 'No deadline']
-                    .filter(Boolean).join(' · ');
-                return `
-                    <div class="attention-item">
-                        <span class="attention-item__dot" style="background: ${colors[t.urgency] || colors.Normal}"></span>
-                        <div class="attention-item__body">
-                            <div class="attention-item__title" dir="auto">${escapeHtml(t.title)}</div>
-                            <div class="attention-item__meta">${escapeHtml(meta)}${overdue ? ' · <span class="attention-item__late">past the deadline</span>' : ''}</div>
-                        </div>
-                    </div>`;
-            }).join('');
-        }
-    }
-}
-
 const progressNavBtn = document.getElementById('nav-progress');
 if (progressNavBtn) {
     progressNavBtn.addEventListener('click', loadAndRenderProgress);
@@ -4768,6 +4681,13 @@ const onboardingEl = document.getElementById('onboarding');
 const onboardingStepsEl = document.getElementById('onboarding-steps');
 const onboardingBarEl = document.getElementById('onboarding-bar');
 const onboardingKey = (name) => `mindsync.onboarding.${name}.${currentUserId || 'anon'}`;
+
+// The tasks (23/10): in My week, under the board.
+function goToTasks() {
+    document.getElementById('nav-weekly').click();
+    const box = document.getElementById('week-tasks');
+    if (box) box.scrollIntoView({ block: 'start' });
+}
 
 // Switches screen, then clicks a button on it once it's visible.
 function goAndClick(navId, buttonId) {
@@ -5111,10 +5031,10 @@ function renderHomeReadiness(status) {
         // A mock exam this week too short to tell (fewer checked answers): say how long one has to be.
         document.getElementById('home-ready-tip-text').textContent = shortMock
             ? t('Your last mock exam was too short to tell - {n} questions give a picture.', { n: need })
-            : t('A mock exam this week gives the truest picture.');
+            : t('An exam this week gives the truest picture.');
         const tipBtn = document.getElementById('home-ready-tip-btn');
-        tipBtn.textContent = t('Take a mock exam');
-        tipBtn.onclick = () => { document.getElementById('nav-study').click(); setTimeout(() => openExamSetup(s.category, name, r.total), 60); };
+        tipBtn.textContent = t('Take an exam');
+        tipBtn.onclick = () => { document.getElementById('nav-study').click(); setTimeout(() => openFullExam(s.category), 60); };
     }
 
     const btn = document.getElementById('home-study-btn');
@@ -5758,8 +5678,7 @@ document.addEventListener('keydown', (e) => {
     // Ctrl/Cmd+K focuses search (a near-universal convention).
     if ((e.ctrlKey || e.metaKey) && e.code === 'KeyK') {
         e.preventDefault();
-        const nav = document.getElementById('nav-tasks');
-        if (nav) nav.click();
+        goToTasks();
         const search = document.getElementById('task-search-input');
         if (search) { search.focus(); search.select(); }
         return;
@@ -6547,7 +6466,7 @@ function renderStudyCourses(subjects, items, courseFiles) {
             more.textContent = '⋯';
             more.title = t('More for this course');
             more.setAttribute('aria-label', t('More for this course'));
-            more.onclick = (e) => { e.stopPropagation(); openActionMenu(actions, `study:${f.name}`, more, [['Full exam', () => openFullExam(f.name)]]); };
+            more.onclick = (e) => { e.stopPropagation(); openActionMenu(actions, `study:${f.name}`, more, [['Exam', () => openFullExam(f.name)]]); };
             actions.append(more);
         }
         actions.append(go);
@@ -6605,9 +6524,9 @@ function renderStudyCourses(subjects, items, courseFiles) {
         more.title = t('More for this course');
         more.setAttribute('aria-label', t('More for this course'));
         const menuItems = [];
-        // Mock exam (30/9) - once there's enough to make an exam of.
-        if ((s.items || 0) >= 5) menuItems.push(['Mock exam', () => openExamSetup(s.category, name.textContent, s.items)]);
-        menuItems.push(['Full exam', () => openFullExam(s.category)]);
+        // One exam (23/10): the full one, like the real exam. The mock exam is
+        // off the screens (its code stays until after the pilot).
+        menuItems.push(['Exam', () => openFullExam(s.category)]);
         if (fileList.length > 1 || (fileList.length === 1 && fileList[0][0])) {
             menuItems.push([openStudyCourses.has(s.category) ? 'Hide its files' : 'Practice one file', () => {
                 if (openStudyCourses.has(s.category)) openStudyCourses.delete(s.category); else openStudyCourses.add(s.category);

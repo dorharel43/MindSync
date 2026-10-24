@@ -2236,3 +2236,13 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 /* A course row's ⋯ menu hangs from its buttons. */
 .study-course__actions { position: relative; }
 .study-course__actions > .course-menu { top: calc(100% + 4px); }
+/* My week (23/10): the tasks under the board. */
+.week-tasks { margin-top: 28px; }
+.week-tasks__title { margin-bottom: 12px; }
+/* A task: "Done" and ⋯ (the rest is in the menu). */
+.task-actions-col { position: relative; }
+.task-actions-col > .course-menu { top: calc(100% + 4px); }
+.task-more-btn { background: none; border: 1px solid var(--border-color); border-radius: var(--radius-sm, 6px); padding: 4px 10px; cursor: pointer; color: var(--text-secondary); }
+.task-more-btn:hover { color: var(--text-primary); }
+/* Readiness: three states. */
+.rd-work { background: var(--status-warning); }
