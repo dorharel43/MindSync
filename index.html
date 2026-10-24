@@ -242,6 +242,16 @@
                 </div>
             </section>
 
+            <!-- How much (24/10): four numbers, each a way in - open tasks, late
+                 ones (only when there are), exams ahead, done in the last 7 days.
+                 renderHomeStats(). -->
+            <div class="home-stats" id="home-stats" hidden>
+                <button type="button" class="home-stat" id="home-stat-open"><span class="home-stat__num ms-tabular"></span> <span class="home-stat__label"></span></button>
+                <button type="button" class="home-stat home-stat--late" id="home-stat-late"><span class="home-stat__num ms-tabular"></span> <span class="home-stat__label"></span></button>
+                <button type="button" class="home-stat" id="home-stat-exams"><span class="home-stat__num ms-tabular"></span> <span class="home-stat__label"></span></button>
+                <button type="button" class="home-stat" id="home-stat-done"><span class="home-stat__num ms-tabular"></span> <span class="home-stat__label"></span></button>
+            </div>
+
             <!-- Today and Coming up (24/10): what's on today, and what's next -
                  by name, not counts (stage A left Home with just the panel above,
                  and "how many tasks / exams" is what a student looks for here).

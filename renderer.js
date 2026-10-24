@@ -1817,6 +1817,9 @@ let activeTaskCategory = 'All';
 const selectedTaskIds = new Set();
 let activeTaskStatusFilter = 'all';   // all | today | urgent
 let taskSearchQuery = '';
+// When a task was finished (completedAt is stamped by the server; older ones
+// have only updatedAt) - 0 for none.
+const taskDoneAt = (tk) => { const w = tk.completedAt || tk.updatedAt; return w ? new Date(w).getTime() || 0 : 0; };
 
 // Wire the toolbar. These controls existed in the markup but were never
 // connected to anything - the search box in particular was decorative.
@@ -1994,6 +1997,8 @@ function renderTasksList() {
     }
 
     visibleTasks = visibleTasks.filter(matchesTaskFilters);
+    // Done: the latest finished first (24/10 - "3 done this week" on Home opens here).
+    if (activeTaskStatusFilter === 'done') visibleTasks.sort((a, b) => taskDoneAt(b) - taskDoneAt(a));
 
     if (visibleTasks.length === 0) {
         const empty = document.createElement('div');
@@ -4618,6 +4623,35 @@ function homeItem({ when, whenClass = '', title, tag = '', tagClass = '', past =
     }
     return li;
 }
+// Home's numbers (24/10): open tasks, late ones (only when there are), exams
+// ahead, tasks done in the last 7 days (only when there are) - each opens
+// where they are. Hidden for someone with no tasks and no exams at all.
+function renderHomeStats(allTasks, events, todayIso) {
+    const box = document.getElementById('home-stats');
+    if (!box) return;
+    const open = allTasks.filter(tk => tk.status !== 'completed');
+    const late = open.filter(tk => { const d = parseTaskDueDate(tk); return d && localIsoDate(d) < todayIso; }).length;
+    // (today's exam only while it's still ahead - once it's over, it's in Today, not "ahead")
+    const now = new Date();
+    const nowHm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const exams = events.filter(e => e.type === 'exam' && e.date && (e.date > todayIso || (e.date === todayIso && (e.time || '') >= nowHm))).length;
+    // "This week" = since Sunday, the start of the week here.
+    const weekStart = new Date(now); weekStart.setHours(0, 0, 0, 0); weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    const done = allTasks.filter(tk => tk.status === 'completed' && taskDoneAt(tk) >= weekStart.getTime()).length;
+    const set = (id, n, one, many, show, go) => {
+        const b = document.getElementById(id);
+        b.hidden = !show;
+        b.querySelector('.home-stat__num').textContent = n;
+        b.querySelector('.home-stat__label').textContent = t(n === 1 ? one : many);
+        b.onclick = go;
+    };
+    set('home-stat-open', open.length, 'open task', 'open tasks', true, () => goToTasks());
+    set('home-stat-late', late, 'overdue', 'overdue', late > 0, () => goToTasks());
+    set('home-stat-exams', exams, 'exam ahead', 'exams ahead', true, () => document.getElementById('nav-weekly').click());
+    set('home-stat-done', done, 'task done this week', 'tasks done this week', done > 0, () => goToTasks('done'));
+    box.hidden = !allTasks.length && !exams;
+}
+
 function renderHomeCards(tasks, events, todayIso) {
     const box = document.getElementById('home-cards');
     if (!box) return;
@@ -4658,7 +4692,7 @@ function renderHomeCards(tasks, events, todayIso) {
         more.type = 'button';
         more.className = 'btn-link';
         more.textContent = t('{n} more - in My week', { n: todayTasks.length - HOME_TODAY_TASKS });
-        more.onclick = goToTasks;
+        more.onclick = () => goToTasks();
         li.append(more);
         todayList.append(li);
     }
@@ -4722,8 +4756,8 @@ function renderHomeCards(tasks, events, todayIso) {
     // (only under tasks of its own - with every task already in Today, Today's
     // "N more" link is the way there)
     all.hidden = !nextTasks.length || tasks.length <= shown.size;
-    all.textContent = t('All tasks ({n})', { n: tasks.length });
-    all.onclick = goToTasks;
+    all.textContent = t('All tasks');   // (how many: the numbers above)
+    all.onclick = () => goToTasks();
     document.getElementById('home-week-tasks-box').hidden = !nextTasks.length && all.hidden;
     document.getElementById('home-week').hidden = !later.length && !nextTasks.length && all.hidden;
 
@@ -4747,6 +4781,7 @@ async function loadAndRenderHome() {
     // "upcoming".
     const todayIso = localIsoDate(new Date());
 
+    renderHomeStats(allTasks, events, todayIso);
     renderHomeCards(tasks, events, todayIso);
     renderSidebarExam(events, todayIso);
     updateHomeHero();
@@ -4791,8 +4826,16 @@ const onboardingBarEl = document.getElementById('onboarding-bar');
 const onboardingKey = (name) => `mindsync.onboarding.${name}.${currentUserId || 'anon'}`;
 
 // The tasks (23/10): in My week, under the board.
-function goToTasks() {
+// (24/10) Opens the whole list - or the `filter` chip ("done") - with no
+// leftover category or search: "5 open tasks" on Home must land on those 5.
+function goToTasks(filter = 'all') {
     document.getElementById('nav-weekly').click();
+    activeTaskCategory = 'All';
+    taskSearchQuery = '';
+    if (taskSearchInput) taskSearchInput.value = '';
+    if (taskSearchBox) taskSearchBox.classList.remove('has-value');
+    const chip = document.querySelector(`#task-status-filters [data-filter="${typeof filter === 'string' ? filter : 'all'}"]`);
+    if (chip) chip.click(); else renderTasksList();
     const box = document.getElementById('week-tasks');
     if (box) box.scrollIntoView({ block: 'start' });
 }
