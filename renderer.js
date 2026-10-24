@@ -2939,6 +2939,9 @@ async function runUploadBatch() {
     if (batch.forExam && uploaded > 0 && folder !== NO_COURSE) {
         document.getElementById('nav-study').click();
         setTimeout(() => openFullExam(folder), 60);
+        // (a file marked "Syllabus" here still gets its "Add exams & deadlines")
+        const syllabi = uploadedNow.filter(f => f.role === 'syllabus');
+        if (syllabi.length) offerNextStepsAfterUpload(syllabi, {}).catch(err => console.warn('upload suggestions failed:', err));
         return;
     }
     offerNextStepsAfterUpload(uploadedNow, { makeQuestions: batch.makeQuestions }).catch(err => console.warn('upload suggestions failed:', err));
@@ -6386,7 +6389,9 @@ async function loadStudyHome() {
     // that screen opens without waiting.
     const [stats, items] = await Promise.all([
         ipcRenderer.invoke('get-study-stats'),
-        ipcRenderer.invoke('get-study-items', { light: true }).catch(() => null),
+        // (strict: a failed load is an error, not "no questions" - smart practice
+        // reads an empty list as "make some first")
+        ipcRenderer.invoke('get-study-items', { light: true, strict: true }).catch(() => null),
         loadDailyGoal()
     ]);
     if (Array.isArray(items)) studyItemsCache = items;
@@ -7028,6 +7033,8 @@ async function startStudySession(resume = null, scope = null) {
                 toast.error(t('Couldn\'t load your questions right now. Check the connection and try again.'));
                 return;
             }
+            // (none even so - all set aside, or deleted meanwhile: not "up to date")
+            if (!items.length) { toast.info('There are no questions here yet.'); return; }
         }
         if (!items || items.length === 0) {
             toast.info(scope
@@ -8088,7 +8095,8 @@ const startStudyBtn = document.getElementById('start-study-btn');
 // (the picker opens from this click; a browser allows it only right after
 // one), or from a file already uploaded - instead of a message.
 if (startStudyBtn) startStudyBtn.onclick = () => {
-    if (Array.isArray(studyItemsCache) && studyItemsCache.length === 0 && !studyState.queue.length) {
+    // (both the list and the stats say none - either alone may be stale or failed)
+    if (Array.isArray(studyItemsCache) && studyItemsCache.length === 0 && lastStudyStats && lastStudyStats.totalItems === 0 && !studyState.queue.length) {
         if (knownFileCount === 0) { uploadForQuestions(); return; }
         if (generateStudyBtn) { generateStudyBtn.click(); return; }
     }
