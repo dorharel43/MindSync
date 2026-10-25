@@ -2066,10 +2066,15 @@ html.has-session body.auth-pending .auth-main { min-height: 100vh; }
 .full-recurring ul { margin: 6px 0 0; padding-inline-start: 18px; font-size: var(--text-sm); display: grid; gap: 4px; }
 .full-recurring__count { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
 
-.full-run__bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; display: flex; align-items: center; gap: 14px; padding: 10px 0; margin-bottom: 12px; background: var(--bg-app, var(--bg-card)); border-bottom: 1px solid var(--border-color); }
+/* (25/10) It sticks at the very top of the screen: the page's own top padding
+   (28px; 16px on a phone) left a strip where the questions showed above it -
+   a sticky `top` counts from inside that padding, so -28px is the screen's top.
+   The page's background, not the card's (--bg-app doesn't exist). */
+.full-run__bar { position: sticky; top: -28px; z-index: 5; display: flex; align-items: center; gap: 14px; padding: 10px 0; margin-bottom: 12px; background: var(--bg-main); border-bottom: 1px solid var(--border-color); }
+@media (max-width: 760px) { .full-run__bar { top: -16px; } }
 .full-run__title { flex: 1; min-width: 0; font-weight: var(--font-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .full-run__body { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 16px; align-items: start; }
-.full-nav { position: sticky; top: 64px; display: grid; gap: 4px; }
+.full-nav { position: sticky; top: 32px; display: grid; gap: 4px; }   /* (just under the stuck bar - 25/10) */
 .full-nav__q { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-primary); font: inherit; font-size: var(--text-sm); cursor: pointer; text-align: start; }
 .full-nav__q:hover { background: var(--hover-bg); }
 .full-nav__q.is-current { border-color: var(--accent-purple); box-shadow: inset 0 0 0 1px var(--accent-purple); }
