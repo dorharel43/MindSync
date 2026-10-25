@@ -377,7 +377,9 @@
         '1 more was right while you were guessing. That doesn\'t count as knowing it - it comes back tomorrow to check.': 'עוד אחת הייתה נכונה בניחוש. זה לא נחשב שידעת - היא חוזרת מחר לבדיקה.',
         'Those questions are no longer available. Starting fresh.': 'השאלות האלה כבר לא קיימות. מתחילים מחדש.',
         'You practiced these recently, so none is due yet. Spacing questions out is what makes you remember them longer. You can still go over them now - handy right before an exam.': 'תרגלת אותן לאחרונה, אז עוד לא הגיע הזמן של אף אחת מהן. דווקא הרווחים בין החזרות הם מה שגורם לזכור לאורך זמן. עדיין אפשר לעבור עליהן עכשיו - שימושי ממש לפני מבחן.',
-        'Practice anyway': 'לתרגל בכל זאת', 'Not now': 'לא עכשיו', 'There are no questions here yet.': 'עוד אין כאן שאלות.',
+        'Practice anyway': 'לתרגל בכל זאת',
+        "Then your practice is timed for it - what's closest to the exam comes first.": 'ככה התרגול מתוזמן לפי המבחן - מה שהכי קרוב למבחן בא קודם.',
+        'Save and practice': 'שמירה ותרגול', 'When is the exam?': 'מתי המבחן?', "Don't know yet - practice now": 'עוד לא ידוע - לתרגל בינתיים', 'No exam in this course': 'אין מבחן בקורס הזה', 'Not now': 'לא עכשיו', 'There are no questions here yet.': 'עוד אין כאן שאלות.',
         "Nothing is due right now - you're up to date. Come back tomorrow, practice one course below, or make questions from a new file.": 'אין כרגע מה לתרגל - סיימת הכול. אפשר לחזור מחר, לתרגל קורס אחד למטה, או ליצור שאלות מקובץ חדש.',
         '· Smart practice': '· תרגול חכם', 'Nothing to check.': 'אין מה לבדוק.', 'No question.': 'אין שאלה.', 'No answer came back.': 'לא חזרה תשובה.',
         'The check did not come back clearly.': 'הבדיקה לא חזרה בצורה ברורה.',
@@ -753,6 +755,7 @@
         [/^(\d+) to review again, (\d+) new for today$/, (m, a, b) => `${a} לחזרה, ${n(b, 'אחת חדשה', '# חדשות')} להיום`],
         [/^([▾▸]) By file \((\d+)\)$/, (m, a, x) => `${a === '▸' ? '◂' : a} לפי קובץ (${x})`],   // closed = pointing left in Hebrew
         [/^When is your (.+) exam\?$/, 'מתי המבחן ב$1?'],
+        [/^Before you start: when is the (.+) exam\?$/, 'לפני שמתחילים: מתי המבחן ב$1?'],
         [/^Added to the Planner: (.+)\. Practice is now timed for it\.$/, 'נוסף ללוח השבועי: $1. התרגול מותאם אליו עכשיו.'],
         [/^Got it - no exam in (.+)\.$/, 'הבנתי - אין מבחן ב$1.'],
         [/^Smart practice: you stopped at question (\d+) of (\d+) — (\d+) left\.$/, 'תרגול חכם: עצרת בשאלה $1 מתוך $2 - נשארו $3.'],

@@ -3962,6 +3962,8 @@ function closeModalSafely(modal) {
     if (modal === syllabusModal) { closeSyllabusModal(); return; }
     // "Which course is this exam?": closed as "Not now", so the next one is asked.
     if (modal.id === 'exam-course-modal') { if (!examCourseBusy && examCourseClose) examCourseClose(); return; }
+    // "When is the exam?" before practice: closed as "not yet" - practice starts.
+    if (modal.id === 'exam-first-modal') { if (examFirstClose) examFirstClose(); return; }
     modal.style.display = 'none';
 }
 document.querySelectorAll('.modal-overlay').forEach(modal => {
@@ -6520,6 +6522,9 @@ function readNoExamCourses() {
     try { return JSON.parse(localStorage.getItem(noExamKey()) || '[]'); } catch { return []; }
 }
 let examAskCourse = null;
+// True while new questions go straight to practice: the card stays hidden -
+// it flashed for a moment before the session, unanswerable (25/10).
+let studyExamAskHeld = false;
 
 function renderStudyExams(subjects) {
     const box = document.getElementById('study-exams');
@@ -6564,7 +6569,7 @@ function renderStudyExams(subjects) {
         ask.hidden = !next;
         if (next) document.getElementById('study-exam-ask-q').textContent = `When is your ${isolate(next.category)} exam?`;
     }
-    box.hidden = !next;
+    box.hidden = !next || studyExamAskHeld;
 }
 
 // ---- "Practice one course" -------------------------------------------------
@@ -6810,7 +6815,7 @@ async function saveExamAnswerNow(course, input, text) {
     const res = await ipcRenderer.invoke('parse-exam-dates', text).catch(e => ({ error: e.message }));
     if (!res || res.error) {
         toast.error((res && res.error) || 'Please try again.', 'Couldn\'t read that');
-        return;
+        return false;
     }
     const saved = [];
     for (const e of res.exams) {
@@ -6827,7 +6832,7 @@ async function saveExamAnswerNow(course, input, text) {
         const r = await ipcRenderer.invoke('save-event', evt).catch(e => ({ error: e.message }));
         if (r && !r.error) saved.push({ ...evt, id: r.id || r._id });
     }
-    if (!saved.length) { toast.error('Could not save it. Please try again.'); return; }
+    if (!saved.length) { toast.error('Could not save it. Please try again.'); return false; }
     input.value = '';
 
     const label = saved.map(e => { const [, m, d] = e.date.split('-').map(Number); return `${isolate(e.title)} · ${d}/${m}`; }).join(', ');
@@ -6839,6 +6844,55 @@ async function saveExamAnswerNow(course, input, text) {
     await loadStudyHome();
     loadAndRenderWeeklyBoard();
     loadAndRenderHome();
+    return true;
+}
+
+// Before the first practice of new questions (25/10): a course with no exam
+// yet is asked for it - skippable ("not yet" is asked again on the Study
+// screen). Resolves when the window closes, however it closes.
+let examFirstClose = null;   // Escape / a click outside = "not yet"
+function needsExamFirst(course) {
+    const s = ((lastStudyStats && lastStudyStats.subjects) || []).find(x => x.category === course);
+    return !!s && 'exam' in s && !s.exam && course !== QUESTIONS_NO_COURSE && !readNoExamCourses().includes(course);
+}
+function askExamFirst(course) {
+    const modal = document.getElementById('exam-first-modal');
+    if (!modal) return Promise.resolve();
+    const input = document.getElementById('exam-first-input');
+    const buttons = ['exam-first-save', 'exam-first-later', 'exam-first-none'].map(id => document.getElementById(id));
+    const [save, later, none] = buttons;
+    document.getElementById('exam-first-q').textContent = `Before you start: when is the ${isolate(course)} exam?`;
+    input.value = '';
+    return new Promise((resolve) => {
+        const close = () => {
+            examFirstClose = null;
+            modal.style.display = 'none';
+            input.onkeydown = save.onclick = later.onclick = none.onclick = null;
+            resolve();
+        };
+        examFirstClose = close;
+        const busy = (on) => {
+            buttons.forEach(b => { b.disabled = on; });
+            if (on) modal.dataset.busy = '1'; else delete modal.dataset.busy;   // (not closed mid-save)
+        };
+        save.onclick = async () => {
+            if (save.disabled) return;   // (Enter twice: the exam saved twice)
+            const text = input.value.trim();
+            if (!text) { toast.warning('Write when the exam is, e.g. "12.2".'); input.focus(); return; }
+            busy(true);
+            const ok = await saveExamAnswerNow(course, input, text).catch(err => { toast.error(err.message, 'Could not save'); return false; });
+            busy(false);
+            if (ok) close();
+        };
+        input.onkeydown = (e) => { if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) save.onclick(); };   // (Ctrl+Enter: the global handler clicks Save)
+        later.onclick = close;
+        none.onclick = () => {
+            try { localStorage.setItem(noExamKey(), JSON.stringify([...new Set([...readNoExamCourses(), course])])); } catch { /* not worth failing over */ }
+            close();
+        };
+        modal.style.display = 'flex';
+        input.focus();
+    });
 }
 
 const examSaveBtn = document.getElementById('study-exam-save');
@@ -8950,10 +9004,19 @@ async function addReviewedQuestions(practice) {
             : `Added ${added} questions.`,
         'Ready to study'
     );
-    closeReviewScreen();
-    await loadStudyHome();
     const ids = practice && res && Array.isArray(res.items) ? res.items.map(i => i.id || i._id).filter(Boolean).map(String) : [];
-    if (ids.length) startStudySession(null, { category: course, label: course === QUESTIONS_NO_COURSE ? t('New questions') : course, ids });
+    studyExamAskHeld = ids.length > 0;
+    if (studyExamAskHeld) { const box = document.getElementById('study-exams'); if (box) box.hidden = true; }   // (shown from before, for another course)
+    closeReviewScreen();
+    try {
+        await loadStudyHome();
+        if (!ids.length) return;
+        if (needsExamFirst(course)) await askExamFirst(course);
+        await startStudySession(null, { category: course, label: course === QUESTIONS_NO_COURSE ? t('New questions') : course, ids });
+    } finally {
+        // (the session is on - or didn't start, and then the card is back)
+        if (studyExamAskHeld) { studyExamAskHeld = false; if (lastStudyStats) renderStudyExams(lastStudyStats.subjects || []); }
+    }
 }
 if (reviewConfirmBtn) reviewConfirmBtn.onclick = () => addReviewedQuestions(false);
 if (reviewPracticeBtn) reviewPracticeBtn.onclick = () => addReviewedQuestions(true);
