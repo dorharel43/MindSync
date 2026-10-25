@@ -1878,8 +1878,12 @@ html[dir="rtl"] .study-question { letter-spacing: 0; }
 .confidence-btn.is-picked:disabled { opacity: 1; }
 .confidence-btn:focus-visible, .outcome-btn:focus-visible { outline: 2px solid var(--accent-purple); outline-offset: 2px; }
 
-.study-dont-know { border: 0; margin-top: 6px; padding: 8px; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 4px; }
-.study-dont-know:hover { text-decoration-color: currentColor; }
+/* (25/10) A real button again: as an underlined link it went unnoticed - and
+   it's now the only way to the answer without writing one. */
+.study-dont-know { border: 1px solid var(--border-strong); margin-top: 12px; padding: 11px; color: var(--text-primary); font-weight: 500; }
+.study-dont-know:hover { border-color: var(--text-secondary); }
+.study-answer-needed { margin: 6px 0 0; color: var(--status-danger); font-size: var(--text-sm); font-weight: 500; }
+#study-typed-answer.is-invalid, #study-typed-answer.is-invalid:focus { border-color: var(--status-danger); }   /* (red while focused too) */
 
 /* Verdict: tinted box, coloured dot, no stripe (both directions). */
 .study-verdict,

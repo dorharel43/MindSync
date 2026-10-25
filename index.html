@@ -629,8 +629,9 @@
 
                     <!-- Step 1: write the answer, then say how sure you are. The
                          confidence button also sends the answer to be checked by
-                         the AI (29/9) - one tap, no extra step. Left empty = the
-                         old way: answer in your head and mark yourself. -->
+                         the AI (29/9) - one tap, no extra step. (25/10) An empty
+                         box no longer goes to the answer: write something - or
+                         "I don't know", the only way straight to the answer. -->
                     <div id="study-confidence-step">
                         <textarea id="study-typed-answer" class="input-field study-typed-answer" dir="auto" rows="3"
                             placeholder="Write your answer - a sentence or two is enough"></textarea>
@@ -639,8 +640,8 @@
                              Shortened 30/9: four sentences read like a manual. -->
                         <p class="confidence-hint" id="study-confidence-hint" hidden>
                             What you were sure about and got wrong comes back first.
-                            You can also leave the box empty and mark yourself.
                         </p>
+                        <p class="study-answer-needed" id="study-answer-needed" role="alert" hidden>Write your answer first - or "I don't know" below.</p>
                         <div class="confidence-row">
                             <button class="confidence-btn confidence-btn--sure" data-confidence="sure">
                                 <strong>I'm sure</strong><span>I know this</span>
@@ -654,7 +655,8 @@
                         </div>
                         <!-- Not knowing is its own answer: no check, no "How did you
                              do?" (you can't have "got it"). Shows the answer and
-                             marks it as not known - it comes back soon. -->
+                             marks it as not known - it comes back soon. A real
+                             button since 25/10 (as a link it went unnoticed). -->
                         <button class="study-dont-know" id="study-dont-know-btn" type="button">I don't know - show me the answer</button>
                     </div>
 

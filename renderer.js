@@ -7222,6 +7222,7 @@ function renderStudyCard() {
         typed.placeholder = TYPE_PLACEHOLDERS[item.mode] || TYPE_PLACEHOLDERS.recall;
         typed.disabled = false;
     }
+    showAnswerNeeded(false);
     document.querySelectorAll('#study-confidence-step .confidence-btn, #study-dont-know-btn').forEach(b => { b.disabled = false; });
 
     const total = studyState.queue.length;
@@ -7261,20 +7262,33 @@ function renderStudyCard() {
     document.getElementById('study-answer-step').hidden = true;
 }
 
+// A confidence button with nothing written (25/10): no answer to check, so
+// it doesn't go to the answer - "I don't know" is the way there.
+function showAnswerNeeded(on) {
+    const msg = document.getElementById('study-answer-needed');
+    const typed = document.getElementById('study-typed-answer');
+    if (msg) msg.hidden = !on;
+    if (typed) typed.classList.toggle('is-invalid', on);
+}
+const studyTypedBox = document.getElementById('study-typed-answer');
+if (studyTypedBox) studyTypedBox.addEventListener('input', () => { if (studyTypedBox.value.trim()) showAnswerNeeded(false); });
+
 const CONFIDENCE_HINT_TIMES = 5;
 function confidenceHintKey() { return `mindsync.confidenceHintSeen.${currentUserId || 'anon'}`; }
 
 // Step 1 -> 2: confidence is locked in before anything is revealed.
 document.querySelectorAll('#study-confidence-step .confidence-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
+        const item = studyState.queue[studyState.index];
+        const typed = document.getElementById('study-typed-answer');
+        const text = typed ? typed.value.trim() : '';
+        if (!item) return;
+        if (!text) { showAnswerNeeded(true); typed.focus(); return; }
+        showAnswerNeeded(false);
         const seen = Number(localStorage.getItem(confidenceHintKey()) || 0);
         if (seen < CONFIDENCE_HINT_TIMES) localStorage.setItem(confidenceHintKey(), String(seen + 1));
         studyState.confidence = btn.dataset.confidence;
         document.querySelectorAll('#study-confidence-step .confidence-btn').forEach(b => b.classList.toggle('is-picked', b === btn));
-        const item = studyState.queue[studyState.index];
-        const typed = document.getElementById('study-typed-answer');
-        const text = typed ? typed.value.trim() : '';
-        if (!item || !text) { revealAnswer(); return; }   // answered in the head
         // The AI allowance ran out earlier in this session: straight to
         // marking yourself, with the reason - not another wait for a "no".
         if (studyState.checkOff) { revealAnswer({ failed: studyState.checkOff, typed: text }); return; }
@@ -7313,6 +7327,7 @@ const dontKnowBtn = document.getElementById('study-dont-know-btn');
 if (dontKnowBtn) dontKnowBtn.onclick = () => {
     const item = studyState.queue[studyState.index];
     if (!item) return;
+    showAnswerNeeded(false);
     studyState.confidence = 'dont_know';
     revealAnswer({ dontKnow: true });
     // The stored answer is a quote from the material - often long, with an
@@ -7567,8 +7582,8 @@ async function explainMistake(item, typed, box, btn, course) {
 }
 
 // Practice: offered after anything but a right answer - wrong, half right,
-// "I don't know", a check that couldn't run, or answered in the head (only
-// the student knows how that went; the outcome buttons move on at once).
+// "I don't know", a check that couldn't run, or (before 25/10, when an empty
+// box still went to the answer) answered in the head: check is null then.
 function showStudyExplain(item, check, dontKnow) {
     const row = document.getElementById('study-explain-row');
     const btn = document.getElementById('study-explain-btn');
