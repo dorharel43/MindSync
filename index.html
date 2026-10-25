@@ -1383,6 +1383,21 @@
         </div>
     </div>
 
+    <!-- When is the exam - before the first practice of new questions (25/10):
+         asked only when the course has no exam yet; skippable. -->
+    <div id="exam-first-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content card exam-course-modal">
+            <h3 id="exam-first-q" dir="auto"></h3>
+            <p class="smart-help">Then your practice is timed for it - what's closest to the exam comes first.</p>
+            <input id="exam-first-input" class="input-field" maxlength="300" dir="auto" placeholder='לדוגמה: "12.2" או "מועד א 12.2, מועד ב 5.3"' aria-label="When is the exam?">
+            <div class="smart-actions exam-first-actions">
+                <button id="exam-first-save" class="btn-primary">Save and practice</button>
+                <button id="exam-first-later" class="btn-secondary">Don't know yet - practice now</button>
+                <button id="exam-first-none" class="btn-secondary">No exam in this course</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Merge a course into another (23/10): renderer.js mergeCourseUI. -->
     <div id="merge-course-modal" class="modal-overlay" style="display: none;">
         <div class="modal-content card merge-course-modal">

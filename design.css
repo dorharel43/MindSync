@@ -603,6 +603,8 @@ body.dark-mode .day-column {
 .exam-course-new { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); }
 .exam-course-new .input-field { flex: 1; min-width: 0; }
 .exam-course-option--new { border-style: dashed; }
+#exam-first-input { width: 100%; margin: var(--space-2) 0 var(--space-3); }   /* (25/10) */
+.exam-first-actions { flex-wrap: wrap; }
 /* A course's menu (23/10): ⋯ on its card. */
 .folder-card { position: relative; }
 .course-menu-btn { font-size: 1.1rem; line-height: 1; letter-spacing: 1px; }
