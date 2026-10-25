@@ -480,6 +480,7 @@
         'Send feedback': 'שליחת משוב', 'Something not working, or an idea? Write it here - it goes straight to the developer.': 'משהו לא עובד, או שיש רעיון? כותבים כאן - זה מגיע ישר ליוצר האפליקציה.',
         'What happened, or what would make this better?': 'מה קרה, או מה היה משפר את זה?', 'Send': 'שליחה',
         'Write something first.': 'קודם כותבים משהו.', 'Thanks - it was sent.': 'תודה - נשלח.', 'Feedback': 'משוב', 'Could not send': 'לא הצלחתי לשלוח', 'Feedback is empty.': 'המשוב ריק.',
+        "Something not working, an idea, or something unclear? It goes straight to the developer, with the name of the screen you're on.": 'משהו לא עובד, יש רעיון או משהו לא ברור? זה מגיע ישר ליוצר האפליקציה, יחד עם שם המסך שבו נמצאים.',
         'Copied. Paste it wherever you\'re reporting the issue.': 'הועתק. אפשר להדביק איפה שמדווחים על הבעיה.', 'Diagnostic log copied': 'יומן האבחון הועתק',
         'Reset all data': 'איפוס כל הנתונים', "Deletes all your tasks, calendar items, files and questions - for starting a new semester. Can't be undone.": 'מוחק את כל המשימות, פריטי הלוח, הקבצים והשאלות - לתחילת סמסטר חדש. אי אפשר לבטל.',
         'Reset everything?': 'לאפס הכול?',
