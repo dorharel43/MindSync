@@ -5315,23 +5315,51 @@ if (navHomeForOnboarding) navHomeForOnboarding.addEventListener('click', refresh
 
 // Web version: feedback goes to the server (POST /api/feedback, via the
 // 'send-feedback' channel). The desktop app has "Copy error log" instead.
+// Two places send it: Settings, and the sidebar's button (25/10) - that one
+// also says which screen it came from, for a report like "this doesn't work".
+function feedbackWhere() {
+    const view = [...document.querySelectorAll('.view-section')].find(v => v.offsetParent !== null);
+    const run = document.getElementById('full-run');
+    return [view ? view.id.replace(/^view-/, '') : '', run && run.offsetParent !== null ? 'exam' : ''].filter(Boolean).join('/');
+}
+async function sendFeedback(box, btn, where) {
+    const text = box ? box.value.trim() : '';
+    if (!text) { toast.info('Write something first.'); return false; }
+    btn.disabled = true;
+    try {
+        const res = await ipcRenderer.invoke('send-feedback', text, where);
+        if (res && res.error) throw new Error(res.error);
+        box.value = '';
+        toast.success('Thanks - it was sent.', 'Feedback');
+        return true;
+    } catch (err) {
+        toast.error(err.message, 'Could not send');
+        return false;
+    } finally {
+        btn.disabled = false;
+    }
+}
 const feedbackBtn = document.getElementById('feedback-send-btn');
-if (feedbackBtn) {
-    feedbackBtn.onclick = async () => {
-        const box = document.getElementById('feedback-text');
-        const text = box ? box.value.trim() : '';
-        if (!text) { toast.info('Write something first.'); return; }
-        feedbackBtn.disabled = true;
-        try {
-            const res = await ipcRenderer.invoke('send-feedback', text);
-            if (res && res.error) throw new Error(res.error);
-            box.value = '';
-            toast.success('Thanks - it was sent.', 'Feedback');
-        } catch (err) {
-            toast.error(err.message, 'Could not send');
-        } finally {
-            feedbackBtn.disabled = false;
-        }
+if (feedbackBtn) feedbackBtn.onclick = () => sendFeedback(document.getElementById('feedback-text'), feedbackBtn, 'settings');
+
+const feedbackModal = document.getElementById('feedback-modal');
+const sidebarFeedbackBtn = document.getElementById('sidebar-feedback-btn');
+if (feedbackModal && sidebarFeedbackBtn) {
+    const box = document.getElementById('feedback-modal-text');
+    const send = document.getElementById('feedback-modal-send');
+    let where = '';
+    sidebarFeedbackBtn.onclick = () => {
+        where = feedbackWhere();   // before the window covers the screen
+        setMobileMenu(false);
+        feedbackModal.style.display = 'flex';
+        box.focus();
+    };
+    document.getElementById('feedback-modal-cancel').onclick = () => { if (!feedbackModal.dataset.busy) feedbackModal.style.display = 'none'; };
+    send.onclick = async () => {
+        feedbackModal.dataset.busy = '1';   // not closed mid-send (Escape / outside click)
+        const sent = await sendFeedback(box, send, where);
+        delete feedbackModal.dataset.busy;
+        if (sent) feedbackModal.style.display = 'none';
     };
 }
 

@@ -141,6 +141,10 @@
 
         <div class="sidebar-spacer"></div>
 
+        <!-- Feedback (25/10, for the beta): only in Settings it was hard to
+             find - here it's always one click away (on a phone, in the menu). -->
+        <button type="button" class="sidebar-feedback-btn web-only" id="sidebar-feedback-btn"><span data-icon="message" data-icon-size="16"></span> Send feedback</button>
+
         <div class="sidebar-footer">
             <!-- BUG FIX: the streak chip always read "0" - it depended on
                  /api/stats, which was removed server-side along with the
@@ -1468,6 +1472,19 @@
             <div class="smart-actions">
                 <button id="syllabus-confirm" class="btn-primary">Add</button>
                 <button id="syllabus-cancel" class="btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Feedback from the sidebar (25/10). Closing it keeps what was typed. -->
+    <div id="feedback-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content card feedback-modal">
+            <h3>Send feedback</h3>
+            <p class="settings-hint">Something not working, an idea, or something unclear? It goes straight to the developer, with the name of the screen you're on.</p>
+            <textarea id="feedback-modal-text" class="input-field" rows="5" maxlength="4000" dir="auto" placeholder="What happened, or what would make this better?"></textarea>
+            <div class="feedback-modal__btns">
+                <button id="feedback-modal-send" class="btn-primary">Send</button>
+                <button id="feedback-modal-cancel" class="btn-secondary">Cancel</button>
             </div>
         </div>
     </div>
